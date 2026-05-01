@@ -42,6 +42,14 @@ class OrderState(StatesGroup):
     amount = State()      # Nechta zakaz berdi
     due_date = State()    # Qaysi sanaga tayyor bo'lishi kerak
 
+class UpdateStockState(StatesGroup):
+    product_id = State()
+    new_quantity = State()
+
+class DeliveryControlState(StatesGroup):
+    order_id = State()
+    new_status = State()
+
 # 4. Rollarni Tekshirish (RTDB dan)
 async def get_user_role(user_id):
     ref = db.reference(f'users/{user_id}')
@@ -223,6 +231,105 @@ async def notify_warehouse(order_data, order_id):
                 )
             except Exception as e:
                 print(f"Omborchiga xabar yuborishda xatolik: {e}")
+
+# --- OMBORCHI: SKLADNI YANGILASH ---
+@dp.message(F.text == "🔄 Skladni yangilash")
+async def update_stock_start(message: types.Message, state: FSMContext):
+    if await get_user_role(message.from_user.id) == 'omborchi':
+        await message.answer("Qaysi mebelning sonini yangilamoqchisiz? Mebel ID-sini kiriting:")
+        await state.set_state(UpdateStockState.product_id)
+
+@dp.message(UpdateStockState.product_id)
+async def update_stock_product_id(message: types.Message, state: FSMContext):
+    product_id = message.text.upper()
+    product_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+    if not product_ref:
+        await message.answer("Bunday ID li mebel topilmadi. Qaytadan kiriting:")
+        return
+    await state.update_data(product_id=product_id)
+    await message.answer(f"Mebel: {product_ref['nomi']} ({product_ref['modeli']})\nHozirgi qoldiq: {product_ref['soni']} ta\n\nYangi sonini kiriting:")
+    await state.set_state(UpdateStockState.new_quantity)
+
+@dp.message(UpdateStockState.new_quantity)
+async def update_stock_new_quantity(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    try:
+        new_quantity = int(message.text)
+        await asyncio.to_thread(db.reference(f"mebellar/{data['product_id']}").update, {'soni': new_quantity})
+        await message.answer(f"✅ Sklad muvaffaqiyatli yangilandi!\nYangi qoldiq: {new_quantity} ta", reply_markup=main_menu('omborchi'))
+        await state.clear()
+    except ValueError:
+        await message.answer("Iltimos, faqat raqam kiriting:")
+
+# --- OMBORCHI: DOSTAVKA NAZORATI ---
+@dp.message(F.text == "🚚 Dostavka nazorati")
+async def delivery_control_start(message: types.Message, state: FSMContext):
+    if await get_user_role(message.from_user.id) == 'omborchi':
+        orders_ref = await asyncio.to_thread(db.reference('orders').get)
+        if not orders_ref:
+            await message.answer("Hozircha hech qanday zakaz yo'q.")
+            return
+            
+        active_orders = ""
+        for o_id, o in orders_ref.items():
+            if isinstance(o, dict) and o.get('status') in ['Tayyorlanmoqda', 'Yuborildi']:
+                active_orders += f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n📅 Muddat: {o.get('due_date')}\n📌 Holati: {o.get('status')}\n\n"
+        
+        if not active_orders:
+            await message.answer("Barcha zakazlar yetkazib berilgan yoki faol zakazlar yo'q.")
+            return
+            
+        await message.answer(f"Faol zakazlar:\n\n{active_orders}\nQaysi zakazning holatini o'zgartirmoqchisiz? Zakaz ID-sini kiriting:", parse_mode="Markdown")
+        await state.set_state(DeliveryControlState.order_id)
+
+@dp.message(DeliveryControlState.order_id)
+async def delivery_order_id(message: types.Message, state: FSMContext):
+    order_id = message.text.upper()
+    order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
+    if not order_ref:
+        await message.answer("Bunday ID li zakaz topilmadi. Qaytadan kiriting:")
+        return
+        
+    await state.update_data(order_id=order_id, client=order_ref.get('client_name'))
+    
+    markup = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="Yuborildi"), types.KeyboardButton(text="Yetkazib berildi")],
+            [types.KeyboardButton(text="Bekor qilindi"), types.KeyboardButton(text="Bosh menyu")]
+        ],
+        resize_keyboard=True
+    )
+    
+    await message.answer(f"Zakaz: {order_ref.get('client_name')}niki\nHozirgi holat: {order_ref.get('status')}\n\nYangi holatni tanlang:", reply_markup=markup)
+    await state.set_state(DeliveryControlState.new_status)
+
+@dp.message(DeliveryControlState.new_status)
+async def delivery_new_status(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        await message.answer("Bosh menyu", reply_markup=main_menu('omborchi'))
+        await state.clear()
+        return
+        
+    data = await state.get_data()
+    new_status = message.text
+    await asyncio.to_thread(db.reference(f"orders/{data['order_id']}").update, {'status': new_status})
+    
+    await message.answer(f"✅ Zakaz holati yangilandi: {new_status}", reply_markup=main_menu('omborchi'))
+    
+    # Notify admin
+    admin_ref = await asyncio.to_thread(db.reference('users').get)
+    for user_id, user_data in (admin_ref or {}).items():
+        if user_data.get('role') == 'admin':
+            try:
+                await bot.send_message(
+                    int(user_id),
+                    f"📦 **Zakaz holati o'zgardi!**\n\n🆔 ID: `{data['order_id']}`\n🧑 Mijoz: {data['client']}\n📌 Yangi holat: {new_status}",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+                
+    await state.clear()
 
 async def handle(request):
     return web.Response(text="Bot is running")
