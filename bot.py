@@ -174,7 +174,7 @@ async def new_order_start(message: types.Message, state: FSMContext):
 @dp.message(OrderState.client)
 async def process_client(message: types.Message, state: FSMContext):
     await state.update_data(client=message.text)
-    await message.answer("Mebel ID'sini kiriting (sklad ro'yxatidan):")
+    await message.answer("Qanday mebel buyurtma qilinmoqda? (Masalan: Shkaf, Spalniy...):")
     await state.set_state(OrderState.product_id)
 
 @dp.message(OrderState.product_id)
@@ -237,7 +237,7 @@ async def notify_warehouse(order_data, order_id):
                     int(user_id),
                     f"🔔 **Yangi zakaz!**\n\n"
                     f"🧑 Mijoz: {order_data['client']}\n"
-                    f"📦 Mebel ID: {order_data['product_id']}\n"
+                    f"📦 Mebel: {order_data['product_id']}\n"
                     f"📊 Soni: {order_data['amount']}\n"
                     f"📅 Muddat: {order_data['due_date']}\n"
                     f"📝 Izoh: {order_data.get('comment', 'Yoq')}\n"
@@ -260,7 +260,7 @@ async def view_active_orders(message: types.Message):
         active_orders = ""
         for o_id, o in orders_ref.items():
             if isinstance(o, dict) and o.get('status') == 'Tayyorlanmoqda':
-                active_orders += f"🆔 `{o_id}` - 📦 Mebel ID: {o.get('product_id')}\n"
+                active_orders += f"🆔 `{o_id}` - 📦 Mebel: {o.get('product_id')}\n"
                 active_orders += f"📊 Soni: {o.get('amount')} ta\n"
                 active_orders += f"📅 Muddat: {o.get('due_date')}\n"
                 if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
