@@ -12,6 +12,24 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import firebase_admin
 from firebase_admin import credentials, db
 
+# Doimiy mijozlar ro'yxati
+REGULAR_CLIENTS = [
+    "Comfort", "Iskandar", "Shaxriyor aka", "Baxrom Uchtepa", 
+    "Baxrom 9703", "Bahodir aka", "Akrom aka", "Zoʻr mebel", 
+    "Umid", "Akmal aka", "Doʻkon 707", "Farxod Jomiy"
+]
+
+def get_clients_keyboard():
+    buttons = []
+    for i in range(0, len(REGULAR_CLIENTS), 2):
+        row = [types.KeyboardButton(text=REGULAR_CLIENTS[i])]
+        if i+1 < len(REGULAR_CLIENTS):
+            row.append(types.KeyboardButton(text=REGULAR_CLIENTS[i+1]))
+        buttons.append(row)
+    buttons.append([types.KeyboardButton(text="Boshqa (Yangi mijoz)")])
+    buttons.append([types.KeyboardButton(text="Bosh menyu")])
+    return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
 # 1. Firebase Sozlamalari (RTDB)
 cred = credentials.Certificate("serviceAccountKey.json")
 firebase_admin.initialize_app(cred, {
@@ -38,6 +56,7 @@ class UpdatePriceState(StatesGroup):
 
 class OrderState(StatesGroup):
     client = State()      # Mijoz ismi
+    custom_client = State() # Agar boshqa bosilsa
     product_id = State()  # Mebel ID-si
     amount = State()      # Nechta zakaz berdi
     due_date = State()    # Qaysi sanaga tayyor bo'lishi kerak
@@ -65,7 +84,8 @@ def main_menu(role):
     if role == 'admin':
         buttons = [
             [types.KeyboardButton(text="➕ Yangi mebel"), types.KeyboardButton(text="💰 Narxni o'zgartirish")],
-            [types.KeyboardButton(text="📦 Sklad qoldig'i"), types.KeyboardButton(text="📝 Yangi zakaz")]
+            [types.KeyboardButton(text="📦 Sklad qoldig'i"), types.KeyboardButton(text="📝 Yangi zakaz")],
+            [types.KeyboardButton(text="📊 Mijozlar hisoboti")]
         ]
     elif role == 'omborchi':
         buttons = [
@@ -168,11 +188,28 @@ async def view_stock(message: types.Message):
 @dp.message(F.text == "📝 Yangi zakaz")
 async def new_order_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'admin':
-        await message.answer("Mijoz ismini kiriting:")
+        await message.answer("Mijozni tanlang yoki 'Boshqa' ni bosing:", reply_markup=get_clients_keyboard())
         await state.set_state(OrderState.client)
 
 @dp.message(OrderState.client)
 async def process_client(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        await state.clear()
+        return
+
+    if message.text == "Boshqa (Yangi mijoz)":
+        await message.answer("Yangi mijoz ismini kiriting:", reply_markup=types.ReplyKeyboardRemove())
+        await state.set_state(OrderState.custom_client)
+        return
+
+    await state.update_data(client=message.text)
+    await message.answer("Qanday mebel buyurtma qilinmoqda? (Masalan: Shkaf, Spalniy...):", reply_markup=types.ReplyKeyboardRemove())
+    await state.set_state(OrderState.product_id)
+
+@dp.message(OrderState.custom_client)
+async def process_custom_client(message: types.Message, state: FSMContext):
     await state.update_data(client=message.text)
     await message.answer("Qanday mebel buyurtma qilinmoqda? (Masalan: Shkaf, Spalniy...):")
     await state.set_state(OrderState.product_id)
@@ -225,6 +262,85 @@ async def process_comment(message: types.Message, state: FSMContext):
     
     # Omborchiga xabar yuborish
     await notify_warehouse(data, order_id)
+
+# --- ADMIN: MIJOZLAR HISOBOTI VA QARZ ---
+class ReportState(StatesGroup):
+    select_client = State()
+
+class DebtState(StatesGroup):
+    client_name = State()
+    new_debt = State()
+
+@dp.message(F.text == "📊 Mijozlar hisoboti")
+async def report_start(message: types.Message, state: FSMContext):
+    if await get_user_role(message.from_user.id) == 'admin':
+        await message.answer("Qaysi mijozning hisobotini ko'rmoqchisiz?", reply_markup=get_clients_keyboard())
+        await state.set_state(ReportState.select_client)
+
+@dp.message(ReportState.select_client)
+async def show_client_report(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        await state.clear()
+        return
+        
+    client_name = message.text
+    if client_name == "Boshqa (Yangi mijoz)":
+        await message.answer("Faqat doimiy mijozlar hisoboti mavjud.")
+        return
+
+    # Fetch orders and debt
+    orders_ref = await asyncio.to_thread(db.reference('orders').get)
+    debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
+    
+    current_debt = debt_ref if debt_ref is not None else 0
+    
+    report_text = f"👤 **Mijoz:** {client_name}\n"
+    report_text += f"💳 **Joriy qarzi:** {current_debt} so'm\n\n"
+    report_text += "📦 **Olingan mebellar tarixi:**\n"
+    
+    count = 0
+    if orders_ref:
+        for o_id, o in orders_ref.items():
+            if isinstance(o, dict) and str(o.get('client_name')).strip() == client_name.strip():
+                count += 1
+                report_text += f"▪️ {o.get('product_id')} - {o.get('amount')} ta ({o.get('status')})\n"
+                
+    if count == 0:
+        report_text += "Hech qanday mebel olinmagan.\n"
+        
+    markup = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text=f"💳 {client_name} qarzini o'zgartirish")],
+            [types.KeyboardButton(text="Bosh menyu")]
+        ],
+        resize_keyboard=True
+    )
+    
+    await message.answer(report_text, parse_mode="Markdown", reply_markup=markup)
+    await state.clear()
+
+@dp.message(F.text.startswith("💳 ") and F.text.endswith(" qarzini o'zgartirish"))
+async def change_debt_start(message: types.Message, state: FSMContext):
+    if await get_user_role(message.from_user.id) == 'admin':
+        client_name = message.text[2:-21] # extract name
+        await state.update_data(client_name=client_name)
+        await message.answer(f"{client_name} uchun yangi qarz summasini kiriting (faqat raqamlarda):\n(Qarzi yo'q bo'lsa 0 kiriting)", reply_markup=types.ReplyKeyboardRemove())
+        await state.set_state(DebtState.new_debt)
+        
+@dp.message(DebtState.new_debt)
+async def process_new_debt(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    client_name = data['client_name']
+    
+    try:
+        new_debt = int(message.text)
+        await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
+        await message.answer(f"✅ {client_name} qarzi yangilandi: {new_debt} so'm", reply_markup=main_menu('admin'))
+        await state.clear()
+    except ValueError:
+        await message.answer("Iltimos, faqat raqam kiriting:")
 
 # Omborchiga yangi zakaz haqida xabar yuborish
 async def notify_warehouse(order_data, order_id):
