@@ -1,6 +1,8 @@
 import logging
 import asyncio
 import uuid
+import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -220,7 +222,19 @@ async def notify_warehouse(order_data, order_id):
             except Exception as e:
                 print(f"Omborchiga xabar yuborishda xatolik: {e}")
 
+async def handle(request):
+    return web.Response(text="Bot is running")
+
 async def main():
+    # Render Web Service portini ochib turish uchun vaqtinchalik server
+    app = web.Application()
+    app.router.add_get('/', handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get('PORT', 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
