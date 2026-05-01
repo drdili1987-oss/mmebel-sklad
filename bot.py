@@ -314,7 +314,10 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
         active_orders = ""
         for o_id, o in orders_ref.items():
             if isinstance(o, dict) and o.get('status') in ['Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi']:
-                active_orders += f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n📅 Muddat: {o.get('due_date')}\n📌 Holati: {o.get('status')}\n\n"
+                active_orders += f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n📅 Muddat: {o.get('due_date')}\n"
+                if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
+                    active_orders += f"📝 Izoh: {o.get('comment')}\n"
+                active_orders += f"📌 Holati: {o.get('status')}\n\n"
         
         if not active_orders:
             await message.answer("Barcha zakazlar yetkazib berilgan yoki faol zakazlar yo'q.")
