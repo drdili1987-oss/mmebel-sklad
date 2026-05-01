@@ -313,7 +313,7 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
             
         active_orders = ""
         for o_id, o in orders_ref.items():
-            if isinstance(o, dict) and o.get('status') in ['Tayyorlanmoqda', 'Yuborildi']:
+            if isinstance(o, dict) and o.get('status') in ['Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi']:
                 active_orders += f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n📅 Muddat: {o.get('due_date')}\n📌 Holati: {o.get('status')}\n\n"
         
         if not active_orders:
@@ -335,8 +335,9 @@ async def delivery_order_id(message: types.Message, state: FSMContext):
     
     markup = types.ReplyKeyboardMarkup(
         keyboard=[
-            [types.KeyboardButton(text="Yuborildi"), types.KeyboardButton(text="Yetkazib berildi")],
-            [types.KeyboardButton(text="Bekor qilindi"), types.KeyboardButton(text="Bosh menyu")]
+            [types.KeyboardButton(text="Tayyor bo'ldi"), types.KeyboardButton(text="Yuborildi")],
+            [types.KeyboardButton(text="Yetkazib berildi"), types.KeyboardButton(text="Bekor qilindi")],
+            [types.KeyboardButton(text="Bosh menyu")]
         ],
         resize_keyboard=True
     )
