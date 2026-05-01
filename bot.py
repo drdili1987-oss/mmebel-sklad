@@ -2,6 +2,7 @@ import logging
 import asyncio
 import uuid
 import os
+import aiohttp
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -225,6 +226,17 @@ async def notify_warehouse(order_data, order_id):
 async def handle(request):
     return web.Response(text="Bot is running")
 
+async def keep_awake():
+    url = "https://mmebel-bot.onrender.com"
+    while True:
+        await asyncio.sleep(600)  # 10 daqiqa
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    pass
+        except Exception:
+            pass
+
 async def main():
     # Render Web Service portini ochib turish uchun vaqtinchalik server
     app = web.Application()
@@ -234,6 +246,9 @@ async def main():
     port = int(os.environ.get('PORT', 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
+    
+    # Uygotgichni fonga ishga tushirish
+    asyncio.create_task(keep_awake())
     
     await dp.start_polling(bot)
 
