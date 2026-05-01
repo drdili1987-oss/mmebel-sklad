@@ -41,6 +41,7 @@ class OrderState(StatesGroup):
     product_id = State()  # Mebel ID-si
     amount = State()      # Nechta zakaz berdi
     due_date = State()    # Qaysi sanaga tayyor bo'lishi kerak
+    comment = State()     # Izoh
 
 class UpdateStockState(StatesGroup):
     product_id = State()
@@ -70,6 +71,10 @@ def main_menu(role):
         buttons = [
             [types.KeyboardButton(text="🔄 Skladni yangilash"), types.KeyboardButton(text="🚚 Dostavka nazorati")],
             [types.KeyboardButton(text="📦 Sklad qoldig'i")]
+        ]
+    elif role == 'ishchi':
+        buttons = [
+            [types.KeyboardButton(text="🔨 Faol zakazlar")]
         ]
     else:
         buttons = [[types.KeyboardButton(text="🛍 Sotuvdagi mebellar")]]
@@ -185,11 +190,18 @@ async def process_amount(message: types.Message, state: FSMContext):
     await message.answer("📅 Zakaz qaysi sanaga tayyor bo'lishi kerak?\n(Masalan: 15.05.2026 yoki 'Ertaga kechqurun')")
     await state.set_state(OrderState.due_date)
 
-# Oxirgi bosqich: Sanani qabul qilish va bazaga saqlash
+# Oxirgi bosqich: Sanani qabul qilish va izoh so'rash
 @dp.message(OrderState.due_date)
 async def process_due_date(message: types.Message, state: FSMContext):
+    await state.update_data(due_date=message.text)
+    await message.answer("📝 Zakaz uchun izoh kiriting (mebelning biror joyini o'zgartirish kerak bo'lsa):\n(Agar izoh bo'lmasa 'yoq' deb yozing)")
+    await state.set_state(OrderState.comment)
+
+# Izohni qabul qilish va bazaga saqlash
+@dp.message(OrderState.comment)
+async def process_comment(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    data['due_date'] = message.text
+    comment = message.text
     order_id = str(uuid.uuid4())[:8].upper()
     
     # Realtime Database (RTDB) ga yozish
@@ -200,13 +212,15 @@ async def process_due_date(message: types.Message, state: FSMContext):
             'client_name': data['client'],
             'product_id': data['product_id'],
             'amount': data['amount'],
-            'due_date': message.text,
+            'due_date': data['due_date'],
+            'comment': comment,
             'status': 'Tayyorlanmoqda',
             'created_at': str(asyncio.get_event_loop().time())
         }
     )
     
-    await message.answer(f"✅ Zakaz qabul qilindi!\n🆔 ID: {order_id}\n📅 Muddat: {message.text}")
+    await message.answer(f"✅ Zakaz qabul qilindi!\n🆔 ID: {order_id}\n📅 Muddat: {data['due_date']}\n📝 Izoh: {comment}")
+    data['comment'] = comment
     await state.clear()
     
     # Omborchiga xabar yuborish
@@ -226,11 +240,38 @@ async def notify_warehouse(order_data, order_id):
                     f"📦 Mebel ID: {order_data['product_id']}\n"
                     f"📊 Soni: {order_data['amount']}\n"
                     f"📅 Muddat: {order_data['due_date']}\n"
+                    f"📝 Izoh: {order_data.get('comment', 'Yoq')}\n"
                     f"🆔 Zakaz ID: {order_id}",
                     parse_mode="Markdown"
                 )
             except Exception as e:
                 print(f"Omborchiga xabar yuborishda xatolik: {e}")
+
+# --- ISHCHI: FAOL ZAKAZLAR ---
+@dp.message(F.text == "🔨 Faol zakazlar")
+async def view_active_orders(message: types.Message):
+    role = await get_user_role(message.from_user.id)
+    if role in ['ishchi', 'admin', 'omborchi']:
+        orders_ref = await asyncio.to_thread(db.reference('orders').get)
+        if not orders_ref:
+            await message.answer("Hozircha hech qanday faol zakaz yo'q.")
+            return
+            
+        active_orders = ""
+        for o_id, o in orders_ref.items():
+            if isinstance(o, dict) and o.get('status') == 'Tayyorlanmoqda':
+                active_orders += f"🆔 `{o_id}` - 📦 Mebel ID: {o.get('product_id')}\n"
+                active_orders += f"📊 Soni: {o.get('amount')} ta\n"
+                active_orders += f"📅 Muddat: {o.get('due_date')}\n"
+                if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
+                    active_orders += f"📝 Izoh: {o.get('comment')}\n"
+                active_orders += "\n"
+        
+        if not active_orders:
+            await message.answer("Hozircha faol zakazlar yo'q.")
+            return
+            
+        await message.answer(f"🔨 **Faol zakazlar ro'yxati:**\n\n{active_orders}", parse_mode="Markdown")
 
 # --- OMBORCHI: SKLADNI YANGILASH ---
 @dp.message(F.text == "🔄 Skladni yangilash")
