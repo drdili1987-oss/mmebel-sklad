@@ -181,6 +181,7 @@ async def process_amount(message: types.Message, state: FSMContext):
 @dp.message(OrderState.due_date)
 async def process_due_date(message: types.Message, state: FSMContext):
     data = await state.get_data()
+    data['due_date'] = message.text
     order_id = str(uuid.uuid4())[:8].upper()
     
     # Realtime Database (RTDB) ga yozish
