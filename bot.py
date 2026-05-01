@@ -30,6 +30,28 @@ def get_clients_keyboard():
     buttons.append([types.KeyboardButton(text="Bosh menyu")])
     return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
+FAVORITE_MODELS = [
+    "BF 06", "BF 07", "BF 09", "BF 244", "BF 264", "BF 274", "BF 294", "BF 246", "BF 266", "BF 276", "BF 2761", "BF 296",
+    "BF 32", "BF 33", "BF 34", "BF 35", "BF 37", "BF 38", "BF 321", "BF 331", "BF 341", "BF 351", "BF 371", "BF 381", "BF 391",
+    "BF 44", "BF 45", "BF 544", "BF 574", "BF 594", "BF 54-41", "BF 57-41", "BF 59-41", "BF 63", "BF 64", "BF 65", "BF 68",
+    "BF 707", "BF 708", "BF 709", "BF 762", "BF 752", "BF 772", "BF 713", "BF 753", "BF 763",
+    "D 100", "D 106", "D 109", "D 50", "D 59", "D 003", "D 004", "D 005", "D 006",
+    "BF 792"
+]
+
+def get_models_keyboard():
+    buttons = []
+    row = []
+    for model in FAVORITE_MODELS:
+        row.append(types.KeyboardButton(text=model))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([types.KeyboardButton(text="Bosh menyu")])
+    return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
 # 1. Firebase Sozlamalari (RTDB)
 cred = credentials.Certificate("serviceAccountKey.json")
 firebase_admin.initialize_app(cred, {
@@ -72,6 +94,12 @@ class DeliveryControlState(StatesGroup):
 
 # 4. Rollarni Tekshirish (RTDB dan)
 async def get_user_role(user_id):
+    user_id_str = str(user_id)
+    if user_id_str == '883589794':
+        return 'omborchi'
+    if user_id_str in ['6298036669', '1349256808', '7062569902', '7941658592', '1724350130']:
+        return 'ishchi'
+    
     ref = db.reference(f'users/{user_id}')
     user_data = await asyncio.to_thread(ref.get)
     if user_data:
@@ -99,6 +127,13 @@ def main_menu(role):
     else:
         buttons = [[types.KeyboardButton(text="🛍 Sotuvdagi mebellar")]]
     return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+# --- BOSH MENYU / BEKOR QILISH ---
+@dp.message(F.text == "Bosh menyu")
+async def cancel_handler(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    await state.clear()
+    await message.answer("Asosiy menyuga qaytdingiz.", reply_markup=main_menu(role))
 
 # --- START KOMANDASI ---
 @dp.message(Command("start"))
@@ -141,7 +176,7 @@ async def add_quantity(message: types.Message, state: FSMContext):
 @dp.message(ProductState.image)
 async def add_final(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    p_id = str(uuid.uuid4())[:6].upper()
+    p_id = data['name'].replace(" ", "").replace("-", "").upper()
     
     # RTDB ga yozish
     await asyncio.to_thread(
@@ -205,19 +240,20 @@ async def process_client(message: types.Message, state: FSMContext):
         return
 
     await state.update_data(client=message.text)
-    await message.answer("Qanday mebel buyurtma qilinmoqda? (Masalan: Shkaf, Spalniy...):", reply_markup=types.ReplyKeyboardRemove())
+    await message.answer("Qanday mebel buyurtma qilinmoqda? (Quyidagilardan tanlang yoki yozing):", reply_markup=get_models_keyboard())
     await state.set_state(OrderState.product_id)
 
 @dp.message(OrderState.custom_client)
 async def process_custom_client(message: types.Message, state: FSMContext):
     await state.update_data(client=message.text)
-    await message.answer("Qanday mebel buyurtma qilinmoqda? (Masalan: Shkaf, Spalniy...):")
+    await message.answer("Qanday mebel buyurtma qilinmoqda? (Quyidagilardan tanlang yoki yozing):", reply_markup=get_models_keyboard())
     await state.set_state(OrderState.product_id)
 
 @dp.message(OrderState.product_id)
 async def process_product_id(message: types.Message, state: FSMContext):
-    await state.update_data(product_id=message.text)
-    await message.answer("Nechta zakaz berdi?")
+    formatted_id = message.text.replace(" ", "").replace("-", "").upper()
+    await state.update_data(product_id=formatted_id)
+    await message.answer("Nechta zakaz berdi?", reply_markup=types.ReplyKeyboardRemove())
     await state.set_state(OrderState.amount)
 
 # Soni kiritilgandan keyin sanani so'rash
@@ -241,6 +277,19 @@ async def process_comment(message: types.Message, state: FSMContext):
     comment = message.text
     order_id = str(uuid.uuid4())[:8].upper()
     
+    product_id = data['product_id']
+    try:
+        amount = int(data['amount'])
+    except ValueError:
+        amount = 1
+
+    # Skladni kamaytirish
+    mebel_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+    if mebel_ref and 'soni' in mebel_ref:
+        current_qty = int(mebel_ref['soni'])
+        new_qty = current_qty - amount
+        await asyncio.to_thread(db.reference(f'mebellar/{product_id}').update, {'soni': new_qty})
+        
     # Realtime Database (RTDB) ga yozish
     await asyncio.to_thread(
         db.reference(f'orders/{order_id}').set,
@@ -344,21 +393,35 @@ async def process_new_debt(message: types.Message, state: FSMContext):
 
 # Omborchiga yangi zakaz haqida xabar yuborish
 async def notify_warehouse(order_data, order_id):
-    # Omborchi user ID sini Firebase dan olish
+    # Asosiy omborchiga xabar yuborish
+    try:
+        await bot.send_message(
+            883589794,
+            f"🔔 Yangi zakaz!\n\n"
+            f"🧑 Mijoz: {order_data['client']}\n"
+            f"📦 Mebel: {order_data['product_id']}\n"
+            f"📊 Soni: {order_data['amount']}\n"
+            f"📅 Muddat: {order_data['due_date']}\n"
+            f"📝 Izoh: {order_data.get('comment', 'Yoq')}\n"
+            f"🆔 Zakaz ID: {order_id}"
+        )
+    except Exception as e:
+        print(f"Omborchiga xabar yuborishda xatolik: {e}")
+
+    # Omborchi user ID sini Firebase dan olish (boshqalar bo'lsa)
     omborchi_ref = await asyncio.to_thread(db.reference('users').get)
     for user_id, user_data in (omborchi_ref or {}).items():
-        if user_data.get('role') == 'omborchi':
+        if user_data.get('role') == 'omborchi' and int(user_id) != 883589794:
             try:
                 await bot.send_message(
                     int(user_id),
-                    f"🔔 **Yangi zakaz!**\n\n"
+                    f"🔔 Yangi zakaz!\n\n"
                     f"🧑 Mijoz: {order_data['client']}\n"
                     f"📦 Mebel: {order_data['product_id']}\n"
                     f"📊 Soni: {order_data['amount']}\n"
                     f"📅 Muddat: {order_data['due_date']}\n"
                     f"📝 Izoh: {order_data.get('comment', 'Yoq')}\n"
-                    f"🆔 Zakaz ID: {order_id}",
-                    parse_mode="Markdown"
+                    f"🆔 Zakaz ID: {order_id}"
                 )
             except Exception as e:
                 print(f"Omborchiga xabar yuborishda xatolik: {e}")
@@ -387,24 +450,24 @@ async def view_active_orders(message: types.Message):
             await message.answer("Hozircha faol zakazlar yo'q.")
             return
             
-        await message.answer(f"🔨 **Faol zakazlar ro'yxati:**\n\n{active_orders}", parse_mode="Markdown")
+        await message.answer(f"🔨 Faol zakazlar ro'yxati:\n\n{active_orders}")
 
 # --- OMBORCHI: SKLADNI YANGILASH ---
 @dp.message(F.text == "🔄 Skladni yangilash")
 async def update_stock_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'omborchi':
-        await message.answer("Qaysi mebelning sonini yangilamoqchisiz? Mebel ID-sini kiriting:")
+        await message.answer("Qaysi mebelning sonini yangilamoqchisiz? Tanlang yoki ID kiriting:", reply_markup=get_models_keyboard())
         await state.set_state(UpdateStockState.product_id)
 
 @dp.message(UpdateStockState.product_id)
 async def update_stock_product_id(message: types.Message, state: FSMContext):
-    product_id = message.text.upper()
+    product_id = message.text.replace(" ", "").replace("-", "").upper()
     product_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
     if not product_ref:
-        await message.answer("Bunday ID li mebel topilmadi. Qaytadan kiriting:")
+        await message.answer("Bunday ID li mebel topilmadi. Qaytadan kiriting:", reply_markup=types.ReplyKeyboardRemove())
         return
     await state.update_data(product_id=product_id)
-    await message.answer(f"Mebel: {product_ref['nomi']} ({product_ref['modeli']})\nHozirgi qoldiq: {product_ref['soni']} ta\n\nYangi sonini kiriting:")
+    await message.answer(f"Mebel: {product_ref['nomi']} ({product_ref['modeli']})\nHozirgi qoldiq: {product_ref['soni']} ta\n\nYangi sonini kiriting:", reply_markup=types.ReplyKeyboardRemove())
     await state.set_state(UpdateStockState.new_quantity)
 
 @dp.message(UpdateStockState.new_quantity)
@@ -439,7 +502,7 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
             await message.answer("Barcha zakazlar yetkazib berilgan yoki faol zakazlar yo'q.")
             return
             
-        await message.answer(f"Faol zakazlar:\n\n{active_orders}\nQaysi zakazning holatini o'zgartirmoqchisiz? Zakaz ID-sini kiriting:", parse_mode="Markdown")
+        await message.answer(f"Faol zakazlar:\n\n{active_orders}\nQaysi zakazning holatini o'zgartirmoqchisiz? Zakaz ID-sini kiriting:")
         await state.set_state(DeliveryControlState.order_id)
 
 @dp.message(DeliveryControlState.order_id)
