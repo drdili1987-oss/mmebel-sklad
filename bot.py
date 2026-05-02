@@ -3,7 +3,8 @@ import asyncio
 import uuid
 import os
 import aiohttp
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+TASHKENT_TZ = timezone(timedelta(hours=5))
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
@@ -440,7 +441,7 @@ async def process_client_kirim(message: types.Message, state: FSMContext):
         await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
         
         # Tarixga yozish
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
         record = {'type': 'Kirim', 'amount': amount, 'timestamp': timestamp, 'note': "Mijoz pul berdi"}
         await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
         
@@ -470,7 +471,7 @@ async def process_client_chiqim(message: types.Message, state: FSMContext):
         await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
         
         # Tarixga yozish
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
         record = {'type': 'Chiqim', 'amount': amount, 'timestamp': timestamp, 'note': "Mijoz qarzi ko'paydi"}
         await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
         
@@ -760,8 +761,8 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
     product_id = order_ref.get('product_id', 'Noma\'lum') if order_ref else 'Noma\'lum'
     
     # Save delivery report
-    current_month = datetime.now().strftime("%Y-%m")
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
+    timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
     delivery_record = {
         'order_id': order_id,
         'client': client,
@@ -795,7 +796,7 @@ class DriverReportState(StatesGroup):
 @dp.message(F.text == "🚚 Dostavkachilar hisoboti")
 async def driver_report_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'admin':
-        current_month = datetime.now().strftime("%Y-%m")
+        current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
         deliveries_ref = await asyncio.to_thread(db.reference(f'deliveries/{current_month}').get)
         
         if not deliveries_ref:
@@ -902,7 +903,7 @@ async def process_driver_chiqim(message: types.Message, state: FSMContext):
         new_bal = current_bal - amount
         await asyncio.to_thread(db.reference(f'driver_balances/{driver_name}').set, new_bal)
         
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
         record = {'type': 'Chiqim', 'amount': amount, 'timestamp': timestamp, 'note': "Pul berildi"}
         await asyncio.to_thread(db.reference(f'transactions/drivers/{driver_name}').push, record)
         
@@ -930,7 +931,7 @@ async def process_driver_kirim(message: types.Message, state: FSMContext):
         new_bal = current_bal + amount
         await asyncio.to_thread(db.reference(f'driver_balances/{driver_name}').set, new_bal)
         
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
         record = {'type': 'Kirim', 'amount': amount, 'timestamp': timestamp, 'note': "Pul qaytardi / Haqqi yozildi"}
         await asyncio.to_thread(db.reference(f'transactions/drivers/{driver_name}').push, record)
         
@@ -970,8 +971,8 @@ async def delivery_history_start(message: types.Message, state: FSMContext):
         # Show last 6 months as keyboard buttons
         months = []
         for i in range(6):
-            m = (datetime.now().month - i - 1) % 12 + 1
-            y = datetime.now().year + (datetime.now().month - i - 1) // 12
+            m = (datetime.now(TASHKENT_TZ).month - i - 1) % 12 + 1
+            y = datetime.now(TASHKENT_TZ).year + (datetime.now(TASHKENT_TZ).month - i - 1) // 12
             if m <= 0:
                 m += 12
                 y -= 1
