@@ -495,18 +495,29 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
             return
             
         active_orders = ""
+        buttons = []
+        row = []
         for o_id, o in orders_ref.items():
             if isinstance(o, dict) and o.get('status') in ['Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi']:
                 active_orders += f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n📅 Muddat: {o.get('due_date')}\n"
                 if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
                     active_orders += f"📝 Izoh: {o.get('comment')}\n"
                 active_orders += f"📌 Holati: {o.get('status')}\n\n"
+                row.append(types.KeyboardButton(text=str(o_id)))
+                if len(row) == 2:
+                    buttons.append(row)
+                    row = []
+        
+        if row:
+            buttons.append(row)
+        buttons.append([types.KeyboardButton(text="Bosh menyu")])
         
         if not active_orders:
             await message.answer("Barcha zakazlar yetkazib berilgan yoki faol zakazlar yo'q.")
             return
             
-        await message.answer(f"Faol zakazlar:\n\n{active_orders}\nQaysi zakazning holatini o'zgartirmoqchisiz? Zakaz ID-sini kiriting:")
+        markup = types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+        await message.answer(f"Faol zakazlar:\n\n{active_orders}\nQaysi zakazning holatini o'zgartirmoqchisiz? Zakaz ID-sini tanlang:", reply_markup=markup)
         await state.set_state(DeliveryControlState.order_id)
 
 @dp.message(DeliveryControlState.order_id)
@@ -521,8 +532,9 @@ async def delivery_order_id(message: types.Message, state: FSMContext):
     
     markup = types.ReplyKeyboardMarkup(
         keyboard=[
-            [types.KeyboardButton(text="Mijozni o'zi olib ketdi"), types.KeyboardButton(text="Biz yetkazib berdik")],
-            [types.KeyboardButton(text="Bekor qilindi"), types.KeyboardButton(text="Bosh menyu")]
+            [types.KeyboardButton(text="Tayyor bo'ldi"), types.KeyboardButton(text="Biz yetkazib berdik")],
+            [types.KeyboardButton(text="Mijozni o'zi olib ketdi"), types.KeyboardButton(text="Bekor qilindi")],
+            [types.KeyboardButton(text="Bosh menyu")]
         ],
         resize_keyboard=True
     )
@@ -540,7 +552,7 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
     data = await state.get_data()
     new_status = message.text
     
-    if new_status in ["Mijozni o'zi olib ketdi", "Bekor qilindi"]:
+    if new_status in ["Mijozni o'zi olib ketdi", "Bekor qilindi", "Tayyor bo'ldi"]:
         await asyncio.to_thread(db.reference(f"orders/{data['order_id']}").update, {'status': new_status})
         await message.answer(f"✅ Zakaz holati yangilandi: {new_status}", reply_markup=main_menu('omborchi'))
         
