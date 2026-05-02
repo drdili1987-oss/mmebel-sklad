@@ -680,23 +680,40 @@ async def driver_report_start(message: types.Message, state: FSMContext):
         driver_stats = {}
         report_text = f"📊 **{current_month} oyi uchun dostavchilar hisoboti:**\n\n"
         
+        import re
         for d_id, d in deliveries_ref.items():
             if isinstance(d, dict):
                 driver = d.get('driver', 'Noma\'lum')
-                price = d.get('price', '0')
+                price = str(d.get('price', '0'))
                 client = d.get('client', 'Noma\'lum')
                 
                 if driver not in driver_stats:
-                    driver_stats[driver] = {'count': 0, 'total_price': [], 'clients': []}
+                    driver_stats[driver] = {'count': 0, 'total_price': [], 'clients': [], 'sum_dollar': 0, 'sum_som': 0}
                     
                 driver_stats[driver]['count'] += 1
                 driver_stats[driver]['total_price'].append(price)
                 driver_stats[driver]['clients'].append(f"{client} ({price})")
                 
+                nums = re.findall(r'\d+', price)
+                if nums:
+                    val = int(nums[0])
+                    if '$' in price:
+                        driver_stats[driver]['sum_dollar'] += val
+                    else:
+                        driver_stats[driver]['sum_som'] += val
+                
         for driver_name, stats in driver_stats.items():
             report_text += f"🚚 **{driver_name}**\n"
             report_text += f"📦 Jami dostavkalar: {stats['count']} ta\n"
-            report_text += f"💰 Narxlar: {', '.join(stats['total_price'])}\n"
+            
+            sums_arr = []
+            if stats['sum_dollar'] > 0:
+                sums_arr.append(f"{stats['sum_dollar']}$")
+            if stats['sum_som'] > 0:
+                sums_arr.append(f"{stats['sum_som']} so'm")
+            sum_text = " + ".join(sums_arr) if sums_arr else "0"
+            
+            report_text += f"💰 Narxlar: {', '.join(stats['total_price'])} (Jami: {sum_text})\n"
             report_text += f"👥 Mijozlar: {', '.join(stats['clients'])}\n\n"
             
         await message.answer(report_text, parse_mode="Markdown")
