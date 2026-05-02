@@ -15,9 +15,9 @@ from firebase_admin import credentials, db
 
 # Doimiy mijozlar ro'yxati
 REGULAR_CLIENTS = [
-    "Comfort", "Iskandar", "Shaxriyor aka", "Baxrom Uchtepa", 
-    "Baxrom 9703", "Bahodir aka", "Akrom aka", "Zoʻr mebel", 
-    "Umid", "Akmal aka", "Doʻkon 707", "Farxod Jomiy"
+    "Comfort", "Iskandar", "Grand plaza", "Baxrom Uchtepa", 
+    "Baxrom 9703", "Bahodir aka🚛", "Bahodir aka Andijon", "Akrom aka", 
+    "Zoʻr mebel", "Umid", "Akmal aka", "Doʻkon 707", "Farxod Jomiy", "Munosib Mebel"
 ]
 
 def get_clients_keyboard():
@@ -32,12 +32,22 @@ def get_clients_keyboard():
     return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 FAVORITE_MODELS = [
-    "BF 06", "BF 07", "BF 09", "BF 244", "BF 264", "BF 274", "BF 294", "BF 246", "BF 266", "BF 276", "BF 2761", "BF 296",
-    "BF 32", "BF 33", "BF 34", "BF 35", "BF 37", "BF 38", "BF 321", "BF 331", "BF 341", "BF 351", "BF 371", "BF 381", "BF 391",
-    "BF 44", "BF 45", "BF 544", "BF 574", "BF 594", "BF 54-41", "BF 57-41", "BF 59-41", "BF 63", "BF 64", "BF 65", "BF 68",
-    "BF 707", "BF 708", "BF 709", "BF 762", "BF 752", "BF 772", "BF 713", "BF 753", "BF 763",
-    "D 100", "D 106", "D 109", "D 50", "D 59", "D 003", "D 004", "D 005", "D 006",
-    "BF 792"
+    "BF 06", "BF 07", "BF 09", 
+    "BF 12", "BF 14", "BF 15", "BF 18",
+    "BF 244", "BF 264", "BF 274", "BF 294",
+    "BF 246", "BF 266", "BF 276", "BF 296",
+    "BF 32", "BF 33", "BF 34", "BF 35", "BF 37", "BF 38", "BF 39",
+    "BF 321", "BF 331", "BF 341", "BF 351", "BF 371", "BF 381", "BF 391",
+    "BF 44", "BF 45",
+    "BF 544", "BF 574", "BF 594",
+    "BF 54-41", "BF 57-41", "BF 59-41",
+    "BF 63", "BF 64", "BF 65", "BF 68",
+    "BF 707", "BF 708", "BF 709",
+    "BF 762", "BF 752", "BF 772",
+    "BF 713", "BF 753", "BF 763",
+    "D 100", "D 106", "D 109",
+    "D 50", "D 59",
+    "D 003", "D 004", "D 006", "D 005"
 ]
 
 def get_models_keyboard():
@@ -117,12 +127,13 @@ def main_menu(role):
         buttons = [
             [types.KeyboardButton(text="➕ Yangi mebel"), types.KeyboardButton(text="💰 Narxni o'zgartirish")],
             [types.KeyboardButton(text="📦 Sklad qoldig'i"), types.KeyboardButton(text="📝 Yangi zakaz")],
-            [types.KeyboardButton(text="📊 Mijozlar hisoboti"), types.KeyboardButton(text="🚚 Dostavchilar hisoboti")]
+            [types.KeyboardButton(text="📊 Mijozlar hisoboti"), types.KeyboardButton(text="🚚 Dostavkachilar hisoboti")],
+            [types.KeyboardButton(text="🕰 Dostavka tarixi")]
         ]
     elif role == 'omborchi':
         buttons = [
-            [types.KeyboardButton(text="🔄 Skladni yangilash"), types.KeyboardButton(text="🚚 Dostavka nazorati")],
-            [types.KeyboardButton(text="📦 Sklad qoldig'i")]
+            [types.KeyboardButton(text="➕ Yangi mebel"), types.KeyboardButton(text="🔄 Skladni yangilash")],
+            [types.KeyboardButton(text="🚚 Dostavka nazorati"), types.KeyboardButton(text="📦 Sklad qoldig'i")]
         ]
     elif role == 'ishchi':
         buttons = [
@@ -135,7 +146,7 @@ def main_menu(role):
 # --- BOSH MENYU / BEKOR QILISH ---
 MAIN_MENU_BUTTONS = {
     "Bosh menyu", "➕ Yangi mebel", "💰 Narxni o'zgartirish", "📦 Sklad qoldig'i", 
-    "📝 Yangi zakaz", "📊 Mijozlar hisoboti", "🚚 Dostavchilar hisoboti",
+    "📝 Yangi zakaz", "📊 Mijozlar hisoboti", "🚚 Dostavkachilar hisoboti", "🕰 Dostavka tarixi",
     "🔄 Skladni yangilash", "🚚 Dostavka nazorati", "🔨 Faol zakazlar", "🛍 Sotuvdagi mebellar"
 }
 
@@ -164,7 +175,8 @@ async def cmd_start(message: types.Message):
 # --- ADMIN: MEBEL QO'SHISH ---
 @dp.message(F.text == "➕ Yangi mebel")
 async def add_product_start(message: types.Message, state: FSMContext):
-    if await get_user_role(message.from_user.id) == 'admin':
+    role = await get_user_role(message.from_user.id)
+    if role in ['admin', 'omborchi']:
         await message.answer("Qaysi mebelni qo'shmoqchisiz? Shablondan tanlang yoki yozing:", reply_markup=get_models_keyboard())
         await state.set_state(ProductState.name)
 
@@ -437,10 +449,10 @@ async def notify_warehouse(order_data, order_id):
     except Exception as e:
         print(f"Omborchiga xabar yuborishda xatolik: {e}")
 
-    # Omborchi user ID sini Firebase dan olish (boshqalar bo'lsa)
-    omborchi_ref = await asyncio.to_thread(db.reference('users').get)
-    for user_id, user_data in (omborchi_ref or {}).items():
-        if user_data.get('role') == 'omborchi' and int(user_id) != 883589794:
+    # Omborchi va ishchilarga xabar yuborish
+    users_ref = await asyncio.to_thread(db.reference('users').get)
+    for user_id, user_data in (users_ref or {}).items():
+        if user_data.get('role') in ['omborchi', 'ishchi'] and int(user_id) != 883589794:
             try:
                 await bot.send_message(
                     int(user_id),
@@ -453,7 +465,7 @@ async def notify_warehouse(order_data, order_id):
                     f"🆔 Zakaz ID: {order_id}"
                 )
             except Exception as e:
-                print(f"Omborchiga xabar yuborishda xatolik: {e}")
+                print(f"Xodimga xabar yuborishda xatolik: {e}")
 
 # --- ISHCHI: FAOL ZAKAZLAR ---
 @dp.message(F.text == "🔨 Faol zakazlar")
@@ -581,14 +593,27 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
         await asyncio.to_thread(db.reference(f"orders/{data['order_id']}").update, {'status': new_status})
         await message.answer(f"✅ Zakaz holati yangilandi: {new_status}", reply_markup=main_menu('omborchi'))
         
-        # Notify admin
-        admin_ref = await asyncio.to_thread(db.reference('users').get)
-        for user_id, user_data in (admin_ref or {}).items():
+        # Notify admin and workers
+        users_ref = await asyncio.to_thread(db.reference('users').get)
+        order_ref = await asyncio.to_thread(db.reference(f"orders/{data['order_id']}").get)
+        product_id = order_ref.get('product_id', 'Noma\'lum') if order_ref else 'Noma\'lum'
+        amount = order_ref.get('amount', 1) if order_ref else 1
+        
+        for user_id, user_data in (users_ref or {}).items():
             if user_data.get('role') == 'admin':
                 try:
                     await bot.send_message(
                         int(user_id),
                         f"📦 **Zakaz holati o'zgardi!**\n\n🆔 ID: `{data['order_id']}`\n🧑 Mijoz: {data['client']}\n📌 Yangi holat: {new_status}",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
+            elif user_data.get('role') == 'ishchi' and new_status == "Tayyor bo'ldi":
+                try:
+                    await bot.send_message(
+                        int(user_id),
+                        f"✅ **Mahsulot tayyor bo'ldi!**\n\n🆔 Zakaz ID: `{data['order_id']}`\n🧑 Mijoz: {data['client']}\n📦 Mebel: {product_id}\n📊 Soni: {amount} ta",
                         parse_mode="Markdown"
                     )
                 except Exception:
@@ -661,14 +686,20 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
         'delivery_price': price
     })
     
+    # Get product_id for history
+    order_ref = await asyncio.to_thread(db.reference(f"orders/{order_id}").get)
+    product_id = order_ref.get('product_id', 'Noma\'lum') if order_ref else 'Noma\'lum'
+    
     # Save delivery report
     current_month = datetime.now().strftime("%Y-%m")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     delivery_record = {
         'order_id': order_id,
         'client': client,
         'driver': driver,
         'price': price,
-        'timestamp': datetime.now().isoformat()
+        'product_id': product_id,
+        'timestamp': timestamp
     }
     await asyncio.to_thread(db.reference(f"deliveries/{current_month}").push, delivery_record)
     
@@ -692,7 +723,7 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
 class DriverReportState(StatesGroup):
     select_month = State()
 
-@dp.message(F.text == "🚚 Dostavchilar hisoboti")
+@dp.message(F.text == "🚚 Dostavkachilar hisoboti")
 async def driver_report_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'admin':
         current_month = datetime.now().strftime("%Y-%m")
@@ -703,7 +734,7 @@ async def driver_report_start(message: types.Message, state: FSMContext):
             return
             
         driver_stats = {}
-        report_text = f"📊 **{current_month} oyi uchun dostavchilar hisoboti:**\n\n"
+        report_text = f"📊 **{current_month} oyi uchun dostavkachilar hisoboti:**\n\n"
         
         import re
         for d_id, d in deliveries_ref.items():
@@ -742,6 +773,63 @@ async def driver_report_start(message: types.Message, state: FSMContext):
             report_text += f"👥 Mijozlar: {', '.join(stats['clients'])}\n\n"
             
         await message.answer(report_text, parse_mode="Markdown")
+
+class HistoryState(StatesGroup):
+    select_month = State()
+
+@dp.message(F.text == "🕰 Dostavka tarixi")
+async def delivery_history_start(message: types.Message, state: FSMContext):
+    if await get_user_role(message.from_user.id) == 'admin':
+        # Show last 6 months as keyboard buttons
+        months = []
+        for i in range(6):
+            m = (datetime.now().month - i - 1) % 12 + 1
+            y = datetime.now().year + (datetime.now().month - i - 1) // 12
+            if m <= 0:
+                m += 12
+                y -= 1
+            months.append(f"{y}-{m:02d}")
+        
+        buttons = []
+        for i in range(0, len(months), 2):
+            row = [types.KeyboardButton(text=months[i])]
+            if i + 1 < len(months):
+                row.append(types.KeyboardButton(text=months[i+1]))
+            buttons.append(row)
+        buttons.append([types.KeyboardButton(text="Bosh menyu")])
+        
+        await message.answer("Qaysi oy tarixini ko'rmoqchisiz?", reply_markup=types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True))
+        await state.set_state(HistoryState.select_month)
+
+@dp.message(HistoryState.select_month)
+async def show_delivery_history(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        await state.clear()
+        return
+        
+    month = message.text
+    deliveries_ref = await asyncio.to_thread(db.reference(f'deliveries/{month}').get)
+    if not deliveries_ref:
+        await message.answer(f"{month} oyida hech qanday yetkazib berishlar yo'q.")
+        return
+        
+    history_text = f"🕰 **{month} oyi dostavka tarixi:**\n\n"
+    for d_id, d in deliveries_ref.items():
+        if isinstance(d, dict):
+            history_text += f"📅 Vaqt: {d.get('timestamp', 'Noma\'lum')}\n"
+            history_text += f"🧑 Mijoz: {d.get('client', 'Noma\'lum')}\n"
+            history_text += f"📦 Mebel: {d.get('product_id', 'Noma\'lum')}\n"
+            history_text += f"🚚 Dostavchik: {d.get('driver', 'Noma\'lum')} ({d.get('price', '0')})\n\n"
+            
+    # Send in chunks if it's too long
+    if len(history_text) > 4000:
+        for x in range(0, len(history_text), 4000):
+            await message.answer(history_text[x:x+4000], parse_mode="Markdown")
+    else:
+        await message.answer(history_text, parse_mode="Markdown")
+
 
 @dp.message(StateFilter('*'))
 async def fallback_handler(message: types.Message, state: FSMContext):
