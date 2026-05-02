@@ -139,7 +139,7 @@ MAIN_MENU_BUTTONS = {
     "🔄 Skladni yangilash", "🚚 Dostavka nazorati", "🔨 Faol zakazlar", "🛍 Sotuvdagi mebellar"
 }
 
-@dp.message(F.text.in_(MAIN_MENU_BUTTONS), StateFilter("*"))
+@dp.message(F.text.in_(MAIN_MENU_BUTTONS), ~StateFilter(None))
 async def main_menu_interceptor(message: types.Message, state: FSMContext):
     role = await get_user_role(message.from_user.id)
     await state.clear()
