@@ -3,6 +3,7 @@ import asyncio
 import uuid
 import os
 import aiohttp
+from datetime import datetime
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -91,6 +92,9 @@ class UpdateStockState(StatesGroup):
 class DeliveryControlState(StatesGroup):
     order_id = State()
     new_status = State()
+    driver = State()
+    delivery_price = State()
+    custom_price = State()
 
 # 4. Rollarni Tekshirish (RTDB dan)
 async def get_user_role(user_id):
@@ -113,7 +117,7 @@ def main_menu(role):
         buttons = [
             [types.KeyboardButton(text="➕ Yangi mebel"), types.KeyboardButton(text="💰 Narxni o'zgartirish")],
             [types.KeyboardButton(text="📦 Sklad qoldig'i"), types.KeyboardButton(text="📝 Yangi zakaz")],
-            [types.KeyboardButton(text="📊 Mijozlar hisoboti")]
+            [types.KeyboardButton(text="📊 Mijozlar hisoboti"), types.KeyboardButton(text="🚚 Dostavchilar hisoboti")]
         ]
     elif role == 'omborchi':
         buttons = [
@@ -517,9 +521,8 @@ async def delivery_order_id(message: types.Message, state: FSMContext):
     
     markup = types.ReplyKeyboardMarkup(
         keyboard=[
-            [types.KeyboardButton(text="Tayyor bo'ldi"), types.KeyboardButton(text="Yuborildi")],
-            [types.KeyboardButton(text="Yetkazib berildi"), types.KeyboardButton(text="Bekor qilindi")],
-            [types.KeyboardButton(text="Bosh menyu")]
+            [types.KeyboardButton(text="Mijozni o'zi olib ketdi"), types.KeyboardButton(text="Biz yetkazib berdik")],
+            [types.KeyboardButton(text="Bekor qilindi"), types.KeyboardButton(text="Bosh menyu")]
         ],
         resize_keyboard=True
     )
@@ -536,9 +539,103 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
         
     data = await state.get_data()
     new_status = message.text
-    await asyncio.to_thread(db.reference(f"orders/{data['order_id']}").update, {'status': new_status})
     
-    await message.answer(f"✅ Zakaz holati yangilandi: {new_status}", reply_markup=main_menu('omborchi'))
+    if new_status in ["Mijozni o'zi olib ketdi", "Bekor qilindi"]:
+        await asyncio.to_thread(db.reference(f"orders/{data['order_id']}").update, {'status': new_status})
+        await message.answer(f"✅ Zakaz holati yangilandi: {new_status}", reply_markup=main_menu('omborchi'))
+        
+        # Notify admin
+        admin_ref = await asyncio.to_thread(db.reference('users').get)
+        for user_id, user_data in (admin_ref or {}).items():
+            if user_data.get('role') == 'admin':
+                try:
+                    await bot.send_message(
+                        int(user_id),
+                        f"📦 **Zakaz holati o'zgardi!**\n\n🆔 ID: `{data['order_id']}`\n🧑 Mijoz: {data['client']}\n📌 Yangi holat: {new_status}",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
+                    
+        await state.clear()
+        return
+        
+    elif new_status == "Biz yetkazib berdik":
+        await state.update_data(new_status=new_status)
+        markup = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [types.KeyboardButton(text="Dilmurod"), types.KeyboardButton(text="Bahodir aka")],
+                [types.KeyboardButton(text="Javxar"), types.KeyboardButton(text="Baxrom")],
+                [types.KeyboardButton(text="Boshqa"), types.KeyboardButton(text="Bosh menyu")]
+            ],
+            resize_keyboard=True
+        )
+        await message.answer("Yetkazib bergan dastavchikni tanlang:", reply_markup=markup)
+        await state.set_state(DeliveryControlState.driver)
+        return
+
+@dp.message(DeliveryControlState.driver)
+async def delivery_driver(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        await message.answer("Bosh menyu", reply_markup=main_menu('omborchi'))
+        await state.clear()
+        return
+        
+    await state.update_data(driver=message.text)
+    markup = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="6$"), types.KeyboardButton(text="8$")],
+            [types.KeyboardButton(text="Boshqa narx"), types.KeyboardButton(text="Bosh menyu")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer("Dostavka narxini belgilang:", reply_markup=markup)
+    await state.set_state(DeliveryControlState.delivery_price)
+
+@dp.message(DeliveryControlState.delivery_price)
+async def delivery_price_handler(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        await message.answer("Bosh menyu", reply_markup=main_menu('omborchi'))
+        await state.clear()
+        return
+        
+    if message.text == "Boshqa narx":
+        await message.answer("Iltimos, narxni kiriting (masalan: 10$ yoki 100000 so'm):", reply_markup=types.ReplyKeyboardRemove())
+        await state.set_state(DeliveryControlState.custom_price)
+        return
+        
+    await process_delivery_final(message.text, message, state)
+
+@dp.message(DeliveryControlState.custom_price)
+async def delivery_custom_price(message: types.Message, state: FSMContext):
+    await process_delivery_final(message.text, message, state)
+
+async def process_delivery_final(price, message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    order_id = data['order_id']
+    new_status = data['new_status']
+    driver = data['driver']
+    client = data['client']
+    
+    # Update order
+    await asyncio.to_thread(db.reference(f"orders/{order_id}").update, {
+        'status': new_status,
+        'driver': driver,
+        'delivery_price': price
+    })
+    
+    # Save delivery report
+    current_month = datetime.now().strftime("%Y-%m")
+    delivery_record = {
+        'order_id': order_id,
+        'client': client,
+        'driver': driver,
+        'price': price,
+        'timestamp': datetime.now().isoformat()
+    }
+    await asyncio.to_thread(db.reference(f"deliveries/{current_month}").push, delivery_record)
+    
+    await message.answer(f"✅ Zakaz holati yangilandi: {new_status}\n🚚 Dostavchik: {driver}\n💵 Narxi: {price}", reply_markup=main_menu('omborchi'))
     
     # Notify admin
     admin_ref = await asyncio.to_thread(db.reference('users').get)
@@ -547,13 +644,50 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
             try:
                 await bot.send_message(
                     int(user_id),
-                    f"📦 **Zakaz holati o'zgardi!**\n\n🆔 ID: `{data['order_id']}`\n🧑 Mijoz: {data['client']}\n📌 Yangi holat: {new_status}",
+                    f"📦 **Zakaz holati o'zgardi!**\n\n🆔 ID: `{order_id}`\n🧑 Mijoz: {client}\n📌 Yangi holat: {new_status}\n🚚 Dostavchik: {driver}\n💵 Narxi: {price}",
                     parse_mode="Markdown"
                 )
             except Exception:
                 pass
                 
     await state.clear()
+
+class DriverReportState(StatesGroup):
+    select_month = State()
+
+@dp.message(F.text == "🚚 Dostavchilar hisoboti")
+async def driver_report_start(message: types.Message, state: FSMContext):
+    if await get_user_role(message.from_user.id) == 'admin':
+        current_month = datetime.now().strftime("%Y-%m")
+        deliveries_ref = await asyncio.to_thread(db.reference(f'deliveries/{current_month}').get)
+        
+        if not deliveries_ref:
+            await message.answer(f"Ushbu oy ({current_month}) uchun dostavka qilingan zakazlar topilmadi.")
+            return
+            
+        driver_stats = {}
+        report_text = f"📊 **{current_month} oyi uchun dostavchilar hisoboti:**\n\n"
+        
+        for d_id, d in deliveries_ref.items():
+            if isinstance(d, dict):
+                driver = d.get('driver', 'Noma\'lum')
+                price = d.get('price', '0')
+                client = d.get('client', 'Noma\'lum')
+                
+                if driver not in driver_stats:
+                    driver_stats[driver] = {'count': 0, 'total_price': [], 'clients': []}
+                    
+                driver_stats[driver]['count'] += 1
+                driver_stats[driver]['total_price'].append(price)
+                driver_stats[driver]['clients'].append(f"{client} ({price})")
+                
+        for driver_name, stats in driver_stats.items():
+            report_text += f"🚚 **{driver_name}**\n"
+            report_text += f"📦 Jami dostavkalar: {stats['count']} ta\n"
+            report_text += f"💰 Narxlar: {', '.join(stats['total_price'])}\n"
+            report_text += f"👥 Mijozlar: {', '.join(stats['clients'])}\n\n"
+            
+        await message.answer(report_text, parse_mode="Markdown")
 
 async def handle(request):
     return web.Response(text="Bot is running")
