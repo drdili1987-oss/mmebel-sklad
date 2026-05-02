@@ -87,6 +87,16 @@ class UpdatePriceState(StatesGroup):
     product_id = State()
     new_price = State()
 
+class FinanceState(StatesGroup):
+    client_name = State()
+    amount_kirim = State()
+    amount_chiqim = State()
+
+class DriverFinanceState(StatesGroup):
+    driver_name = State()
+    amount_kirim = State()
+    amount_chiqim = State()
+
 class OrderState(StatesGroup):
     client = State()      # Mijoz ismi
     custom_client = State() # Agar boshqa bosilsa
@@ -357,10 +367,6 @@ async def process_comment(message: types.Message, state: FSMContext):
 class ReportState(StatesGroup):
     select_client = State()
 
-class DebtState(StatesGroup):
-    client_name = State()
-    new_debt = State()
-
 @dp.message(F.text == "📊 Mijozlar hisoboti")
 async def report_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'admin':
@@ -402,7 +408,9 @@ async def show_client_report(message: types.Message, state: FSMContext):
         
     markup = types.ReplyKeyboardMarkup(
         keyboard=[
-            [types.KeyboardButton(text=f"💳 {client_name} qarzini o'zgartirish")],
+            [types.KeyboardButton(text=f"➕ {client_name} dan Pul Olish (Kirim)")],
+            [types.KeyboardButton(text=f"➖ {client_name} ga Pul Berish (Chiqim)")],
+            [types.KeyboardButton(text=f"📜 {client_name} To'lovlar Tarixi")],
             [types.KeyboardButton(text="Bosh menyu")]
         ],
         resize_keyboard=True
@@ -411,26 +419,87 @@ async def show_client_report(message: types.Message, state: FSMContext):
     await message.answer(report_text, parse_mode="Markdown", reply_markup=markup)
     await state.clear()
 
-@dp.message(F.text.startswith("💳 ") and F.text.endswith(" qarzini o'zgartirish"))
-async def change_debt_start(message: types.Message, state: FSMContext):
+@dp.message(F.text.contains("dan Pul Olish (Kirim)"))
+async def client_kirim_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'admin':
-        client_name = message.text[2:-21] # extract name
+        client_name = message.text.replace("➕ ", "").replace(" dan Pul Olish (Kirim)", "").strip()
         await state.update_data(client_name=client_name)
-        await message.answer(f"{client_name} uchun yangi qarz summasini kiriting (faqat raqamlarda):\n(Qarzi yo'q bo'lsa 0 kiriting)", reply_markup=types.ReplyKeyboardRemove())
-        await state.set_state(DebtState.new_debt)
-        
-@dp.message(DebtState.new_debt)
-async def process_new_debt(message: types.Message, state: FSMContext):
+        await message.answer(f"👤 {client_name} dan olingan pul summasini kiriting (faqat raqam):", reply_markup=types.ReplyKeyboardRemove())
+        await state.set_state(FinanceState.amount_kirim)
+
+@dp.message(FinanceState.amount_kirim)
+async def process_client_kirim(message: types.Message, state: FSMContext):
     data = await state.get_data()
     client_name = data['client_name']
-    
     try:
-        new_debt = int(message.text)
+        amount = int(message.text)
+        # Qarzni kamaytirish
+        debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
+        current_debt = debt_ref if debt_ref is not None else 0
+        new_debt = current_debt - amount
         await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
-        await message.answer(f"✅ {client_name} qarzi yangilandi: {new_debt} so'm", reply_markup=main_menu('admin'))
+        
+        # Tarixga yozish
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        record = {'type': 'Kirim', 'amount': amount, 'timestamp': timestamp, 'note': "Mijoz pul berdi"}
+        await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
+        
+        await message.answer(f"✅ {client_name} dan {amount} so'm qabul qilindi.\n💳 Yangi qarzi: {new_debt} so'm", reply_markup=main_menu('admin'))
         await state.clear()
     except ValueError:
         await message.answer("Iltimos, faqat raqam kiriting:")
+
+@dp.message(F.text.contains("ga Pul Berish (Chiqim)"))
+async def client_chiqim_start(message: types.Message, state: FSMContext):
+    if await get_user_role(message.from_user.id) == 'admin':
+        client_name = message.text.replace("➖ ", "").replace(" ga Pul Berish (Chiqim)", "").strip()
+        await state.update_data(client_name=client_name)
+        await message.answer(f"👤 {client_name} ga qarz sifatida yoziladigan yoki qaytariladigan pul summasini kiriting (faqat raqam):", reply_markup=types.ReplyKeyboardRemove())
+        await state.set_state(FinanceState.amount_chiqim)
+
+@dp.message(FinanceState.amount_chiqim)
+async def process_client_chiqim(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    client_name = data['client_name']
+    try:
+        amount = int(message.text)
+        # Qarzni ko'paytirish
+        debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
+        current_debt = debt_ref if debt_ref is not None else 0
+        new_debt = current_debt + amount
+        await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
+        
+        # Tarixga yozish
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        record = {'type': 'Chiqim', 'amount': amount, 'timestamp': timestamp, 'note': "Mijoz qarzi ko'paydi"}
+        await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
+        
+        await message.answer(f"✅ {client_name} qarziga {amount} so'm qo'shildi.\n💳 Yangi qarzi: {new_debt} so'm", reply_markup=main_menu('admin'))
+        await state.clear()
+    except ValueError:
+        await message.answer("Iltimos, faqat raqam kiriting:")
+
+@dp.message(F.text.contains("To'lovlar Tarixi"))
+async def client_history(message: types.Message):
+    if await get_user_role(message.from_user.id) == 'admin':
+        client_name = message.text.replace("📜 ", "").replace(" To'lovlar Tarixi", "").strip()
+        trans_ref = await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').get)
+        if not trans_ref:
+            await message.answer(f"👤 {client_name} bo'yicha to'lovlar tarixi yo'q.")
+            return
+            
+        history = f"📜 **{client_name} to'lovlar (Kirim/Chiqim) tarixi:**\n\n"
+        for t_id, t in trans_ref.items():
+            if isinstance(t, dict):
+                icon = "🟢" if t.get('type') == 'Kirim' else "🔴"
+                history += f"{icon} {t.get('type')}: {t.get('amount')} so'm\n"
+                history += f"📅 Sana: {t.get('timestamp')}\n\n"
+            
+        if len(history) > 4000:
+            for x in range(0, len(history), 4000):
+                await message.answer(history[x:x+4000], parse_mode="Markdown")
+        else:
+            await message.answer(history, parse_mode="Markdown")
 
 # Omborchiga yangi zakaz haqida xabar yuborish
 async def notify_warehouse(order_data, order_id):
@@ -772,7 +841,125 @@ async def driver_report_start(message: types.Message, state: FSMContext):
             report_text += f"💰 Narxlar: {', '.join(stats['total_price'])} (Jami: {sum_text})\n"
             report_text += f"👥 Mijozlar: {', '.join(stats['clients'])}\n\n"
             
-        await message.answer(report_text, parse_mode="Markdown")
+        drivers = list(driver_stats.keys())
+        if "Dilmurod" not in drivers: drivers.append("Dilmurod")
+        if "Bahodir aka" not in drivers: drivers.append("Bahodir aka")
+        if "Javxar" not in drivers: drivers.append("Javxar")
+        if "Baxrom" not in drivers: drivers.append("Baxrom")
+        
+        buttons = []
+        for i in range(0, len(drivers), 2):
+            row = [types.KeyboardButton(text=f"👨‍✈️ {drivers[i]}")]
+            if i + 1 < len(drivers):
+                row.append(types.KeyboardButton(text=f"👨‍✈️ {drivers[i+1]}"))
+            buttons.append(row)
+        buttons.append([types.KeyboardButton(text="Bosh menyu")])
+        markup = types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+            
+        await message.answer(report_text, parse_mode="Markdown", reply_markup=markup)
+
+@dp.message(F.text.startswith("👨‍✈️ "))
+async def select_driver_finance(message: types.Message):
+    if await get_user_role(message.from_user.id) == 'admin':
+        driver_name = message.text.replace("👨‍✈️ ", "").strip()
+        
+        bal_ref = await asyncio.to_thread(db.reference(f'driver_balances/{driver_name}').get)
+        current_bal = bal_ref if bal_ref is not None else 0
+        
+        markup = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [types.KeyboardButton(text=f"➕ {driver_name} ga Pul Berish (D. Chiqim)")],
+                [types.KeyboardButton(text=f"➖ {driver_name} dan Pul Qaytardi (D. Kirim)")],
+                [types.KeyboardButton(text=f"📜 {driver_name} Moliya Tarixi")],
+                [types.KeyboardButton(text="Bosh menyu")]
+            ],
+            resize_keyboard=True
+        )
+        
+        text = f"👨‍✈️ **Dostavkachi:** {driver_name}\n"
+        text += f"💳 **Joriy balansi (sizning qarzingiz/haqqingiz):** {current_bal} so'm\n\n"
+        text += "*(Eslatma: Bu balansga qilingan dostavkalar puli avtomatik qo'shilmaydi. Moliya bo'limi orqali hisob-kitobni o'zingiz yurgizasiz)*"
+        await message.answer(text, parse_mode="Markdown", reply_markup=markup)
+
+@dp.message(F.text.contains("ga Pul Berish (D. Chiqim)"))
+async def driver_chiqim_start(message: types.Message, state: FSMContext):
+    if await get_user_role(message.from_user.id) == 'admin':
+        driver_name = message.text.replace("➕ ", "").replace(" ga Pul Berish (D. Chiqim)", "").strip()
+        await state.update_data(driver_name=driver_name)
+        await message.answer(f"👨‍✈️ {driver_name} ga qancha pul berildi? (faqat raqam):", reply_markup=types.ReplyKeyboardRemove())
+        await state.set_state(DriverFinanceState.amount_chiqim)
+
+@dp.message(DriverFinanceState.amount_chiqim)
+async def process_driver_chiqim(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    driver_name = data['driver_name']
+    try:
+        amount = int(message.text)
+        bal_ref = await asyncio.to_thread(db.reference(f'driver_balances/{driver_name}').get)
+        current_bal = bal_ref if bal_ref is not None else 0
+        
+        # We give driver money -> decreases the debt we owe them (or makes them owe us)
+        new_bal = current_bal - amount
+        await asyncio.to_thread(db.reference(f'driver_balances/{driver_name}').set, new_bal)
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        record = {'type': 'Chiqim', 'amount': amount, 'timestamp': timestamp, 'note': "Pul berildi"}
+        await asyncio.to_thread(db.reference(f'transactions/drivers/{driver_name}').push, record)
+        
+        await message.answer(f"✅ {driver_name} ga {amount} so'm berildi.\n💳 Yangi balansi: {new_bal} so'm", reply_markup=main_menu('admin'))
+        await state.clear()
+    except ValueError:
+        await message.answer("Iltimos, faqat raqam kiriting:")
+
+@dp.message(F.text.contains("dan Pul Qaytardi (D. Kirim)"))
+async def driver_kirim_start(message: types.Message, state: FSMContext):
+    if await get_user_role(message.from_user.id) == 'admin':
+        driver_name = message.text.replace("➖ ", "").replace(" dan Pul Qaytardi (D. Kirim)", "").strip()
+        await state.update_data(driver_name=driver_name)
+        await message.answer(f"👨‍✈️ {driver_name} qancha pul qaytardi yoki haqqi qo'shildi? (faqat raqam):", reply_markup=types.ReplyKeyboardRemove())
+        await state.set_state(DriverFinanceState.amount_kirim)
+
+@dp.message(DriverFinanceState.amount_kirim)
+async def process_driver_kirim(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    driver_name = data['driver_name']
+    try:
+        amount = int(message.text)
+        bal_ref = await asyncio.to_thread(db.reference(f'driver_balances/{driver_name}').get)
+        current_bal = bal_ref if bal_ref is not None else 0
+        new_bal = current_bal + amount
+        await asyncio.to_thread(db.reference(f'driver_balances/{driver_name}').set, new_bal)
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        record = {'type': 'Kirim', 'amount': amount, 'timestamp': timestamp, 'note': "Pul qaytardi / Haqqi yozildi"}
+        await asyncio.to_thread(db.reference(f'transactions/drivers/{driver_name}').push, record)
+        
+        await message.answer(f"✅ {driver_name} hisobiga {amount} so'm qo'shildi.\n💳 Yangi balansi: {new_bal} so'm", reply_markup=main_menu('admin'))
+        await state.clear()
+    except ValueError:
+        await message.answer("Iltimos, faqat raqam kiriting:")
+
+@dp.message(F.text.contains("Moliya Tarixi"))
+async def driver_history(message: types.Message):
+    if await get_user_role(message.from_user.id) == 'admin':
+        driver_name = message.text.replace("📜 ", "").replace(" Moliya Tarixi", "").strip()
+        trans_ref = await asyncio.to_thread(db.reference(f'transactions/drivers/{driver_name}').get)
+        if not trans_ref:
+            await message.answer(f"👨‍✈️ {driver_name} bo'yicha moliya (Kirim/Chiqim) tarixi yo'q.")
+            return
+            
+        history = f"📜 **{driver_name} moliya tarixi:**\n\n"
+        for t_id, t in trans_ref.items():
+            if isinstance(t, dict):
+                icon = "🔴" if t.get('type') == 'Chiqim' else "🟢"
+                history += f"{icon} {t.get('type')}: {t.get('amount')} so'm\n"
+                history += f"📅 Sana: {t.get('timestamp')}\n\n"
+            
+        if len(history) > 4000:
+            for x in range(0, len(history), 4000):
+                await message.answer(history[x:x+4000], parse_mode="Markdown")
+        else:
+            await message.answer(history, parse_mode="Markdown")
 
 class HistoryState(StatesGroup):
     select_month = State()
