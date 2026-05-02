@@ -150,13 +150,18 @@ async def cmd_start(message: types.Message):
 @dp.message(F.text == "➕ Yangi mebel")
 async def add_product_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'admin':
-        await message.answer("Mebel nomini kiriting:")
+        await message.answer("Qaysi mebelni qo'shmoqchisiz? Shablondan tanlang yoki yozing:", reply_markup=get_models_keyboard())
         await state.set_state(ProductState.name)
 
 @dp.message(ProductState.name)
 async def add_name(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        await state.clear()
+        return
     await state.update_data(name=message.text)
-    await message.answer("Modelini kiriting (masalan: Spalniy):")
+    await message.answer("Modelini kiriting (masalan: Spalniy):", reply_markup=types.ReplyKeyboardRemove())
     await state.set_state(ProductState.model)
 
 @dp.message(ProductState.model)
@@ -717,6 +722,12 @@ async def driver_report_start(message: types.Message, state: FSMContext):
             report_text += f"👥 Mijozlar: {', '.join(stats['clients'])}\n\n"
             
         await message.answer(report_text, parse_mode="Markdown")
+
+@dp.message()
+async def fallback_handler(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    await state.clear()
+    await message.answer("Noto'g'ri buyruq yoki tushunarsiz matn kiritildi.\nIltimos, pastdagi tugmalardan foydalaning.", reply_markup=main_menu(role))
 
 async def handle(request):
     return web.Response(text="Bot is running")
