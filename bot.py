@@ -6,7 +6,7 @@ import aiohttp
 from datetime import datetime
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -133,7 +133,22 @@ def main_menu(role):
     return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 # --- BOSH MENYU / BEKOR QILISH ---
-@dp.message(F.text == "Bosh menyu")
+MAIN_MENU_BUTTONS = {
+    "Bosh menyu", "➕ Yangi mebel", "💰 Narxni o'zgartirish", "📦 Sklad qoldig'i", 
+    "📝 Yangi zakaz", "📊 Mijozlar hisoboti", "🚚 Dostavchilar hisoboti",
+    "🔄 Skladni yangilash", "🚚 Dostavka nazorati", "🔨 Faol zakazlar", "🛍 Sotuvdagi mebellar"
+}
+
+@dp.message(F.text.in_(MAIN_MENU_BUTTONS), StateFilter("*"))
+async def main_menu_interceptor(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    await state.clear()
+    if message.text == "Bosh menyu":
+        await message.answer("Asosiy menyuga qaytdingiz.", reply_markup=main_menu(role))
+    else:
+        await message.answer("Jarayon bekor qilindi. Iltimos, tugmani qayta bosing.", reply_markup=main_menu(role))
+
+@dp.message(F.text == "Bosh menyu", StateFilter("*"))
 async def cancel_handler(message: types.Message, state: FSMContext):
     role = await get_user_role(message.from_user.id)
     await state.clear()
@@ -178,7 +193,12 @@ async def add_price(message: types.Message, state: FSMContext):
 
 @dp.message(ProductState.quantity)
 async def add_quantity(message: types.Message, state: FSMContext):
-    await state.update_data(quantity=message.text)
+    try:
+        qty = int(message.text)
+    except ValueError:
+        await message.answer("Iltimos, faqat raqam kiriting (masalan: 10):")
+        return
+    await state.update_data(quantity=qty)
     await message.answer("📷 Mahsulot rasmini yuboring (URL ko'rinishida):\nMasalan: https://example.com/rasm.jpg")
     await state.set_state(ProductState.image)
 
@@ -723,7 +743,7 @@ async def driver_report_start(message: types.Message, state: FSMContext):
             
         await message.answer(report_text, parse_mode="Markdown")
 
-@dp.message()
+@dp.message(StateFilter('*'))
 async def fallback_handler(message: types.Message, state: FSMContext):
     role = await get_user_role(message.from_user.id)
     await state.clear()
