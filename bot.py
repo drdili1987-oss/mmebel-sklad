@@ -155,7 +155,7 @@ def main_menu(role):
     buttons = []
     if role == 'admin':
         buttons = [
-            [types.KeyboardButton(text="💰 Narxni o'zgartirish"), types.KeyboardButton(text="📦 Sklad qoldig'i")],
+            [types.KeyboardButton(text="➕ Yangi mebel"), types.KeyboardButton(text="📦 Sklad qoldig'i")],
             [types.KeyboardButton(text="📝 Yangi zakaz"), types.KeyboardButton(text="📊 Mijozlar hisoboti")],
             [types.KeyboardButton(text="🚚 Dostavkachilar hisoboti"), types.KeyboardButton(text="🕰 Dostavka tarixi")],
             [types.KeyboardButton(text="📈 Sotuv statistikasi")]
@@ -175,7 +175,7 @@ def main_menu(role):
 
 # --- BOSH MENYU / BEKOR QILISH ---
 MAIN_MENU_BUTTONS = {
-    "Bosh menyu", "➕ Yangi mebel", "💰 Narxni o'zgartirish", "📦 Sklad qoldig'i", 
+    "Bosh menyu", "➕ Yangi mebel", "📦 Sklad qoldig'i", 
     "📝 Yangi zakaz", "📊 Mijozlar hisoboti", "🚚 Dostavkachilar hisoboti", "🕰 Dostavka tarixi", "📈 Sotuv statistikasi",
     "🔄 Skladni yangilash", "🚚 Zakazlar nazorati", "🔨 Faol zakazlar", "🛍 Sotuvdagi mebellar"
 }
