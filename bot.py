@@ -105,6 +105,7 @@ class OrderState(StatesGroup):
     custom_client = State() # Agar boshqa bosilsa
     product_id = State()  # Mebel ID-si
     custom_product_id = State() # Agar boshqa mebel bo'lsa
+    custom_price = State() # Qo'lda kiritilgan mebel narxi
     amount = State()      # Nechta zakaz berdi
     due_date = State()    # Qaysi sanaga tayyor bo'lishi kerak
     comment = State()     # Izoh
@@ -139,10 +140,10 @@ def main_menu(role):
     buttons = []
     if role == 'admin':
         buttons = [
-            [types.KeyboardButton(text="➕ Yangi mebel"), types.KeyboardButton(text="💰 Narxni o'zgartirish")],
-            [types.KeyboardButton(text="📦 Sklad qoldig'i"), types.KeyboardButton(text="📝 Yangi zakaz")],
-            [types.KeyboardButton(text="📊 Mijozlar hisoboti"), types.KeyboardButton(text="🚚 Dostavkachilar hisoboti")],
-            [types.KeyboardButton(text="🕰 Dostavka tarixi"), types.KeyboardButton(text="📈 Sotuv statistikasi")]
+            [types.KeyboardButton(text="💰 Narxni o'zgartirish"), types.KeyboardButton(text="📦 Sklad qoldig'i")],
+            [types.KeyboardButton(text="📝 Yangi zakaz"), types.KeyboardButton(text="📊 Mijozlar hisoboti")],
+            [types.KeyboardButton(text="🚚 Dostavkachilar hisoboti"), types.KeyboardButton(text="🕰 Dostavka tarixi")],
+            [types.KeyboardButton(text="📈 Sotuv statistikasi")]
         ]
     elif role == 'omborchi':
         buttons = [
@@ -329,6 +330,12 @@ async def process_product_id(message: types.Message, state: FSMContext):
 async def process_custom_product_id(message: types.Message, state: FSMContext):
     formatted_id = message.text.upper()
     await state.update_data(product_id=formatted_id)
+    await message.answer("Ushbu mebelning donasi uchun narxini kiriting (faqat raqam, masalan, 300000 yoki 300):", reply_markup=types.ReplyKeyboardRemove())
+    await state.set_state(OrderState.custom_price)
+
+@dp.message(OrderState.custom_price)
+async def process_custom_price(message: types.Message, state: FSMContext):
+    await state.update_data(custom_price=message.text)
     await message.answer("Nechta zakaz berdi?", reply_markup=types.ReplyKeyboardRemove())
     await state.set_state(OrderState.amount)
 
@@ -357,6 +364,36 @@ async def process_comment(message: types.Message, state: FSMContext):
         amount = int(data['amount'])
     except ValueError:
         amount = 1
+
+    client_name = data['client']
+    price_val = 0
+    if 'custom_price' in data:
+        price_str = data['custom_price'].replace("so'm", "").replace("$", "").replace(" ", "")
+        try:
+            price_val = int(price_str)
+        except:
+            price_val = 0
+    else:
+        mebel_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+        if mebel_ref and 'narxi' in mebel_ref:
+            price_str = str(mebel_ref['narxi']).replace("so'm", "").replace("$", "").replace(" ", "")
+            try:
+                price_val = int(price_str)
+            except:
+                price_val = 0
+
+    total_price = price_val * amount
+    
+    # Mijoz qarzini hisoblash va tarixga yozish
+    if total_price > 0:
+        debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
+        current_debt = int(debt_ref) if debt_ref else 0
+        new_debt = current_debt + total_price
+        await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
+        
+        timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        record = {'type': 'Chiqim', 'amount': total_price, 'timestamp': timestamp, 'note': f"Zakaz qildi: {product_id} ({amount} ta)"}
+        await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
 
     # Skladni kamaytirish
     mebel_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
@@ -802,6 +839,21 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
     }
     await asyncio.to_thread(db.reference(f"deliveries/{current_month}").push, delivery_record)
     
+    # Dostavkachi balansini oshirish
+    try:
+        price_val = int(str(price).replace("so'm", "").replace("$", "").replace(" ", ""))
+        if price_val > 0:
+            balance_ref = await asyncio.to_thread(db.reference(f"driver_balances/{driver}").get)
+            current_balance = int(balance_ref) if balance_ref else 0
+            new_balance = current_balance + price_val
+            await asyncio.to_thread(db.reference(f"driver_balances/{driver}").set, new_balance)
+            
+            # Tarixga yozish
+            record = {'type': 'Kirim', 'amount': price_val, 'timestamp': timestamp, 'note': f"Dostavka haqi (Zakaz: {order_id})"}
+            await asyncio.to_thread(db.reference(f"transactions/drivers/{driver}").push, record)
+    except:
+        pass
+        
     await message.answer(f"✅ Zakaz holati yangilandi: {new_status}\n🚚 Dostavchik: {driver}\n💵 Narxi: {price}", reply_markup=main_menu('omborchi'))
     
     # Notify admin
