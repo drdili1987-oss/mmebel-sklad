@@ -146,7 +146,7 @@ def main_menu(role):
         ]
     elif role == 'omborchi':
         buttons = [
-            [types.KeyboardButton(text="🔄 Skladni yangilash"), types.KeyboardButton(text="🚚 Dostavka nazorati")],
+            [types.KeyboardButton(text="🔄 Skladni yangilash"), types.KeyboardButton(text="🚚 Zakazlar nazorati")],
             [types.KeyboardButton(text="📦 Sklad qoldig'i")]
         ]
     elif role == 'ishchi':
@@ -161,7 +161,7 @@ def main_menu(role):
 MAIN_MENU_BUTTONS = {
     "Bosh menyu", "➕ Yangi mebel", "💰 Narxni o'zgartirish", "📦 Sklad qoldig'i", 
     "📝 Yangi zakaz", "📊 Mijozlar hisoboti", "🚚 Dostavkachilar hisoboti", "🕰 Dostavka tarixi", "📈 Sotuv statistikasi",
-    "🔄 Skladni yangilash", "🚚 Dostavka nazorati", "🔨 Faol zakazlar", "🛍 Sotuvdagi mebellar"
+    "🔄 Skladni yangilash", "🚚 Zakazlar nazorati", "🔨 Faol zakazlar", "🛍 Sotuvdagi mebellar"
 }
 
 @dp.message(F.text.in_(MAIN_MENU_BUTTONS), ~StateFilter(None))
@@ -617,7 +617,7 @@ async def update_stock_new_quantity(message: types.Message, state: FSMContext):
         await message.answer("Iltimos, faqat raqam kiriting:")
 
 # --- OMBORCHI: DOSTAVKA NAZORATI ---
-@dp.message(F.text == "🚚 Dostavka nazorati")
+@dp.message(F.text == "🚚 Zakazlar nazorati")
 async def delivery_control_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'omborchi':
         orders_ref = await asyncio.to_thread(db.reference('orders').get)
