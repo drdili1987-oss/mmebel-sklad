@@ -51,7 +51,7 @@ FAVORITE_MODELS = [
     "D 003", "D 004", "D 006", "D 005"
 ]
 
-def get_models_keyboard():
+def get_models_keyboard(include_other=False):
     buttons = []
     row = []
     for model in FAVORITE_MODELS:
@@ -61,6 +61,8 @@ def get_models_keyboard():
             row = []
     if row:
         buttons.append(row)
+    if include_other:
+        buttons.append([types.KeyboardButton(text="Boshqa (Qo'lda kiritish)")])
     buttons.append([types.KeyboardButton(text="Bosh menyu")])
     return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -102,6 +104,7 @@ class OrderState(StatesGroup):
     client = State()      # Mijoz ismi
     custom_client = State() # Agar boshqa bosilsa
     product_id = State()  # Mebel ID-si
+    custom_product_id = State() # Agar boshqa mebel bo'lsa
     amount = State()      # Nechta zakaz berdi
     due_date = State()    # Qaysi sanaga tayyor bo'lishi kerak
     comment = State()     # Izoh
@@ -143,8 +146,8 @@ def main_menu(role):
         ]
     elif role == 'omborchi':
         buttons = [
-            [types.KeyboardButton(text="➕ Yangi mebel"), types.KeyboardButton(text="🔄 Skladni yangilash")],
-            [types.KeyboardButton(text="🚚 Dostavka nazorati"), types.KeyboardButton(text="📦 Sklad qoldig'i")]
+            [types.KeyboardButton(text="🔄 Skladni yangilash"), types.KeyboardButton(text="🚚 Dostavka nazorati")],
+            [types.KeyboardButton(text="📦 Sklad qoldig'i")]
         ]
     elif role == 'ishchi':
         buttons = [
@@ -292,17 +295,22 @@ async def process_client(message: types.Message, state: FSMContext):
         return
 
     await state.update_data(client=message.text)
-    await message.answer("Qanday mebel buyurtma qilinmoqda? (Quyidagilardan tanlang yoki yozing):", reply_markup=get_models_keyboard())
+    await message.answer("Qanday mebel buyurtma qilinmoqda? (Quyidagilardan tanlang yoki yozing):", reply_markup=get_models_keyboard(include_other=True))
     await state.set_state(OrderState.product_id)
 
 @dp.message(OrderState.custom_client)
 async def process_custom_client(message: types.Message, state: FSMContext):
     await state.update_data(client=message.text)
-    await message.answer("Qanday mebel buyurtma qilinmoqda? (Quyidagilardan tanlang yoki yozing):", reply_markup=get_models_keyboard())
+    await message.answer("Qanday mebel buyurtma qilinmoqda? (Quyidagilardan tanlang yoki yozing):", reply_markup=get_models_keyboard(include_other=True))
     await state.set_state(OrderState.product_id)
 
 @dp.message(OrderState.product_id)
 async def process_product_id(message: types.Message, state: FSMContext):
+    if message.text == "Boshqa (Qo'lda kiritish)":
+        await message.answer("Mebelning nomini kiriting:", reply_markup=types.ReplyKeyboardRemove())
+        await state.set_state(OrderState.custom_product_id)
+        return
+
     formatted_id = message.text.replace(" ", "").replace("-", "").upper()
     await state.update_data(product_id=formatted_id)
     
@@ -315,6 +323,13 @@ async def process_product_id(message: types.Message, state: FSMContext):
             price_text = f"\n(Mebel narxi: {product_ref['narxi']})"
             
     await message.answer(f"Nechta zakaz berdi?{price_text}", reply_markup=types.ReplyKeyboardRemove())
+    await state.set_state(OrderState.amount)
+
+@dp.message(OrderState.custom_product_id)
+async def process_custom_product_id(message: types.Message, state: FSMContext):
+    formatted_id = message.text.upper()
+    await state.update_data(product_id=formatted_id)
+    await message.answer("Nechta zakaz berdi?", reply_markup=types.ReplyKeyboardRemove())
     await state.set_state(OrderState.amount)
 
 # Soni kiritilgandan keyin sanani so'rash
