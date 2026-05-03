@@ -66,6 +66,21 @@ def get_models_keyboard(include_other=False):
     buttons.append([types.KeyboardButton(text="Bosh menyu")])
     return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
+def get_dates_keyboard():
+    buttons = []
+    row = []
+    now = datetime.now(TASHKENT_TZ)
+    for i in range(15):
+        date_str = (now + timedelta(days=i)).strftime("%d.%m.%Y")
+        row.append(types.KeyboardButton(text=date_str))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([types.KeyboardButton(text="Bosh menyu")])
+    return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
 # 1. Firebase Sozlamalari (RTDB)
 cred = credentials.Certificate("serviceAccountKey.json")
 firebase_admin.initialize_app(cred, {
@@ -345,14 +360,14 @@ async def process_custom_price(message: types.Message, state: FSMContext):
 @dp.message(OrderState.amount)
 async def process_amount(message: types.Message, state: FSMContext):
     await state.update_data(amount=message.text)
-    await message.answer("📅 Zakaz qaysi sanaga tayyor bo'lishi kerak?\n(Masalan: 15.05.2026 yoki 'Ertaga kechqurun')")
+    await message.answer("📅 Zakaz qaysi sanaga tayyor bo'lishi kerak? Tugmalardan tanlang yoki yozing:", reply_markup=get_dates_keyboard())
     await state.set_state(OrderState.due_date)
 
 # Oxirgi bosqich: Sanani qabul qilish va izoh so'rash
 @dp.message(OrderState.due_date)
 async def process_due_date(message: types.Message, state: FSMContext):
     await state.update_data(due_date=message.text)
-    await message.answer("📝 Zakaz uchun izoh kiriting (mebelning biror joyini o'zgartirish kerak bo'lsa):\n(Agar izoh bo'lmasa 'yoq' deb yozing)")
+    await message.answer("📝 Zakaz uchun izoh kiriting (mebelning biror joyini o'zgartirish kerak bo'lsa):\n(Agar izoh bo'lmasa 'yoq' deb yozing)", reply_markup=types.ReplyKeyboardRemove())
     await state.set_state(OrderState.comment)
 
 # Izohni qabul qilish va bazaga saqlash
