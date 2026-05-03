@@ -254,6 +254,7 @@ async def add_final(message: types.Message, state: FSMContext):
 # --- BARCHA UCHUN: SKLADNI KO'RISH ---
 @dp.message(F.text.in_({"📦 Sklad qoldig'i", "🛍 Sotuvdagi mebellar"}))
 async def view_stock(message: types.Message):
+    role = await get_user_role(message.from_user.id)
     mebellar = await asyncio.to_thread(db.reference('mebellar').get)
     if not mebellar:
         await message.answer("Sklad hozircha bo'sh.")
@@ -262,7 +263,8 @@ async def view_stock(message: types.Message):
     for m_id, m in mebellar.items():
         if isinstance(m, dict) and m.get('soni', 0) > 0:
             text = f"🪑 **{m.get('nomi', 'Noma\'lum')}** ({m.get('modeli', '')})\n"
-            text += f"💰 Narxi: {m.get('narxi', '0')}\n"
+            if role == 'admin':
+                text += f"💰 Narxi: {m.get('narxi', '0')}\n"
             text += f"📦 Qoldiq: {m.get('soni', 0)} ta\n"
             text += f"🆔 ID: `{m_id}`"
             
