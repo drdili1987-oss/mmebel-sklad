@@ -258,7 +258,7 @@ async def view_stock(message: types.Message):
     for m_id, m in mebellar.items():
         if isinstance(m, dict) and m.get('soni', 0) > 0:
             text = f"🪑 **{m.get('nomi', 'Noma\'lum')}** ({m.get('modeli', '')})\n"
-            text += f"💰 Narxi: {m.get('narxi', '0')} so'm\n"
+            text += f"💰 Narxi: {m.get('narxi', '0')}\n"
             text += f"📦 Qoldiq: {m.get('soni', 0)} ta\n"
             text += f"🆔 ID: `{m_id}`"
             
@@ -305,7 +305,16 @@ async def process_custom_client(message: types.Message, state: FSMContext):
 async def process_product_id(message: types.Message, state: FSMContext):
     formatted_id = message.text.replace(" ", "").replace("-", "").upper()
     await state.update_data(product_id=formatted_id)
-    await message.answer("Nechta zakaz berdi?", reply_markup=types.ReplyKeyboardRemove())
+    
+    # Fetch price to show to admin
+    role = await get_user_role(message.from_user.id)
+    price_text = ""
+    if role == 'admin':
+        product_ref = await asyncio.to_thread(db.reference(f'mebellar/{formatted_id}').get)
+        if product_ref and 'narxi' in product_ref:
+            price_text = f"\n(Mebel narxi: {product_ref['narxi']})"
+            
+    await message.answer(f"Nechta zakaz berdi?{price_text}", reply_markup=types.ReplyKeyboardRemove())
     await state.set_state(OrderState.amount)
 
 # Soni kiritilgandan keyin sanani so'rash
@@ -720,7 +729,7 @@ async def delivery_driver(message: types.Message, state: FSMContext):
     await state.update_data(driver=message.text)
     markup = types.ReplyKeyboardMarkup(
         keyboard=[
-            [types.KeyboardButton(text="6$"), types.KeyboardButton(text="8$")],
+            [types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
             [types.KeyboardButton(text="Boshqa narx"), types.KeyboardButton(text="Bosh menyu")]
         ],
         resize_keyboard=True
