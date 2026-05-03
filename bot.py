@@ -142,12 +142,15 @@ async def get_user_role(user_id):
     if user_id_str == '883589794':
         return 'omborchi'
     if user_id_str in ['6298036669', '1349256808', '7062569902', '7941658592', '1724350130']:
-        return 'ishchi'
+        return 'xodim'
     
     ref = db.reference(f'users/{user_id}')
     user_data = await asyncio.to_thread(ref.get)
     if user_data:
-        return user_data.get('role', 'mijoz')
+        role = user_data.get('role', 'mijoz')
+        if role == 'ishchi':
+            return 'xodim'
+        return role
     return 'mijoz'
 
 # 5. Klaviatura (Menyu)
@@ -164,7 +167,7 @@ def main_menu(role):
             [types.KeyboardButton(text="🔄 Skladni yangilash"), types.KeyboardButton(text="🚚 Zakazlar nazorati")],
             [types.KeyboardButton(text="📦 Sklad qoldig'i")]
         ]
-    elif role == 'ishchi':
+    elif role == 'xodim':
         buttons = [
             [types.KeyboardButton(text="🔨 Faol zakazlar")]
         ]
@@ -596,10 +599,10 @@ async def notify_warehouse(order_data, order_id):
     except Exception as e:
         print(f"Omborchiga xabar yuborishda xatolik: {e}")
 
-    # Omborchi va ishchilarga xabar yuborish
+    # Omborchi va xodimlarga xabar yuborish
     users_ref = await asyncio.to_thread(db.reference('users').get)
     for user_id, user_data in (users_ref or {}).items():
-        if user_data.get('role') in ['omborchi', 'ishchi'] and int(user_id) != 883589794:
+        if user_data.get('role') in ['omborchi', 'ishchi', 'xodim'] and int(user_id) != 883589794:
             try:
                 await bot.send_message(
                     int(user_id),
@@ -614,11 +617,11 @@ async def notify_warehouse(order_data, order_id):
             except Exception as e:
                 print(f"Xodimga xabar yuborishda xatolik: {e}")
 
-# --- ISHCHI: FAOL ZAKAZLAR ---
+# --- XODIM: FAOL ZAKAZLAR ---
 @dp.message(F.text == "🔨 Faol zakazlar")
 async def view_active_orders(message: types.Message):
     role = await get_user_role(message.from_user.id)
-    if role in ['ishchi', 'admin', 'omborchi']:
+    if role in ['xodim', 'admin', 'omborchi']:
         orders_ref = await asyncio.to_thread(db.reference('orders').get)
         if not orders_ref:
             await message.answer("Hozircha hech qanday faol zakaz yo'q.")
@@ -761,7 +764,7 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
                     )
                 except Exception:
                     pass
-            elif user_data.get('role') == 'ishchi' and new_status == "Tayyor bo'ldi":
+            elif user_data.get('role') in ['ishchi', 'xodim'] and new_status == "Tayyor bo'ldi":
                 try:
                     await bot.send_message(
                         int(user_id),
