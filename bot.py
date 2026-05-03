@@ -361,7 +361,8 @@ async def process_comment(message: types.Message, state: FSMContext):
             'due_date': data['due_date'],
             'comment': comment,
             'status': 'Tayyorlanmoqda',
-            'created_at': str(asyncio.get_event_loop().time())
+            'created_at': datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+            'month': datetime.now(TASHKENT_TZ).strftime("%Y-%m")
         }
     )
     
@@ -1041,21 +1042,30 @@ async def sales_statistics(message: types.Message):
             await message.answer("Sotuvlar tarixi bo'sh.")
             return
 
-        stats = {}
+        monthly_stats = {}
         for o_id, o in orders_ref.items():
             if isinstance(o, dict):
+                month = o.get('month', 'Avvalgi oylar')
                 pid = o.get('product_id', 'Noma\'lum')
                 try:
                     amount = int(o.get('amount', 1))
                 except:
                     amount = 1
-                stats[pid] = stats.get(pid, 0) + amount
+                
+                if month not in monthly_stats:
+                    monthly_stats[month] = {}
+                monthly_stats[month][pid] = monthly_stats[month].get(pid, 0) + amount
         
-        sorted_stats = sorted(stats.items(), key=lambda x: x[1], reverse=True)
+        sorted_months = sorted(monthly_stats.keys(), reverse=True)
+        text = "📈 **Eng ko'p sotilgan mebellar (Oylar kesimida):**\n\n"
         
-        text = "📈 **Eng ko'p sotilgan mebellar:**\n\n"
-        for i, (pid, count) in enumerate(sorted_stats[:50], 1):
-            text += f"{i}. 🪑 {pid} - {count} ta\n"
+        for month in sorted_months:
+            text += f"📅 **{month} oyi:**\n"
+            month_data = monthly_stats[month]
+            sorted_stats = sorted(month_data.items(), key=lambda x: x[1], reverse=True)
+            for i, (pid, count) in enumerate(sorted_stats[:20], 1):
+                text += f"  {i}. 🪑 {pid} - {count} ta\n"
+            text += "\n"
             
         if len(text) > 4000:
             for x in range(0, len(text), 4000):
