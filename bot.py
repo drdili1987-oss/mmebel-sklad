@@ -88,7 +88,7 @@ firebase_admin.initialize_app(cred, {
 })
 
 # 2. Bot Sozlamalari
-API_TOKEN = '8441263024:AAFTvNZJatwEqzaG7oAnltxBamaEYHm2HoM'
+API_TOKEN = '8696173187:AAEYlUrVpwJbS05ksvCUseKOwegVtcuNrNA'
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 logging.basicConfig(level=logging.INFO)
