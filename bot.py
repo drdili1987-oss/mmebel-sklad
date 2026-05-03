@@ -155,10 +155,9 @@ def main_menu(role):
     buttons = []
     if role == 'admin':
         buttons = [
-            [types.KeyboardButton(text="➕ Yangi mebel"), types.KeyboardButton(text="📦 Sklad qoldig'i")],
-            [types.KeyboardButton(text="📝 Yangi zakaz"), types.KeyboardButton(text="📊 Mijozlar hisoboti")],
-            [types.KeyboardButton(text="🚚 Dostavkachilar hisoboti"), types.KeyboardButton(text="🕰 Dostavka tarixi")],
-            [types.KeyboardButton(text="📈 Sotuv statistikasi")]
+            [types.KeyboardButton(text="📦 Sklad qoldig'i"), types.KeyboardButton(text="📝 Yangi zakaz")],
+            [types.KeyboardButton(text="📊 Mijozlar hisoboti"), types.KeyboardButton(text="🚚 Dostavkachilar hisoboti")],
+            [types.KeyboardButton(text="🕰 Dostavka tarixi"), types.KeyboardButton(text="📈 Sotuv statistikasi")]
         ]
     elif role == 'omborchi':
         buttons = [
