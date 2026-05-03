@@ -139,7 +139,7 @@ def main_menu(role):
             [types.KeyboardButton(text="➕ Yangi mebel"), types.KeyboardButton(text="💰 Narxni o'zgartirish")],
             [types.KeyboardButton(text="📦 Sklad qoldig'i"), types.KeyboardButton(text="📝 Yangi zakaz")],
             [types.KeyboardButton(text="📊 Mijozlar hisoboti"), types.KeyboardButton(text="🚚 Dostavkachilar hisoboti")],
-            [types.KeyboardButton(text="🕰 Dostavka tarixi")]
+            [types.KeyboardButton(text="🕰 Dostavka tarixi"), types.KeyboardButton(text="📈 Sotuv statistikasi")]
         ]
     elif role == 'omborchi':
         buttons = [
@@ -157,7 +157,7 @@ def main_menu(role):
 # --- BOSH MENYU / BEKOR QILISH ---
 MAIN_MENU_BUTTONS = {
     "Bosh menyu", "➕ Yangi mebel", "💰 Narxni o'zgartirish", "📦 Sklad qoldig'i", 
-    "📝 Yangi zakaz", "📊 Mijozlar hisoboti", "🚚 Dostavkachilar hisoboti", "🕰 Dostavka tarixi",
+    "📝 Yangi zakaz", "📊 Mijozlar hisoboti", "🚚 Dostavkachilar hisoboti", "🕰 Dostavka tarixi", "📈 Sotuv statistikasi",
     "🔄 Skladni yangilash", "🚚 Dostavka nazorati", "🔨 Faol zakazlar", "🛍 Sotuvdagi mebellar"
 }
 
@@ -327,9 +327,8 @@ async def process_due_date(message: types.Message, state: FSMContext):
 async def process_comment(message: types.Message, state: FSMContext):
     data = await state.get_data()
     comment = message.text
-    order_id = str(uuid.uuid4())[:8].upper()
-    
     product_id = data['product_id']
+    order_id = f"{product_id}-{str(uuid.uuid4())[:4].upper()}"
     try:
         amount = int(data['amount'])
     except ValueError:
@@ -610,7 +609,8 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
                 if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
                     active_orders += f"📝 Izoh: {o.get('comment')}\n"
                 active_orders += f"📌 Holati: {o.get('status')}\n\n"
-                row.append(types.KeyboardButton(text=str(o_id)))
+                button_text = f"{o.get('product_id')} ({str(o_id)})"
+                row.append(types.KeyboardButton(text=button_text))
                 if len(row) == 2:
                     buttons.append(row)
                     row = []
@@ -629,7 +629,11 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
 
 @dp.message(DeliveryControlState.order_id)
 async def delivery_order_id(message: types.Message, state: FSMContext):
-    order_id = message.text.upper()
+    if "(" in message.text and ")" in message.text:
+        order_id = message.text.split("(")[-1].split(")")[0].strip().upper()
+    else:
+        order_id = message.text.strip().upper()
+        
     order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
     if not order_ref:
         await message.answer("Bunday ID li zakaz topilmadi. Qaytadan kiriting:")
@@ -872,6 +876,7 @@ async def select_driver_finance(message: types.Message):
                 [types.KeyboardButton(text=f"➕ {driver_name} ga Pul Berish (D. Chiqim)")],
                 [types.KeyboardButton(text=f"➖ {driver_name} dan Pul Qaytardi (D. Kirim)")],
                 [types.KeyboardButton(text=f"📜 {driver_name} Moliya Tarixi")],
+                [types.KeyboardButton(text=f"📊 {driver_name} yetkazib berish tarixi")],
                 [types.KeyboardButton(text="Bosh menyu")]
             ],
             resize_keyboard=True
@@ -1018,6 +1023,77 @@ async def show_delivery_history(message: types.Message, state: FSMContext):
     else:
         await message.answer(history_text, parse_mode="Markdown")
 
+
+@dp.message(F.text == "📈 Sotuv statistikasi")
+async def sales_statistics(message: types.Message):
+    if await get_user_role(message.from_user.id) == 'admin':
+        orders_ref = await asyncio.to_thread(db.reference('orders').get)
+        if not orders_ref:
+            await message.answer("Sotuvlar tarixi bo'sh.")
+            return
+
+        stats = {}
+        for o_id, o in orders_ref.items():
+            if isinstance(o, dict):
+                pid = o.get('product_id', 'Noma\'lum')
+                try:
+                    amount = int(o.get('amount', 1))
+                except:
+                    amount = 1
+                stats[pid] = stats.get(pid, 0) + amount
+        
+        sorted_stats = sorted(stats.items(), key=lambda x: x[1], reverse=True)
+        
+        text = "📈 **Eng ko'p sotilgan mebellar:**\n\n"
+        for i, (pid, count) in enumerate(sorted_stats[:50], 1):
+            text += f"{i}. 🪑 {pid} - {count} ta\n"
+            
+        if len(text) > 4000:
+            for x in range(0, len(text), 4000):
+                await message.answer(text[x:x+4000], parse_mode="Markdown")
+        else:
+            await message.answer(text, parse_mode="Markdown")
+
+@dp.message(F.text.contains(" yetkazib berish tarixi"))
+async def driver_deliveries_history(message: types.Message):
+    if await get_user_role(message.from_user.id) == 'admin':
+        driver_name = message.text.replace("📊 ", "").replace(" yetkazib berish tarixi", "").strip()
+        deliveries_ref = await asyncio.to_thread(db.reference('deliveries').get)
+        
+        if not deliveries_ref:
+            await message.answer("Hech qanday dostavka tarixi topilmadi.")
+            return
+            
+        monthly_stats = {}
+        for month, deliveries in deliveries_ref.items():
+            if isinstance(deliveries, dict):
+                for d_id, d in deliveries.items():
+                    if isinstance(d, dict) and d.get('driver') == driver_name:
+                        if month not in monthly_stats:
+                            monthly_stats[month] = []
+                        monthly_stats[month].append(d)
+        
+        if not monthly_stats:
+            await message.answer(f"👨‍✈️ {driver_name} hech qanday mebel yetkazib bermagan.")
+            return
+            
+        sorted_months = sorted(monthly_stats.keys(), reverse=True)
+        report_text = f"📊 **{driver_name} yetkazib berish tarixi:**\n\n"
+        
+        for month in sorted_months:
+            month_deliveries = monthly_stats[month]
+            report_text += f"📅 **{month} oyi:**\n"
+            count = 0
+            for d in month_deliveries:
+                count += 1
+                report_text += f" ▪️ {d.get('client')} ga: {d.get('product_id')} (Narxi: {d.get('price')})\n"
+            report_text += f" 📦 Jami shu oyda: {count} ta dostavka\n\n"
+            
+        if len(report_text) > 4000:
+            for x in range(0, len(report_text), 4000):
+                await message.answer(report_text[x:x+4000], parse_mode="Markdown")
+        else:
+            await message.answer(report_text, parse_mode="Markdown")
 
 @dp.message(StateFilter('*'))
 async def fallback_handler(message: types.Message, state: FSMContext):
