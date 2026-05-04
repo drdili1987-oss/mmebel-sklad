@@ -44,7 +44,7 @@ FAVORITE_MODELS = [
     "BF 54-41", "BF 57-41", "BF 59-41",
     "BF 63", "BF 64", "BF 65", "BF 68",
     "BF 707", "BF 708", "BF 709",
-    "BF 762", "BF 752", "BF 772", "BF 792",
+    "BF 762", "BF 752", "BF 772", "KR792",
     "BF 713", "BF 753", "BF 763",
     "D 100", "D 106", "D 109",
     "D 50", "D 59",
@@ -141,7 +141,7 @@ async def get_user_role(user_id):
     user_id_str = str(user_id)
     if user_id_str == '883589794':
         return 'omborchi'
-    if user_id_str in ['6298036669', '1349256808', '7062569902', '7941658592', '1724350130', '422651829']:
+    if user_id_str in ['6298036669', '1349256808', '7062569902', '7941658592', '1724350130', '422651829', '698145797']:
         return 'xodim'
     
     ref = db.reference(f'users/{user_id}')
@@ -627,15 +627,28 @@ async def view_active_orders(message: types.Message):
             await message.answer("Hozircha hech qanday faol zakaz yo'q.")
             return
             
-        active_orders = ""
+        active_orders_list = []
         for o_id, o in orders_ref.items():
             if isinstance(o, dict) and o.get('status') == 'Tayyorlanmoqda':
-                active_orders += f"🆔 `{o_id}` - 📦 Mebel: {o.get('product_id')}\n"
-                active_orders += f"📊 Soni: {o.get('amount')} ta\n"
-                active_orders += f"📅 Muddat: {o.get('due_date')}\n"
-                if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
-                    active_orders += f"📝 Izoh: {o.get('comment')}\n"
-                active_orders += "\n"
+                active_orders_list.append((o_id, o))
+                
+        def parse_date(date_str):
+            try:
+                return datetime.strptime(date_str, "%d.%m.%Y")
+            except:
+                return datetime.min
+
+        active_orders_list.sort(key=lambda x: parse_date(x[1].get('due_date', '')), reverse=True)
+
+        active_orders = ""
+        for o_id, o in active_orders_list:
+            active_orders += f"🆔 `{o_id}` - 🧑 Mijoz: {o.get('client_name')}\n"
+            active_orders += f"📦 Mebel: {o.get('product_id')}\n"
+            active_orders += f"📊 Soni: {o.get('amount')} ta\n"
+            active_orders += f"📅 Muddat: {o.get('due_date')}\n"
+            if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
+                active_orders += f"📝 Izoh: {o.get('comment')}\n"
+            active_orders += "\n"
         
         if not active_orders:
             await message.answer("Hozircha faol zakazlar yo'q.")
@@ -681,20 +694,32 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
             await message.answer("Hozircha hech qanday zakaz yo'q.")
             return
             
+        active_orders_list = []
+        for o_id, o in orders_ref.items():
+            if isinstance(o, dict) and o.get('status') in ['Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi']:
+                active_orders_list.append((o_id, o))
+
+        def parse_date(date_str):
+            try:
+                return datetime.strptime(date_str, "%d.%m.%Y")
+            except:
+                return datetime.min
+
+        active_orders_list.sort(key=lambda x: parse_date(x[1].get('due_date', '')), reverse=True)
+
         active_orders = ""
         buttons = []
         row = []
-        for o_id, o in orders_ref.items():
-            if isinstance(o, dict) and o.get('status') in ['Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi']:
-                active_orders += f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n📅 Muddat: {o.get('due_date')}\n"
-                if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
-                    active_orders += f"📝 Izoh: {o.get('comment')}\n"
-                active_orders += f"📌 Holati: {o.get('status')}\n\n"
-                button_text = f"{o.get('product_id')} ({str(o_id)})"
-                row.append(types.KeyboardButton(text=button_text))
-                if len(row) == 2:
-                    buttons.append(row)
-                    row = []
+        for o_id, o in active_orders_list:
+            active_orders += f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n📅 Muddat: {o.get('due_date')}\n"
+            if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
+                active_orders += f"📝 Izoh: {o.get('comment')}\n"
+            active_orders += f"📌 Holati: {o.get('status')}\n\n"
+            button_text = f"{o.get('product_id')} ({str(o_id)})"
+            row.append(types.KeyboardButton(text=button_text))
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
         
         if row:
             buttons.append(row)
