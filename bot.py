@@ -44,7 +44,7 @@ FAVORITE_MODELS = [
     "BF 54-41", "BF 57-41", "BF 59-41",
     "BF 63", "BF 64", "BF 65", "BF 68",
     "BF 707", "BF 708", "BF 709",
-    "BF 762", "BF 752", "BF 772", "KR792",
+    "BF 762", "BF 752", "BF 772", "KR 792",
     "BF 713", "BF 753", "BF 763",
     "D 100", "D 106", "D 109",
     "D 50", "D 59",
@@ -136,6 +136,12 @@ class DeliveryControlState(StatesGroup):
     delivery_price = State()
     custom_price = State()
 
+class AdminOrderControlState(StatesGroup):
+    select_order = State()
+    action = State()
+    edit_field = State()
+    new_value = State()
+
 # 4. Rollarni Tekshirish (RTDB dan)
 async def get_user_role(user_id):
     user_id_str = str(user_id)
@@ -159,8 +165,9 @@ def main_menu(role):
     if role == 'admin':
         buttons = [
             [types.KeyboardButton(text="📦 Sklad qoldig'i"), types.KeyboardButton(text="📝 Yangi zakaz")],
-            [types.KeyboardButton(text="📊 Mijozlar hisoboti"), types.KeyboardButton(text="🚚 Dostavkachilar hisoboti")],
-            [types.KeyboardButton(text="🕰 Dostavka tarixi"), types.KeyboardButton(text="📈 Sotuv statistikasi")]
+            [types.KeyboardButton(text="📋 Zakazlar nazorati"), types.KeyboardButton(text="📊 Mijozlar hisoboti")],
+            [types.KeyboardButton(text="🚚 Dostavkachilar hisoboti"), types.KeyboardButton(text="🕰 Dostavka tarixi")],
+            [types.KeyboardButton(text="📈 Sotuv statistikasi")]
         ]
     elif role == 'omborchi':
         buttons = [
@@ -178,7 +185,7 @@ def main_menu(role):
 # --- BOSH MENYU / BEKOR QILISH ---
 MAIN_MENU_BUTTONS = {
     "Bosh menyu", "➕ Yangi mebel", "📦 Sklad qoldig'i", 
-    "📝 Yangi zakaz", "📊 Mijozlar hisoboti", "🚚 Dostavkachilar hisoboti", "🕰 Dostavka tarixi", "📈 Sotuv statistikasi",
+    "📝 Yangi zakaz", "📋 Zakazlar nazorati", "📊 Mijozlar hisoboti", "🚚 Dostavkachilar hisoboti", "🕰 Dostavka tarixi", "📈 Sotuv statistikasi",
     "🔄 Skladni yangilash", "🚚 Zakazlar nazorati", "🔨 Faol zakazlar", "🛍 Sotuvdagi mebellar"
 }
 
@@ -1224,6 +1231,300 @@ async def driver_deliveries_history(message: types.Message):
                 await message.answer(report_text[x:x+4000], parse_mode="Markdown")
         else:
             await message.answer(report_text, parse_mode="Markdown")
+
+# --- ADMIN: ZAKAZLAR NAZORATI ---
+@dp.message(F.text == "📋 Zakazlar nazorati")
+async def admin_order_control_start(message: types.Message, state: FSMContext):
+    if await get_user_role(message.from_user.id) != 'admin':
+        return
+    
+    orders_ref = await asyncio.to_thread(db.reference('orders').get)
+    if not orders_ref:
+        await message.answer("Hozircha hech qanday zakaz yo'q.")
+        return
+    
+    active_orders_list = []
+    for o_id, o in orders_ref.items():
+        if isinstance(o, dict) and o.get('status') in ['Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi']:
+            active_orders_list.append((o_id, o))
+    
+    def parse_date(date_str):
+        try:
+            return datetime.strptime(date_str, "%d.%m.%Y")
+        except:
+            return datetime.min
+    
+    active_orders_list.sort(key=lambda x: parse_date(x[1].get('due_date', '')), reverse=True)
+    
+    if not active_orders_list:
+        await message.answer("Hozircha faol zakazlar yo'q.")
+        return
+    
+    active_orders = ""
+    buttons = []
+    row = []
+    for o_id, o in active_orders_list:
+        active_orders += f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n"
+        active_orders += f"📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n"
+        active_orders += f"📅 Muddat: {o.get('due_date')}\n"
+        if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
+            active_orders += f"📝 Izoh: {o.get('comment')}\n"
+        active_orders += f"📌 Holati: {o.get('status')}\n\n"
+        button_text = f"{o.get('product_id')} ({str(o_id)})"
+        row.append(types.KeyboardButton(text=button_text))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    
+    if row:
+        buttons.append(row)
+    buttons.append([types.KeyboardButton(text="Bosh menyu")])
+    
+    markup = types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    await message.answer(f"📋 Faol zakazlar:\n\n{active_orders}\nQaysi zakazni boshqarmoqchisiz? Tanlang:", reply_markup=markup)
+    await state.set_state(AdminOrderControlState.select_order)
+
+@dp.message(AdminOrderControlState.select_order)
+async def admin_order_selected(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        await state.clear()
+        return
+    
+    if "(" in message.text and ")" in message.text:
+        order_id = message.text.split("(")[-1].split(")")[0].strip().upper()
+    else:
+        order_id = message.text.strip().upper()
+    
+    order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
+    if not order_ref:
+        await message.answer("Bunday ID li zakaz topilmadi. Qaytadan tanlang:")
+        return
+    
+    await state.update_data(order_id=order_id)
+    
+    info = f"🆔 Zakaz: `{order_id}`\n"
+    info += f"🧑 Mijoz: {order_ref.get('client_name')}\n"
+    info += f"📦 Mebel: {order_ref.get('product_id')}\n"
+    info += f"📊 Soni: {order_ref.get('amount')} ta\n"
+    info += f"📅 Muddat: {order_ref.get('due_date')}\n"
+    if order_ref.get('comment') and str(order_ref.get('comment')).lower() != 'yoq':
+        info += f"📝 Izoh: {order_ref.get('comment')}\n"
+    info += f"📌 Holati: {order_ref.get('status')}\n"
+    
+    markup = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="❌ Bekor qilish"), types.KeyboardButton(text="✏️ O'zgartirish")],
+            [types.KeyboardButton(text="Bosh menyu")]
+        ],
+        resize_keyboard=True
+    )
+    
+    await message.answer(f"{info}\nNima qilmoqchisiz?", reply_markup=markup, parse_mode="Markdown")
+    await state.set_state(AdminOrderControlState.action)
+
+@dp.message(AdminOrderControlState.action)
+async def admin_order_action(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        await message.answer("Bosh menyu", reply_markup=main_menu('admin'))
+        await state.clear()
+        return
+    
+    data = await state.get_data()
+    order_id = data['order_id']
+    
+    if message.text == "❌ Bekor qilish":
+        order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
+        if order_ref:
+            # Skladga qaytarish
+            product_id = order_ref.get('product_id')
+            try:
+                amount = int(order_ref.get('amount', 0))
+            except:
+                amount = 0
+            
+            if product_id and amount > 0:
+                mebel_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+                if mebel_ref and 'soni' in mebel_ref:
+                    new_qty = int(mebel_ref['soni']) + amount
+                    await asyncio.to_thread(db.reference(f'mebellar/{product_id}').update, {'soni': new_qty})
+            
+            # Mijoz qarzini kamaytirish
+            client_name = order_ref.get('client_name')
+            if client_name:
+                # Narxni hisoblash
+                price_val = 0
+                mebel_data = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+                if mebel_data and 'narxi' in mebel_data:
+                    price_str = str(mebel_data['narxi']).replace("so'm", "").replace("$", "").replace(" ", "")
+                    try:
+                        price_val = int(price_str)
+                    except:
+                        price_val = 0
+                
+                total_price = price_val * amount
+                if total_price > 0:
+                    debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
+                    current_debt = int(debt_ref) if debt_ref else 0
+                    new_debt = current_debt - total_price
+                    await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
+                    
+                    timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+                    record = {'type': 'Kirim', 'amount': total_price, 'timestamp': timestamp, 'note': f"Zakaz bekor qilindi: {order_id}"}
+                    await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
+            
+            # Zakazni bekor qilish
+            await asyncio.to_thread(db.reference(f'orders/{order_id}').update, {'status': 'Bekor qilindi'})
+        
+        await message.answer(f"✅ Zakaz `{order_id}` bekor qilindi!\n📦 Skladga qaytarildi.", reply_markup=main_menu('admin'), parse_mode="Markdown")
+        
+        # Omborchi va xodimlarga xabar
+        users_ref = await asyncio.to_thread(db.reference('users').get)
+        for user_id, user_data in (users_ref or {}).items():
+            if user_data.get('role') in ['omborchi', 'ishchi', 'xodim']:
+                try:
+                    await bot.send_message(
+                        int(user_id),
+                        f"⚠️ Zakaz bekor qilindi!\n🆔 ID: {order_id}\n📦 Mebel: {order_ref.get('product_id')}\n🧑 Mijoz: {order_ref.get('client_name')}"
+                    )
+                except:
+                    pass
+        # Hardcoded omborchi
+        try:
+            await bot.send_message(883589794, f"⚠️ Zakaz bekor qilindi!\n🆔 ID: {order_id}\n📦 Mebel: {order_ref.get('product_id')}\n🧑 Mijoz: {order_ref.get('client_name')}")
+        except:
+            pass
+        
+        await state.clear()
+        return
+    
+    elif message.text == "✏️ O'zgartirish":
+        markup = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [types.KeyboardButton(text="📊 Sonini o'zgartirish"), types.KeyboardButton(text="📅 Muddatni o'zgartirish")],
+                [types.KeyboardButton(text="📝 Izohni o'zgartirish")],
+                [types.KeyboardButton(text="Bosh menyu")]
+            ],
+            resize_keyboard=True
+        )
+        await message.answer("Nimani o'zgartirmoqchisiz?", reply_markup=markup)
+        await state.set_state(AdminOrderControlState.edit_field)
+        return
+    
+    await message.answer("Iltimos, tugmalardan foydalaning.")
+
+@dp.message(AdminOrderControlState.edit_field)
+async def admin_order_edit_field(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        await message.answer("Bosh menyu", reply_markup=main_menu('admin'))
+        await state.clear()
+        return
+    
+    field_map = {
+        "📊 Sonini o'zgartirish": "amount",
+        "📅 Muddatni o'zgartirish": "due_date",
+        "📝 Izohni o'zgartirish": "comment"
+    }
+    
+    field = field_map.get(message.text)
+    if not field:
+        await message.answer("Iltimos, tugmalardan foydalaning.")
+        return
+    
+    await state.update_data(edit_field=field)
+    
+    if field == "amount":
+        await message.answer("Yangi sonni kiriting (faqat raqam):", reply_markup=types.ReplyKeyboardRemove())
+    elif field == "due_date":
+        await message.answer("Yangi muddatni tanlang:", reply_markup=get_dates_keyboard())
+    elif field == "comment":
+        await message.answer("Yangi izohni kiriting:", reply_markup=types.ReplyKeyboardRemove())
+    
+    await state.set_state(AdminOrderControlState.new_value)
+
+@dp.message(AdminOrderControlState.new_value)
+async def admin_order_new_value(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        await message.answer("Bosh menyu", reply_markup=main_menu('admin'))
+        await state.clear()
+        return
+    
+    data = await state.get_data()
+    order_id = data['order_id']
+    field = data['edit_field']
+    new_value = message.text
+    
+    if field == "amount":
+        try:
+            new_amount = int(new_value)
+        except ValueError:
+            await message.answer("Iltimos, faqat raqam kiriting:")
+            return
+        
+        # Eski sonni olish va skladni tuzatish
+        order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
+        if order_ref:
+            old_amount = int(order_ref.get('amount', 0))
+            product_id = order_ref.get('product_id')
+            diff = new_amount - old_amount
+            
+            # Skladni tuzatish
+            if product_id:
+                mebel_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+                if mebel_ref and 'soni' in mebel_ref:
+                    new_qty = int(mebel_ref['soni']) - diff
+                    await asyncio.to_thread(db.reference(f'mebellar/{product_id}').update, {'soni': new_qty})
+            
+            # Qarzni tuzatish
+            client_name = order_ref.get('client_name')
+            if client_name:
+                price_val = 0
+                mebel_data = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+                if mebel_data and 'narxi' in mebel_data:
+                    price_str = str(mebel_data['narxi']).replace("so'm", "").replace("$", "").replace(" ", "")
+                    try:
+                        price_val = int(price_str)
+                    except:
+                        price_val = 0
+                
+                price_diff = price_val * diff
+                if price_diff != 0:
+                    debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
+                    current_debt = int(debt_ref) if debt_ref else 0
+                    new_debt = current_debt + price_diff
+                    await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
+        
+        await asyncio.to_thread(db.reference(f'orders/{order_id}').update, {'amount': str(new_amount)})
+        await message.answer(f"✅ Zakaz `{order_id}` soni {new_amount} taga o'zgartirildi!", reply_markup=main_menu('admin'), parse_mode="Markdown")
+    
+    elif field == "due_date":
+        await asyncio.to_thread(db.reference(f'orders/{order_id}').update, {'due_date': new_value})
+        await message.answer(f"✅ Zakaz `{order_id}` muddati {new_value} ga o'zgartirildi!", reply_markup=main_menu('admin'), parse_mode="Markdown")
+    
+    elif field == "comment":
+        await asyncio.to_thread(db.reference(f'orders/{order_id}').update, {'comment': new_value})
+        await message.answer(f"✅ Zakaz `{order_id}` izohi o'zgartirildi!", reply_markup=main_menu('admin'), parse_mode="Markdown")
+    
+    # Omborchi va xodimlarga xabar
+    order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
+    users_ref = await asyncio.to_thread(db.reference('users').get)
+    field_names = {'amount': 'Soni', 'due_date': 'Muddati', 'comment': 'Izohi'}
+    for user_id, user_data in (users_ref or {}).items():
+        if user_data.get('role') in ['omborchi', 'ishchi', 'xodim']:
+            try:
+                await bot.send_message(
+                    int(user_id),
+                    f"✏️ Zakaz o'zgartirildi!\n🆔 ID: {order_id}\n📦 {order_ref.get('product_id')}\n🧑 Mijoz: {order_ref.get('client_name')}\n🔄 {field_names.get(field, field)}: {new_value}"
+                )
+            except:
+                pass
+    try:
+        await bot.send_message(883589794, f"✏️ Zakaz o'zgartirildi!\n🆔 ID: {order_id}\n📦 {order_ref.get('product_id')}\n🧑 Mijoz: {order_ref.get('client_name')}\n🔄 {field_names.get(field, field)}: {new_value}")
+    except:
+        pass
+    
+    await state.clear()
 
 @dp.message(StateFilter('*'))
 async def fallback_handler(message: types.Message, state: FSMContext):

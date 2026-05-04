@@ -27,6 +27,7 @@ data = [
     ("Shkaf", ["D 004", "D 006"], "230 so'm"),
     ("Shkaf", ["D 005"], "205 so'm"),
     ("Shkaf", ["BF 762 SHKAF", "BF 752 SHKAF", "BF 772 SHKAF"], "135 so'm"),
+    ("Komplekt", ["KR 792"], "115 so'm"),
 ]
 
 for category, models, price in data:
