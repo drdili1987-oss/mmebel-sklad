@@ -824,7 +824,7 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
     data = await state.get_data()
     new_status = message.text
     
-    if new_status in ["Mijozni o'zi olib ketdi", "Bekor qilindi", "Tayyor bo'ldi"]:
+    if new_status in ["Bekor qilindi", "Tayyor bo'ldi"]:
         await asyncio.to_thread(db.reference(f"orders/{data['order_id']}").update, {'status': new_status})
         await message.answer(f"✅ Buyurtma holati yangilandi: {new_status}", reply_markup=main_menu('omborchi'))
         
@@ -856,6 +856,19 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
                     
         await state.clear()
         return
+
+    elif new_status == "Mijozni o'zi olib ketdi":
+        await state.update_data(new_status=new_status)
+        markup = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
+                [types.KeyboardButton(text="Boshqa summa"), types.KeyboardButton(text="Bosh menyu")]
+            ],
+            resize_keyboard=True
+        )
+        await message.answer("Ayriladigan summani (chegirmani) tanlang yoki kiriting:", reply_markup=markup)
+        await state.set_state(DeliveryControlState.delivery_price)
+        return
         
     elif new_status == "Biz yetkazib berdik":
         await state.update_data(new_status=new_status)
@@ -882,11 +895,12 @@ async def delivery_driver(message: types.Message, state: FSMContext):
     markup = types.ReplyKeyboardMarkup(
         keyboard=[
             [types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
-            [types.KeyboardButton(text="Boshqa narx"), types.KeyboardButton(text="Bosh menyu")]
+            [types.KeyboardButton(text="Boshqa summa"), types.KeyboardButton(text="Bosh menyu")]
         ],
         resize_keyboard=True
     )
-    await message.answer("Yetkazib berish narxini belgilang:", reply_markup=markup)
+    prompt = "Ayriladigan summani belgilang:" if data.get('new_status') == "Mijozni o'zi olib ketdi" else "Yetkazib berish narxini belgilang:"
+    await message.answer(prompt, reply_markup=markup)
     await state.set_state(DeliveryControlState.delivery_price)
 
 @dp.message(DeliveryControlState.delivery_price)
@@ -896,16 +910,79 @@ async def delivery_price_handler(message: types.Message, state: FSMContext):
         await state.clear()
         return
         
-    if message.text == "Boshqa narx":
-        await message.answer("Iltimos, narxni kiriting (masalan: 10$ yoki 100000 so'm):", reply_markup=types.ReplyKeyboardRemove())
+    if message.text == "Boshqa summa" or message.text == "Boshqa narx":
+        await message.answer("Iltimos, summani kiriting (masalan: 10$ yoki 100000 so'm):", reply_markup=types.ReplyKeyboardRemove())
         await state.set_state(DeliveryControlState.custom_price)
         return
         
-    await process_delivery_final(message.text, message, state)
+    data = await state.get_data()
+    if data.get('new_status') == "Mijozni o'zi olib ketdi":
+        await process_pickup_final(message.text, message, state)
+    else:
+        await process_delivery_final(message.text, message, state)
 
 @dp.message(DeliveryControlState.custom_price)
 async def delivery_custom_price(message: types.Message, state: FSMContext):
-    await process_delivery_final(message.text, message, state)
+    data = await state.get_data()
+    if data.get('new_status') == "Mijozni o'zi olib ketdi":
+        await process_pickup_final(message.text, message, state)
+    else:
+        await process_delivery_final(message.text, message, state)
+
+async def process_pickup_final(discount_price, message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    order_id = data['order_id']
+    new_status = data['new_status']
+    client = data['client']
+    
+    # Update order status
+    await asyncio.to_thread(db.reference(f"orders/{order_id}").update, {
+        'status': new_status,
+        'pickup_discount': discount_price
+    })
+    
+    # Debt reduction
+    try:
+        # Extract numeric value
+        import re
+        nums = re.findall(r'\d+', str(discount_price))
+        if nums:
+            discount_val = int(nums[0])
+            if discount_val > 0:
+                # Mijoz qarzini kamaytirish
+                debt_ref = await asyncio.to_thread(db.reference(f'debts/{client}').get)
+                current_debt = int(debt_ref) if debt_ref is not None else 0
+                new_debt = current_debt - discount_val
+                await asyncio.to_thread(db.reference(f'debts/{client}').set, new_debt)
+                
+                # Tarixga yozish
+                timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+                record = {
+                    'type': 'Kirim', 
+                    'amount': discount_val, 
+                    'timestamp': timestamp, 
+                    'note': f"O'zi olib ketgani uchun chegirma (ID: {order_id})"
+                }
+                await asyncio.to_thread(db.reference(f'transactions/clients/{client}').push, record)
+    except Exception as e:
+        print(f"Chegirma hisoblashda xatolik: {e}")
+        
+    await message.answer(f"✅ Buyurtma holati yangilandi: {new_status}\n💰 Chegirma: {discount_price}", reply_markup=main_menu('omborchi'))
+    
+    # Notify admin
+    admin_ref = await asyncio.to_thread(db.reference('users').get)
+    for user_id, user_data in (admin_ref or {}).items():
+        if user_data.get('role') == 'admin':
+            try:
+                await bot.send_message(
+                    int(user_id),
+                    f"📦 **Buyurtma holati o'zgardi!**\n\n🆔 ID: `{order_id}`\n🧑 Mijoz: {client}\n📌 Yangi holat: {new_status}\n💰 Chegirma: {discount_price}",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+                
+    await state.clear()
 
 async def process_delivery_final(price, message: types.Message, state: FSMContext):
     data = await state.get_data()
