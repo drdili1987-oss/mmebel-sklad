@@ -42,12 +42,12 @@ def get_keyboard(role):
     if role == 'admin':
         buttons = [
             [types.KeyboardButton(text="➕ Yangi mahsulot"), types.KeyboardButton(text="💰 Narxni o'zgartirish")],
-            [types.KeyboardButton(text="📝 Yangi zakaz yozish"), types.KeyboardButton(text="📦 Sklad qoldig'i")]
+            [types.KeyboardButton(text="📝 Yangi buyurtma yozish"), types.KeyboardButton(text="📦 Ombor qoldig'i")]
         ]
     elif role == 'omborchi':
         buttons = [
-            [types.KeyboardButton(text="🔄 Skladni yangilash"), types.KeyboardButton(text="🚚 Dostavka holati")],
-            [types.KeyboardButton(text="📦 Sklad qoldig'i")]
+            [types.KeyboardButton(text="🔄 Omborni yangilash"), types.KeyboardButton(text="🚚 Yetkazib berish holati")],
+            [types.KeyboardButton(text="📦 Ombor qoldig'i")]
         ]
     else:
         buttons = [[types.KeyboardButton(text="🛍 Sotuvdagi mebellar")]]
@@ -62,12 +62,12 @@ async def start(message: types.Message):
     await message.answer(f"Xush kelibsiz! Sizning rolingiz: {role.capitalize()}", 
                          reply_markup=get_keyboard(role))
 
-# 🛍 MIJOZ: Skladni ko'rish (Realtime Database uchun)
+# 🛍 MIJOZ: Omborni ko'rishi (Realtime Database uchun)
 @dp.message(F.text == "🛍 Sotuvdagi mebellar")
-@dp.message(F.text == "📦 Sklad qoldig'i")
+@dp.message(F.text == "📦 Ombor qoldig'i")
 async def view_stock(message: types.Message):
     items = root_ref.child('mebellar').get() or {}
-    res = "🏠 Munosib Mebel Skladi:\n\n"
+    res = "🏠 Munosib Mebel Ombori:\n\n"
     for p_id, d in items.items():
         if d.get('soni', 0) > 0:
             res += f"🔹 {d['nomi']} ({d['modeli']})\n   Narxi: {d['price']} | Qoldi: {d['soni']} ta\n   ID: {p_id}\n\n"
@@ -111,12 +111,12 @@ async def add_final(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Saqlandi! ID: {p_id}")
     await state.clear()
 
-# 🚚 OMBORCHI: Dostavka (Inline tugmalar bilan)
-@dp.message(F.text == "🚚 Dostavka holati")
+# 🚚 OMBORCHI: Yetkazib berish (Inline tugmalar bilan)
+@dp.message(F.text == "🚚 Yetkazib berish holati")
 async def delivery(message: types.Message):
     if await get_user_role(message.from_user.id) in ['admin', 'omborchi']:
-        # Bu yerda zakazlar ro'yxati chiqadi (oldingi kod kabi)
-        await message.answer("Hozircha faol zakazlar yo'q.")
+        # Bu yerda buyurtmalar ro'yxati chiqadi (oldingi kod kabi)
+        await message.answer("Hozircha faol buyurtmalar yo'q.")
 
 async def main():
     await dp.start_polling(bot)
