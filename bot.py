@@ -1008,8 +1008,8 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
         await state.update_data(new_status=new_status, driver="O'zi olib ketdi")
         markup = types.ReplyKeyboardMarkup(
             keyboard=[
-                [types.KeyboardButton(text="6 000"), types.KeyboardButton(text="8 000")],
-                [types.KeyboardButton(text="10 000"), types.KeyboardButton(text="0")],
+                [types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
+                [types.KeyboardButton(text="10 so'm"), types.KeyboardButton(text="0")],
                 [types.KeyboardButton(text="Bosh menyu")]
             ],
             resize_keyboard=True
@@ -1149,18 +1149,29 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
     }
     await asyncio.to_thread(db.reference(f"deliveries/{current_month}").push, delivery_record)
     
-    # Haydovchi balansini oshirish
     try:
         price_val = int(str(price).replace("so'm", "").replace("$", "").replace(" ", ""))
         if price_val > 0:
-            balance_ref = await asyncio.to_thread(db.reference(f"driver_balances/{driver}").get)
-            current_balance = int(balance_ref) if balance_ref else 0
-            new_balance = current_balance + price_val
-            await asyncio.to_thread(db.reference(f"driver_balances/{driver}").set, new_balance)
-            
-            # Tarixga yozish
-            record = {'type': 'Kirim', 'amount': price_val, 'timestamp': timestamp, 'note': f"Yetkazib berish haqi (Buyurtma: {order_id})"}
-            await asyncio.to_thread(db.reference(f"transactions/drivers/{driver}").push, record)
+            if driver == "O'zi olib ketdi":
+                # Mijoz qarzidan chegirish
+                debt_ref = await asyncio.to_thread(db.reference(f'debts/{client}').get)
+                current_debt = int(debt_ref) if debt_ref else 0
+                new_debt = current_debt - price_val
+                await asyncio.to_thread(db.reference(f'debts/{client}').set, new_debt)
+                
+                # Tarixga yozish
+                record = {'type': 'Kirim', 'amount': price_val, 'timestamp': timestamp, 'note': f"O'zi olib ketgani uchun chegirma (Buyurtma: {order_id})"}
+                await asyncio.to_thread(db.reference(f'transactions/clients/{client}').push, record)
+            else:
+                # Haydovchi balansini oshirish
+                balance_ref = await asyncio.to_thread(db.reference(f"driver_balances/{driver}").get)
+                current_balance = int(balance_ref) if balance_ref else 0
+                new_balance = current_balance + price_val
+                await asyncio.to_thread(db.reference(f"driver_balances/{driver}").set, new_balance)
+                
+                # Tarixga yozish
+                record = {'type': 'Kirim', 'amount': price_val, 'timestamp': timestamp, 'note': f"Yetkazib berish haqi (Buyurtma: {order_id})"}
+                await asyncio.to_thread(db.reference(f"transactions/drivers/{driver}").push, record)
     except:
         pass
         
