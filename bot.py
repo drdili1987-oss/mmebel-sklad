@@ -135,6 +135,10 @@ class DeliveryControlState(StatesGroup):
     driver = State()
     delivery_price = State()
     custom_price = State()
+    custom_driver = State()
+
+class DeliveryReportState(StatesGroup):
+    select_month = State()
 
 class AdminOrderControlState(StatesGroup):
     select_order = State()
@@ -166,13 +170,14 @@ def main_menu(role):
         buttons = [
             [types.KeyboardButton(text="📦 Mavjud mebellar"), types.KeyboardButton(text="📝 Yangi buyurtma")],
             [types.KeyboardButton(text="📋 Buyurtmalar nazorati"), types.KeyboardButton(text="📊 Mijozlar hisoboti")],
-            [types.KeyboardButton(text="🚚 Haydovchilar hisoboti"), types.KeyboardButton(text="🕰 Yetkazish tarixi")],
-            [types.KeyboardButton(text="📈 Sotuv statistikasi")]
+            [types.KeyboardButton(text="🚚 Haydovchilar hisoboti")],
+            [types.KeyboardButton(text="🕰 Yetkazish tarixi"), types.KeyboardButton(text="📈 Sotuv statistikasi")]
         ]
     elif role == 'omborchi':
         buttons = [
             [types.KeyboardButton(text="🔄 Omborni yangilash"), types.KeyboardButton(text="🚚 Yetkazishlar nazorati")],
-            [types.KeyboardButton(text="📦 Mavjud mebellar"), types.KeyboardButton(text="📊 Yetkazish hisoboti")]
+            [types.KeyboardButton(text="📦 Mavjud mebellar"), types.KeyboardButton(text="📊 Dostavka hisoboti")],
+            [types.KeyboardButton(text="🕰 Yetkazish tarixi")]
         ]
     elif role == 'xodim':
         buttons = [
@@ -186,7 +191,7 @@ def main_menu(role):
 MAIN_MENU_BUTTONS = {
     "Bosh menyu", "➕ Yangi mebel", "📦 Mavjud mebellar", 
     "📝 Yangi buyurtma", "📋 Buyurtmalar nazorati", "📊 Mijozlar hisoboti", "🚚 Haydovchilar hisoboti", "🕰 Yetkazish tarixi", "📈 Sotuv statistikasi",
-    "🔄 Omborni yangilash", "🚚 Yetkazishlar nazorati", "📊 Yetkazish hisoboti", "🔨 Faol buyurtmalar", "🛍 Sotuvdagi mebellar"
+    "🔄 Omborni yangilash", "🚚 Yetkazishlar nazorati", "📊 Dostavka hisoboti", "🔨 Faol buyurtmalar", "🛍 Sotuvdagi mebellar"
 }
 
 @dp.message(F.text.in_(MAIN_MENU_BUTTONS), ~StateFilter(None))
@@ -663,60 +668,202 @@ async def view_active_orders(message: types.Message):
             
         await message.answer(f"🔨 Faol buyurtmalar ro'yxati:\n\n{active_orders}")
 
-# --- OMBORCHI: YETKAZISH HISOBOTI ---
-@dp.message(F.text == "📊 Yetkazish hisoboti")
-async def warehouse_delivery_report(message: types.Message):
-    role = await get_user_role(message.from_user.id)
-    if role == 'omborchi':
-        current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
-        deliveries_ref = await asyncio.to_thread(db.reference(f'deliveries/{current_month}').get)
-        
-        if not deliveries_ref:
-            await message.answer(f"Ushbu oy ({current_month}) uchun yetkazib berishlar topilmadi.")
-            return
-            
-        report_text = f"📊 **{current_month} oyi uchun yetkazib berish hisoboti:**\n\n"
-        
-        # Barcha buyurtmalarni olish (yaratilgan sanani ko'rish uchun)
-        orders_ref = await asyncio.to_thread(db.reference('orders').get)
-        
-        # Deliveries ni teskari tartibda ko'rsatish (oxirgisi tepada)
-        if deliveries_ref:
-            items = list(deliveries_ref.items())
-            items.reverse()
-            for d_id, d in items:
-                if isinstance(d, dict):
-                    order_id = d.get('order_id', 'Noma\'lum')
-                    client = d.get('client', 'Noma\'lum')
-                    product = d.get('product_id', 'Noma\'lum')
-                    driver = d.get('driver', 'Noma\'lum')
-                    delivery_date = d.get('timestamp', 'Noma\'lum')
-                    
-                    # Buyurtma sanasini olish
-                    order_date = "Noma'lum"
-                    if orders_ref and order_id in orders_ref:
-                        order_date = orders_ref[order_id].get('created_at', "Noma'lum")
-                    
-                    report_text += f"🆔 ID: `{order_id}`\n"
-                    report_text += f"🧑 Mijoz: {client}\n"
-                    report_text += f"📦 Mebel: {product}\n"
-                    report_text += f"📅 Buyurtma sanasi: {order_date}\n"
-                    report_text += f"🚚 Yetkazilgan sana: {delivery_date}\n"
-                    report_text += f"👨‍✈️ Haydovchi: {driver}\n"
-                    report_text += "------------------------\n"
-        
-        if len(report_text) > 4000:
-            for x in range(0, len(report_text), 4000):
-                await message.answer(report_text[x:x+4000], parse_mode="Markdown")
-        else:
-            await message.answer(report_text, parse_mode="Markdown")
+class DeliveryReportState(StatesGroup):
+    select_month = State()
 
-# --- OMBORCHI: OMBORNI YANGILASH ---
-@dp.message(F.text == "🔄 Omborni yangilash")
-async def update_stock_start(message: types.Message, state: FSMContext):
-    if await get_user_role(message.from_user.id) == 'omborchi':
+# --- YETKAZISH (DOSTAVKA) HISOBOTI ---
+@dp.message(F.text == "📊 Dostavka hisoboti")
+async def delivery_report_start(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    if role not in ['omborchi', 'admin']:
+        return
+
+    # Show last 6 months as keyboard buttons
+    months = []
+    for i in range(6):
+        m = (datetime.now(TASHKENT_TZ).month - i - 1) % 12 + 1
+        y = datetime.now(TASHKENT_TZ).year + (datetime.now(TASHKENT_TZ).month - i - 1) // 12
+        if m <= 0:
+            m += 12
+            y -= 1
+        months.append(f"{y}-{m:02d}")
+
+    buttons = []
+    for i in range(0, len(months), 2):
+        row = [types.KeyboardButton(text=months[i])]
+        if i + 1 < len(months):
+            row.append(types.KeyboardButton(text=months[i+1]))
+        buttons.append(row)
+    buttons.append([types.KeyboardButton(text="Bosh menyu")])
+
+    await message.answer("Qaysi oy hisobotini ko'rmoqchisiz?", reply_markup=types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True))
+    await state.set_state(DeliveryReportState.select_month)
+
+@dp.message(DeliveryReportState.select_month)
+async def delivery_report(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        await state.clear()
+        return
+
+    try:
+        selected_month = message.text
+        deliveries_ref = await asyncio.to_thread(db.reference(f'deliveries/{selected_month}').get)
+
+        # Also get completed orders for this month
+        orders_ref = await asyncio.to_thread(db.reference('orders').get)
+        completed_orders = []
+        if orders_ref:
+            for o_id, o in orders_ref.items():
+                if isinstance(o, dict):
+                    order_month = o.get('month', '')
+                    order_status = o.get('status', '')
+                    if order_month == selected_month and order_status in ["Biz yetkazib berdik", "Mijozni o'zi olib ketdi"]:
+                        completed_orders.append((o_id, o))
+
+        # Combine deliveries and completed orders
+        all_deliveries = []
+
+        # Add deliveries from deliveries table
+        if deliveries_ref:
+            if isinstance(deliveries_ref, dict):
+                for d_id, d in deliveries_ref.items():
+                    if isinstance(d, dict):
+                        all_deliveries.append(('delivery', d_id, d))
+            elif isinstance(deliveries_ref, list):
+                for i, d in enumerate(deliveries_ref):
+                    if d is not None and isinstance(d, dict):
+                        all_deliveries.append(('delivery', i, d))
+
+        # Add completed orders that don't have delivery records
+        for o_id, o in completed_orders:
+            # Check if this order already has a delivery record
+            has_delivery = False
+            for delivery_type, d_id, d in all_deliveries:
+                if delivery_type == 'delivery' and d.get('order_id') == o_id:
+                    has_delivery = True
+                    break
+
+            if not has_delivery:
+                # Create a pseudo-delivery record from the order
+                pseudo_delivery = {
+                    'order_id': o_id,
+                    'client': o.get('client_name', 'Noma\'lum'),
+                    'product_id': o.get('product_id', 'Noma\'lum'),
+                    'amount': o.get('amount', '1'),
+                    'driver': o.get('driver', 'O\'zi olib ketdi'),
+                    'price': o.get('delivery_price', '0') if o.get('status') == "Biz yetkazib berdik" else o.get('pickup_discount', '0'),
+                    'timestamp': o.get('created_at', 'Noma\'lum')
+                }
+                all_deliveries.append(('order', o_id, pseudo_delivery))
+
+        if not all_deliveries:
+            await message.answer(f"{selected_month} oyida hech qanday yetkazib berishlar topilmadi.")
+            await state.clear()
+            return
+
+        # Sort by timestamp (most recent first)
+        def get_timestamp(item):
+            delivery_type, d_id, d = item
+            timestamp_str = d.get('timestamp', 'Noma\'lum')
+            try:
+                if timestamp_str != 'Noma\'lum':
+                    return datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                else:
+                    return datetime.min
+            except:
+                return datetime.min
+
+        all_deliveries.sort(key=get_timestamp, reverse=True)
+
+        report_header = f"📊 **{selected_month} oyi uchun yetkazib berish hisoboti:**\n\n"
+        report_items = []
+
+        total_count = 0
+        total_items = 0
+        total_sum_uzs = 0
+        total_sum_usd = 0
+
+        import re
+        for delivery_type, d_id, d in all_deliveries:
+            order_id = d.get('order_id', "Noma'lum")
+            client = d.get('client', "Noma'lum")
+            product = d.get('product_id', "Noma'lum")
+            driver = d.get('driver', "Noma'lum")
+            delivery_date = d.get('timestamp', "Noma'lum")
+            price = str(d.get('price', '0'))
+            amount = d.get('amount', '1')
+
+            try:
+                amount_int = int(amount)
+            except:
+                amount_int = 1
+
+            # Buyurtma sanasini olish
+            order_date = "Noma'lum"
+            if orders_ref and isinstance(orders_ref, dict) and order_id in orders_ref:
+                order_date = orders_ref[order_id].get('created_at', "Noma'lum")
+
+            item_text = f"🆔 ID: `{order_id}`\n"
+            item_text += f"🧑 Mijoz: {client}\n"
+            item_text += f"📦 Mebel: {product} ({amount} ta)\n"
+            item_text += f"📅 Buyurtma: {order_date}\n"
+            item_text += f"🚚 Yetkazilgan: {delivery_date}\n"
+            item_text += f"👨‍✈️ Haydovchi: {driver} ({price})\n"
+            item_text += "------------------------"
+            report_items.append(item_text)
+
+            # Stats
+            total_count += 1
+            total_items += amount_int
+
+            # Parse price for totals
+            nums = re.findall(r'\d+', price.replace(" ", ""))
+            if nums:
+                val = int(nums[0])
+                if '$' in price:
+                    total_sum_usd += val
+                else:
+                    total_sum_uzs += val
+
+        # Summary
+        summary = f"\n📈 **JAMI STATISTIKA ({selected_month}):**\n"
+        summary += f"✅ Yetkazib berishlar: {total_count} ta\n"
+        summary += f"📦 Jami mebellar: {total_items} ta\n"
+
+        sums = []
+        if total_sum_usd > 0:
+            sums.append(f"{total_sum_usd}$")
+        if total_sum_uzs > 0:
+            sums.append(f"{total_sum_uzs:,} so'm".replace(",", " "))
+        if sums:
+            summary += f"💰 Jami tushum: {' + '.join(sums)}"
+        else:
+            summary += "💰 Jami tushum: 0"
+
+        # Send messages in chunks
+        full_report = [report_header] + report_items + [summary]
+
+        current_msg = ""
+        for part in full_report:
+            if len(current_msg) + len(part) > 3900:
+                await message.answer(current_msg, parse_mode="Markdown")
+                current_msg = part + "\n\n"
+            else:
+                current_msg += part + "\n\n"
+
+        if current_msg:
+            await message.answer(current_msg, parse_mode="Markdown")
+
         await message.answer("Qaysi mebelning sonini yangilamoqchisiz? Tanlang yoki ID kiriting:", reply_markup=get_models_keyboard())
         await state.set_state(UpdateStockState.product_id)
+
+    except Exception as e:
+        print(f"Dostavka hisoboti xatolik: {e}")
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Hisobotni ko'rsatishda xatolik yuz berdi.", reply_markup=main_menu(role))
+        await state.clear()
 
 @dp.message(UpdateStockState.product_id)
 async def update_stock_product_id(message: types.Message, state: FSMContext):
@@ -858,18 +1005,19 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
         return
 
     elif new_status == "Mijozni o'zi olib ketdi":
-        await state.update_data(new_status=new_status)
+        await state.update_data(new_status=new_status, driver="O'zi olib ketdi")
         markup = types.ReplyKeyboardMarkup(
             keyboard=[
-                [types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
-                [types.KeyboardButton(text="Boshqa summa"), types.KeyboardButton(text="Bosh menyu")]
+                [types.KeyboardButton(text="6 000"), types.KeyboardButton(text="8 000")],
+                [types.KeyboardButton(text="10 000"), types.KeyboardButton(text="0")],
+                [types.KeyboardButton(text="Bosh menyu")]
             ],
             resize_keyboard=True
         )
-        await message.answer("Ayriladigan summani (chegirmani) tanlang yoki kiriting:", reply_markup=markup)
-        await state.set_state(DeliveryControlState.delivery_price)
+        await message.answer("Chegirma summasini tanlang yoki kiriting:", reply_markup=markup)
+        await state.set_state(DeliveryControlState.custom_price)
         return
-        
+
     elif new_status == "Biz yetkazib berdik":
         await state.update_data(new_status=new_status)
         markup = types.ReplyKeyboardMarkup(
@@ -891,17 +1039,28 @@ async def delivery_driver(message: types.Message, state: FSMContext):
         await state.clear()
         return
         
-    await state.update_data(driver=message.text)
-    markup = types.ReplyKeyboardMarkup(
-        keyboard=[
-            [types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
-            [types.KeyboardButton(text="Boshqa summa"), types.KeyboardButton(text="Bosh menyu")]
-        ],
-        resize_keyboard=True
-    )
-    prompt = "Ayriladigan summani belgilang:" if data.get('new_status') == "Mijozni o'zi olib ketdi" else "Yetkazib berish narxini belgilang:"
-    await message.answer(prompt, reply_markup=markup)
-    await state.set_state(DeliveryControlState.delivery_price)
+    if message.text == "Boshqa":
+        await message.answer("Haydovchi nomini kiriting:", reply_markup=types.ReplyKeyboardRemove())
+        await state.set_state(DeliveryControlState.custom_driver)
+        return
+        
+    try:
+        await state.update_data(driver=message.text)
+        
+        markup = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
+                [types.KeyboardButton(text="Boshqa narx"), types.KeyboardButton(text="Bosh menyu")]
+            ],
+            resize_keyboard=True
+        )
+        await message.answer("Yetkazib berish narxini belgilang:", reply_markup=markup)
+        await state.set_state(DeliveryControlState.delivery_price)
+    except Exception as e:
+        import traceback
+        err_text = traceback.format_exc()
+        print(err_text)
+        await message.answer(f"Haydovchini tanlashda xatolik yuz berdi:\n\n{err_text[:4000]}")
 
 @dp.message(DeliveryControlState.delivery_price)
 async def delivery_price_handler(message: types.Message, state: FSMContext):
@@ -910,79 +1069,50 @@ async def delivery_price_handler(message: types.Message, state: FSMContext):
         await state.clear()
         return
         
-    if message.text == "Boshqa summa" or message.text == "Boshqa narx":
-        await message.answer("Iltimos, summani kiriting (masalan: 10$ yoki 100000 so'm):", reply_markup=types.ReplyKeyboardRemove())
+    if message.text == "Boshqa narx":
+        await message.answer("Iltimos, narxni kiriting (masalan: 10$ yoki 100000 so'm):", reply_markup=types.ReplyKeyboardRemove())
         await state.set_state(DeliveryControlState.custom_price)
         return
         
-    data = await state.get_data()
-    if data.get('new_status') == "Mijozni o'zi olib ketdi":
-        await process_pickup_final(message.text, message, state)
-    else:
+    try:
         await process_delivery_final(message.text, message, state)
+    except Exception as e:
+        import traceback
+        err_text = traceback.format_exc()
+        print(err_text)
+        await message.answer(f"Xatolik yuz berdi:\n\n{err_text[:4000]}")
 
 @dp.message(DeliveryControlState.custom_price)
 async def delivery_custom_price(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    if data.get('new_status') == "Mijozni o'zi olib ketdi":
-        await process_pickup_final(message.text, message, state)
-    else:
-        await process_delivery_final(message.text, message, state)
-
-async def process_pickup_final(discount_price, message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    order_id = data['order_id']
-    new_status = data['new_status']
-    client = data['client']
-    
-    # Update order status
-    await asyncio.to_thread(db.reference(f"orders/{order_id}").update, {
-        'status': new_status,
-        'pickup_discount': discount_price
-    })
-    
-    # Debt reduction
     try:
-        # Extract numeric value
-        import re
-        nums = re.findall(r'\d+', str(discount_price))
-        if nums:
-            discount_val = int(nums[0])
-            if discount_val > 0:
-                # Mijoz qarzini kamaytirish
-                debt_ref = await asyncio.to_thread(db.reference(f'debts/{client}').get)
-                current_debt = int(debt_ref) if debt_ref is not None else 0
-                new_debt = current_debt - discount_val
-                await asyncio.to_thread(db.reference(f'debts/{client}').set, new_debt)
-                
-                # Tarixga yozish
-                timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
-                record = {
-                    'type': 'Kirim', 
-                    'amount': discount_val, 
-                    'timestamp': timestamp, 
-                    'note': f"O'zi olib ketgani uchun chegirma (ID: {order_id})"
-                }
-                await asyncio.to_thread(db.reference(f'transactions/clients/{client}').push, record)
+        await process_delivery_final(message.text, message, state)
     except Exception as e:
-        print(f"Chegirma hisoblashda xatolik: {e}")
+        import traceback
+        err_text = traceback.format_exc()
+        print(err_text)
+        await message.answer(f"Xatolik yuz berdi:\n\n{err_text[:4000]}")
+
+@dp.message(DeliveryControlState.custom_driver)
+async def delivery_custom_driver(message: types.Message, state: FSMContext):
+    try:
+        await state.update_data(driver=message.text)
         
-    await message.answer(f"✅ Buyurtma holati yangilandi: {new_status}\n💰 Chegirma: {discount_price}", reply_markup=main_menu('omborchi'))
-    
-    # Notify admin
-    admin_ref = await asyncio.to_thread(db.reference('users').get)
-    for user_id, user_data in (admin_ref or {}).items():
-        if user_data.get('role') == 'admin':
-            try:
-                await bot.send_message(
-                    int(user_id),
-                    f"📦 **Buyurtma holati o'zgardi!**\n\n🆔 ID: `{order_id}`\n🧑 Mijoz: {client}\n📌 Yangi holat: {new_status}\n💰 Chegirma: {discount_price}",
-                    parse_mode="Markdown"
-                )
-            except Exception:
-                pass
-                
-    await state.clear()
+        markup = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
+                [types.KeyboardButton(text="Boshqa narx"), types.KeyboardButton(text="Bosh menyu")]
+            ],
+            resize_keyboard=True
+        )
+        await message.answer("Yetkazib berish narxini belgilang:", reply_markup=markup)
+        await state.set_state(DeliveryControlState.delivery_price)
+    except Exception as e:
+        import traceback
+        err_text = traceback.format_exc()
+        print(err_text)
+        await message.answer(f"Haydovchini kiritishda xatolik yuz berdi:\n\n{err_text[:4000]}")
+
+
 
 async def process_delivery_final(price, message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -992,15 +1122,18 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
     client = data['client']
     
     # Update order
+    current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
     await asyncio.to_thread(db.reference(f"orders/{order_id}").update, {
         'status': new_status,
         'driver': driver,
-        'delivery_price': price
+        'delivery_price': price,
+        'month': current_month
     })
     
-    # Get product_id for history
+    # Get product_id and amount for history
     order_ref = await asyncio.to_thread(db.reference(f"orders/{order_id}").get)
-    product_id = order_ref.get('product_id', 'Noma\'lum') if order_ref else 'Noma\'lum'
+    product_id = order_ref.get('product_id', "Noma'lum") if order_ref else "Noma'lum"
+    amount = order_ref.get('amount', 1) if order_ref else 1
     
     # Save delivery report
     current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
@@ -1011,6 +1144,7 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
         'driver': driver,
         'price': price,
         'product_id': product_id,
+        'amount': amount,
         'timestamp': timestamp
     }
     await asyncio.to_thread(db.reference(f"deliveries/{current_month}").push, delivery_record)
@@ -1225,7 +1359,8 @@ class HistoryState(StatesGroup):
 
 @dp.message(F.text == "🕰 Yetkazish tarixi")
 async def delivery_history_start(message: types.Message, state: FSMContext):
-    if await get_user_role(message.from_user.id) == 'admin':
+    role = await get_user_role(message.from_user.id)
+    if role in ['admin', 'omborchi']:
         # Show last 6 months as keyboard buttons
         months = []
         for i in range(6):
@@ -1255,26 +1390,58 @@ async def show_delivery_history(message: types.Message, state: FSMContext):
         await state.clear()
         return
         
-    month = message.text
-    deliveries_ref = await asyncio.to_thread(db.reference(f'deliveries/{month}').get)
-    if not deliveries_ref:
-        await message.answer(f"{month} oyida hech qanday yetkazib berishlar yo'q.")
-        return
-        
-    history_text = f"🕰 **{month} oyi yetkazib berish tarixi:**\n\n"
-    for d_id, d in deliveries_ref.items():
-        if isinstance(d, dict):
-            history_text += f"📅 Vaqt: {d.get('timestamp', 'Noma\'lum')}\n"
-            history_text += f"🧑 Mijoz: {d.get('client', 'Noma\'lum')}\n"
-            history_text += f"📦 Mebel: {d.get('product_id', 'Noma\'lum')}\n"
-            history_text += f"🚚 Dostavchik: {d.get('driver', 'Noma\'lum')} ({d.get('price', '0')})\n\n"
+    try:
+        month = message.text
+        deliveries_ref = await asyncio.to_thread(db.reference(f'deliveries/{month}').get)
+        if not deliveries_ref:
+            await message.answer(f"{month} oyida hech qanday yetkazib berishlar yo'q.")
+            return
             
-    # Send in chunks if it's too long
-    if len(history_text) > 4000:
-        for x in range(0, len(history_text), 4000):
-            await message.answer(history_text[x:x+4000], parse_mode="Markdown")
-    else:
-        await message.answer(history_text, parse_mode="Markdown")
+        # Safe iteration
+        if isinstance(deliveries_ref, dict):
+            items = list(deliveries_ref.items())
+        elif isinstance(deliveries_ref, list):
+            items = [(i, v) for i, v in enumerate(deliveries_ref) if v is not None]
+        else:
+            items = []
+            
+        items.reverse() # Oxirgisi tepada
+
+        history_header = f"🕰 **{month} oyi yetkazib berish tarixi:**\n\n"
+        history_items = []
+        
+        for d_id, d in items:
+            if isinstance(d, dict):
+                t_str = d.get('timestamp', "Noma'lum")
+                c_str = d.get('client', "Noma'lum")
+                p_str = d.get('product_id', "Noma'lum")
+                a_str = d.get('amount', '1')
+                dr_str = d.get('driver', "Noma'lum")
+                pr_str = d.get('price', '0')
+                
+                item_text = f"📅 Vaqt: {t_str}\n"
+                item_text += f"🧑 Mijoz: {c_str}\n"
+                item_text += f"📦 Mebel: {p_str} ({a_str} ta)\n"
+                item_text += f"🚚 Dostavchik: {dr_str} ({pr_str})\n"
+                item_text += "------------------------"
+                history_items.append(item_text)
+                
+        # Send in chunks
+        full_history = [history_header] + history_items
+        current_msg = ""
+        for part in full_history:
+            if len(current_msg) + len(part) > 3900:
+                await message.answer(current_msg, parse_mode="Markdown")
+                current_msg = part + "\n\n"
+            else:
+                current_msg += part + "\n\n"
+        
+        if current_msg:
+            await message.answer(current_msg, parse_mode="Markdown")
+            
+    except Exception as e:
+        logging.error(f"Tarix ko'rsatishda xatolik: {e}")
+        await message.answer(f"❌ Xatolik yuz berdi: {str(e)}")
 
 
 @dp.message(F.text == "📈 Sotuv statistikasi")
