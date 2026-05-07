@@ -4,7 +4,8 @@ import uuid
 import os
 import aiohttp
 from dotenv import load_dotenv
-load_dotenv()
+base_dir = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(base_dir, ".env"))
 from datetime import datetime, timedelta, timezone
 TASHKENT_TZ = timezone(timedelta(hours=5))
 from aiohttp import web
@@ -85,7 +86,8 @@ def get_dates_keyboard():
     return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 # 1. Firebase Sozlamalari (RTDB)
-cred = credentials.Certificate("serviceAccountKey.json")
+cred_path = os.path.join(base_dir, "serviceAccountKey.json")
+cred = credentials.Certificate(cred_path)
 firebase_admin.initialize_app(cred, {
     'databaseURL': os.getenv('FIREBASE_DB_URL', 'https://mmebel-bot-default-rtdb.europe-west1.firebasedatabase.app')
 })
@@ -140,8 +142,6 @@ class DeliveryControlState(StatesGroup):
     custom_price = State()
     custom_driver = State()
 
-class DeliveryReportState(StatesGroup):
-    select_month = State()
 
 class AdminOrderControlState(StatesGroup):
     select_order = State()
@@ -1861,7 +1861,7 @@ async def admin_order_new_value(message: types.Message, state: FSMContext):
     
     await state.clear()
 
-@dp.message(StateFilter('*'))
+@dp.message(StateFilter(None))
 async def fallback_handler(message: types.Message, state: FSMContext):
     role = await get_user_role(message.from_user.id)
     await state.clear()
