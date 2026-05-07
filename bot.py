@@ -3,6 +3,8 @@ import asyncio
 import uuid
 import os
 import aiohttp
+from dotenv import load_dotenv
+load_dotenv()
 from datetime import datetime, timedelta, timezone
 TASHKENT_TZ = timezone(timedelta(hours=5))
 from aiohttp import web
@@ -11,6 +13,7 @@ from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram import BaseMiddleware
 import firebase_admin
 from firebase_admin import credentials, db
 
@@ -84,11 +87,11 @@ def get_dates_keyboard():
 # 1. Firebase Sozlamalari (RTDB)
 cred = credentials.Certificate("serviceAccountKey.json")
 firebase_admin.initialize_app(cred, {
-    'databaseURL': 'https://mmebel-bot-default-rtdb.europe-west1.firebasedatabase.app'
+    'databaseURL': os.getenv('FIREBASE_DB_URL', 'https://mmebel-bot-default-rtdb.europe-west1.firebasedatabase.app')
 })
 
 # 2. Bot Sozlamalari
-API_TOKEN = '8696173187:AAEYlUrVpwJbS05ksvCUseKOwegVtcuNrNA'
+API_TOKEN = os.getenv('API_TOKEN')
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 logging.basicConfig(level=logging.INFO)
@@ -191,19 +194,21 @@ def main_menu(role):
 MAIN_MENU_BUTTONS = {
     "Bosh menyu", "➕ Yangi mebel", "📦 Mavjud mebellar", 
     "📝 Yangi buyurtma", "📋 Buyurtmalar nazorati", "📊 Mijozlar hisoboti", "🚚 Haydovchilar hisoboti", "🕰 Yetkazish tarixi", "📈 Sotuv statistikasi",
-    "🔄 Omborni yangilash", "🚚 Yetkazishlar nazorati", "📊 Dostavka hisoboti", "🔨 Faol buyurtmalar", "🛍 Sotuvdagi mebellar"
+    "🔄 Omborni yangilash", "🚚 Yetkazishlar nazorati", "📊 Dostavka hisoboti", "🔨 Faol buyurtmalar", "🛍 Sotuvdagi mebellar",
+    "📦 Ombor sonini yangilash"
 }
 
-@dp.message(F.text.in_(MAIN_MENU_BUTTONS), ~StateFilter(None))
-async def main_menu_interceptor(message: types.Message, state: FSMContext):
-    role = await get_user_role(message.from_user.id)
-    await state.clear()
-    if message.text == "Bosh menyu":
-        await message.answer("Asosiy menyuga qaytdingiz.", reply_markup=main_menu(role))
-    else:
-        await message.answer("Jarayon bekor qilindi. Iltimos, tugmani qayta bosing.", reply_markup=main_menu(role))
+class MainMenuMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event: types.Message, data: dict):
+        if getattr(event, "text", None) in MAIN_MENU_BUTTONS:
+            state: FSMContext = data.get("state")
+            if state:
+                await state.clear()
+        return await handler(event, data)
 
-@dp.message(F.text == "Bosh menyu", StateFilter("*"))
+dp.message.outer_middleware(MainMenuMiddleware())
+
+@dp.message(F.text == "Bosh menyu")
 async def cancel_handler(message: types.Message, state: FSMContext):
     role = await get_user_role(message.from_user.id)
     await state.clear()
@@ -856,14 +861,41 @@ async def delivery_report(message: types.Message, state: FSMContext):
         if current_msg:
             await message.answer(current_msg, parse_mode="Markdown")
 
-        await message.answer("Qaysi mebelning sonini yangilamoqchisiz? Tanlang yoki ID kiriting:", reply_markup=get_models_keyboard())
-        await state.set_state(UpdateStockState.product_id)
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyuga qaytish uchun tugmani bosing.", reply_markup=main_menu(role))
+        await state.clear()
 
     except Exception as e:
         print(f"Dostavka hisoboti xatolik: {e}")
         role = await get_user_role(message.from_user.id)
         await message.answer("Hisobotni ko'rsatishda xatolik yuz berdi.", reply_markup=main_menu(role))
         await state.clear()
+
+# --- OMBORCHI: OMBORNI YANGILASH (SKLADGA MEBEL QO'SHISH) ---
+@dp.message(F.text == "🔄 Omborni yangilash")
+async def update_stock_start(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    if role not in ['omborchi', 'admin']:
+        return
+    
+    markup = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="📦 Ombor sonini yangilash")],
+            [types.KeyboardButton(text="➕ Yangi mebel")],
+            [types.KeyboardButton(text="Bosh menyu")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer("Nima qilmoqchisiz?", reply_markup=markup)
+    await state.clear()
+
+@dp.message(F.text == "📦 Ombor sonini yangilash")
+async def update_stock_quantity_start(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    if role not in ['omborchi', 'admin']:
+        return
+    await message.answer("Qaysi mebelning sonini yangilamoqchisiz? Tanlang yoki ID kiriting:", reply_markup=get_models_keyboard())
+    await state.set_state(UpdateStockState.product_id)
 
 @dp.message(UpdateStockState.product_id)
 async def update_stock_product_id(message: types.Message, state: FSMContext):
@@ -1849,6 +1881,49 @@ async def keep_awake():
         except Exception:
             pass
 
+async def daily_backup_task():
+    import json
+    import os
+    from aiogram.types import FSInputFile
+    while True:
+        now = datetime.now(TASHKENT_TZ)
+        target = now.replace(hour=23, minute=59, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+            
+        sleep_seconds = (target - now).total_seconds()
+        await asyncio.sleep(sleep_seconds)
+        
+        try:
+            db_data = await asyncio.to_thread(db.reference('/').get)
+            if db_data:
+                backup_filename = f"backup_{datetime.now(TASHKENT_TZ).strftime('%Y%m%d_%H%M%S')}.json"
+                with open(backup_filename, 'w', encoding='utf-8') as f:
+                    json.dump(db_data, f, ensure_ascii=False, indent=4)
+                
+                users_ref = await asyncio.to_thread(db.reference('users').get)
+                admin_ids = []
+                if users_ref:
+                    for uid, udata in users_ref.items():
+                        if isinstance(udata, dict) and udata.get('role') == 'admin':
+                            admin_ids.append(uid)
+                
+                for admin_id in admin_ids:
+                    try:
+                        file = FSInputFile(backup_filename)
+                        await bot.send_document(
+                            chat_id=int(admin_id), 
+                            document=file, 
+                            caption="📁 Baza zaxira nusxasi (Kunlik avtomatik backup)\n\nUshbu faylni ehtiyot qilib saqlang. Agar baza o'chib ketsa, shu fayl orqali qayta tiklasa bo'ladi."
+                        )
+                    except Exception as e:
+                        print(f"Error sending backup to {admin_id}: {e}")
+                
+                if os.path.exists(backup_filename):
+                    os.remove(backup_filename)
+        except Exception as e:
+            print(f"Backup task error: {e}")
+
 async def main():
     # Render Web Service portini ochib turish uchun vaqtinchalik server
     app = web.Application()
@@ -1861,6 +1936,9 @@ async def main():
     
     # Uygotgichni fonga ishga tushirish
     asyncio.create_task(keep_awake())
+    
+    # Avtomatik backupni fonga ishga tushirish
+    asyncio.create_task(daily_backup_task())
     
     await dp.start_polling(bot)
 

@@ -10,8 +10,11 @@ import firebase_admin
 from firebase_admin import credentials, db
 
 
-from bot import API_TOKEN, bot, dp, root_ref
+from bot import API_TOKEN, bot, dp
 logging.basicConfig(level=logging.INFO)
+
+# Firebase sozlamalari (bot.py da allaqachon initialize qilingan)
+root_ref = db.reference('/')
 
 # 3. Holatlar (States)
 class ProductState(StatesGroup):
