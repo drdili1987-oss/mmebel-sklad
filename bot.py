@@ -907,7 +907,13 @@ async def update_stock_start(message: types.Message, state: FSMContext):
         ],
         resize_keyboard=True
     )
-    await message.answer("Nima qilmoqchisiz?", reply_markup=markup)
+    await message.answer(
+        "Nima qilmoqchisiz?\n\n"
+        "📦 *Ombor sonini yangilash* — mavjud mebelning sonini o'zgartirish\n"
+        "➕ *Yangi mebel* — omborga yangi mebel qo'shish",
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
     await state.clear()
 
 @dp.message(F.text == "📦 Ombor sonini yangilash")
@@ -915,18 +921,77 @@ async def update_stock_quantity_start(message: types.Message, state: FSMContext)
     role = await get_user_role(message.from_user.id)
     if role not in ['omborchi', 'admin']:
         return
-    await message.answer("Qaysi mebelning sonini yangilamoqchisiz? Tanlang yoki ID kiriting:", reply_markup=get_models_keyboard())
+
+    # Firebase'dan hozirgi mebellar ro'yxatini olish
+    mebellar = await asyncio.to_thread(db.reference('mebellar').get)
+    if not mebellar:
+        await message.answer("Ombor bo'sh. Avval mebel qo'shing.", reply_markup=main_menu(role))
+        return
+
+    buttons = []
+    row = []
+    items_map = {}  # "BF 07 (8 ta)" -> "BF07"
+    for m_id, m in mebellar.items():
+        if isinstance(m, dict):
+            nomi = m.get('nomi', m_id)
+            soni = m.get('soni', 0)
+            btn_text = f"{nomi} — {soni} ta"
+            row.append(types.KeyboardButton(text=btn_text))
+            items_map[btn_text] = m_id
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+    if row:
+        buttons.append(row)
+    buttons.append([types.KeyboardButton(text="🔍 ID orqali qidirish")])
+    buttons.append([types.KeyboardButton(text="Bosh menyu")])
+
+    await state.update_data(items_map=items_map)
     await state.set_state(UpdateStockState.product_id)
+
+    markup = types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    await message.answer(
+        "📦 Qaysi mebelning sonini yangilamoqchisiz?\n"
+        "Ro'yxatdan tanlang yoki 🔍 ID orqali qidiring:",
+        reply_markup=markup
+    )
 
 @dp.message(UpdateStockState.product_id)
 async def update_stock_product_id(message: types.Message, state: FSMContext):
-    product_id = message.text.replace(" ", "").replace("-", "").upper()
+    if message.text == "🔍 ID orqali qidirish":
+        await message.answer(
+            "Mebel ID sini kiriting (masalan: BF07 yoki BF 07):",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+        return
+
+    data = await state.get_data()
+    items_map = data.get('items_map', {})
+
+    # Tugma orqali tanladimi yoki qo'lda yozdimi?
+    if message.text in items_map:
+        product_id = items_map[message.text]
+    else:
+        product_id = message.text.replace(" ", "").replace("-", "").upper()
+
     product_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
     if not product_ref:
-        await message.answer("Bunday ID li mebel topilmadi. Qaytadan kiriting:", reply_markup=types.ReplyKeyboardRemove())
+        await message.answer(
+            f"❌ Mebel topilmadi. Qaytadan tanlang yoki to'g'ri ID kiriting:",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
         return
+
     await state.update_data(product_id=product_id)
-    await message.answer(f"Mebel: {product_ref['nomi']} ({product_ref['modeli']})\nHozirgi qoldiq: {product_ref['soni']} ta\n\nYangi sonini kiriting:", reply_markup=types.ReplyKeyboardRemove())
+    await message.answer(
+        f"✅ Mebel topildi!\n\n"
+        f"🪑 Nomi: *{product_ref.get('nomi', 'Noma\'lum')}*\n"
+        f"📐 Modeli: {product_ref.get('modeli', '-')}\n"
+        f"📦 Hozirgi qoldiq: *{product_ref.get('soni', 0)} ta*\n\n"
+        f"Yangi sonini kiriting:",
+        reply_markup=types.ReplyKeyboardRemove(),
+        parse_mode="Markdown"
+    )
     await state.set_state(UpdateStockState.new_quantity)
 
 @dp.message(UpdateStockState.new_quantity)
@@ -934,11 +999,24 @@ async def update_stock_new_quantity(message: types.Message, state: FSMContext):
     data = await state.get_data()
     try:
         new_quantity = int(message.text)
-        await asyncio.to_thread(db.reference(f"mebellar/{data['product_id']}").update, {'soni': new_quantity})
-        await message.answer(f"✅ Ombor muvaffaqiyatli yangilandi!\nYangi qoldiq: {new_quantity} ta", reply_markup=main_menu('omborchi'))
+        if new_quantity < 0:
+            await message.answer("❌ Son manfiy bo'lishi mumkin emas. Qaytadan kiriting:")
+            return
+        await asyncio.to_thread(
+            db.reference(f"mebellar/{data['product_id']}").update,
+            {'soni': new_quantity}
+        )
+        role = await get_user_role(message.from_user.id)
+        await message.answer(
+            f"✅ Ombor muvaffaqiyatli yangilandi!\n"
+            f"🆔 ID: `{data['product_id']}`\n"
+            f"📦 Yangi qoldiq: *{new_quantity} ta*",
+            reply_markup=main_menu(role),
+            parse_mode="Markdown"
+        )
         await state.clear()
     except ValueError:
-        await message.answer("Iltimos, faqat raqam kiriting:")
+        await message.answer("❌ Iltimos, faqat raqam kiriting (masalan: 9):")
 
 # --- OMBORCHI: YETKAZIB BERISH NAZORATI ---
 @dp.message(F.text == "🚚 Yetkazishlar nazorati")
