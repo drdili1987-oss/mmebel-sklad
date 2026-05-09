@@ -260,13 +260,25 @@ async def add_quantity(message: types.Message, state: FSMContext):
         await message.answer("Iltimos, faqat raqam kiriting (masalan: 10):")
         return
     await state.update_data(quantity=qty)
-    await message.answer("📷 Mahsulot rasmini yuboring (URL ko'rinishida):\nMasalan: https://example.com/rasm.jpg")
+    markup = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="⏩ Rasmsiz saqlash")],
+            [types.KeyboardButton(text="Bosh menyu")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer("📷 Mahsulot rasmini yuboring (URL ko'rinishida) yoki rasmsiz saqlang:", reply_markup=markup)
     await state.set_state(ProductState.image)
 
 @dp.message(ProductState.image)
 async def add_final(message: types.Message, state: FSMContext):
     data = await state.get_data()
     p_id = data['name'].replace(" ", "").replace("-", "").upper()
+    
+    # Rasm URL yoki bo'sh
+    rasm_url = ""
+    if message.text and message.text != "⏩ Rasmsiz saqlash":
+        rasm_url = message.text
     
     # RTDB ga yozish
     await asyncio.to_thread(
@@ -277,12 +289,21 @@ async def add_final(message: types.Message, state: FSMContext):
             'modeli': data['model'],
             'narxi': data['price'],
             'soni': int(data['quantity']),
-            'rasm': message.text
+            'rasm': rasm_url
         }
     )
     
-    await message.answer(f"✅ Mebel qo'shildi! ID: `{p_id}`")
-    await message.answer_photo(photo=message.text, caption=f"🪑 {data['name']} ({data['model']})\n💰 Narxi: {data['price']} so'm\n📦 Soni: {data['quantity']} ta")
+    role = await get_user_role(message.from_user.id)
+    result_text = f"✅ Mebel qo'shildi!\n🆔 ID: `{p_id}`\n🪑 Nomi: {data['name']}\n📦 Modeli: {data['model']}\n💰 Narxi: {data['price']} so'm\n📦 Soni: {data['quantity']} ta"
+    
+    if rasm_url:
+        try:
+            await message.answer_photo(photo=rasm_url, caption=result_text, parse_mode="Markdown")
+        except Exception:
+            await message.answer(result_text, parse_mode="Markdown", reply_markup=main_menu(role))
+    else:
+        await message.answer(result_text, parse_mode="Markdown", reply_markup=main_menu(role))
+    
     await state.clear()
 
 # --- BARCHA UCHUN: OMBORNI KO'RISH ---
