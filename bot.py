@@ -228,6 +228,8 @@ async def add_product_start(message: types.Message, state: FSMContext):
     if role in ['admin', 'omborchi']:
         await message.answer("Qaysi mebelni qo'shmoqchisiz? Shablondan tanlang yoki yozing:", reply_markup=get_models_keyboard())
         await state.set_state(ProductState.name)
+    else:
+        await message.answer("⛔ Sizda bu funksiyaga ruxsat yo'q.", reply_markup=main_menu(role))
 
 @dp.message(ProductState.name)
 async def add_name(message: types.Message, state: FSMContext):
