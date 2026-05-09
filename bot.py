@@ -15,6 +15,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram import BaseMiddleware
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 import firebase_admin
 from firebase_admin import credentials, db
 
@@ -22,7 +23,7 @@ from firebase_admin import credentials, db
 REGULAR_CLIENTS = [
     "Comfort", "Iskandar", "Grand plaza", "Baxrom Uchtepa", 
     "Baxrom 9703", "Bahodir aka🚛", "Bahodir aka Andijon", "Akrom aka", 
-    "Zoʻr mebel", "Umid", "Akmal aka", "Doʻkon 707", "Farxod Jomiy", "Munosib Mebel"
+    "Zoʻr mebel", "Umid", "Akmal aka", "Doʻkon 707", "Farxod Jomiy", "Munosib Mebel", "Islom aka"
 ]
 
 def get_clients_keyboard():
@@ -2025,10 +2026,25 @@ async def daily_backup_task():
         except Exception as e:
             print(f"Backup task error: {e}")
 
+WEBHOOK_PATH = f"/webhook"
+WEBHOOK_URL = f"https://mmebel-bot.onrender.com{WEBHOOK_PATH}"
+
 async def main():
-    # Render Web Service portini ochib turish uchun vaqtinchalik server
+    # Eski polling yangilanishlarini o'chirish va webhookni o'rnatish
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_webhook(WEBHOOK_URL)
+    
     app = web.Application()
     app.router.add_get('/', handle)
+    
+    # Webhook so'rovlarini qabul qiluvchi handler
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+    )
+    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+    setup_application(app, dp, bot=bot)
+    
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.environ.get('PORT', 8080))
@@ -2041,7 +2057,8 @@ async def main():
     # Avtomatik backupni fonga ishga tushirish
     asyncio.create_task(daily_backup_task())
     
-    await dp.start_polling(bot)
+    # Dastur doimiy ishlashi uchun cheksiz kutish
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     import sys
