@@ -695,16 +695,16 @@ async def view_active_orders(message: types.Message):
                 grouped[due_date] = []
             grouped[due_date].append((o_id, o))
 
-        sorted_dates = sorted(grouped.keys(), key=parse_date)
+        sorted_dates = sorted(grouped.keys(), key=parse_date, reverse=True)
 
         order_chunks = []
         for d_str in sorted_dates:
             # Sarlavha tayyorlash
             try:
                 dt = datetime.strptime(d_str, "%d.%m.%Y")
-                header = f"📅 **{dt.day} {UZ_MONTHS[dt.month]} {UZ_WEEKDAYS[dt.weekday()]}**"
+                header = f"✅ **{dt.day} {UZ_MONTHS[dt.month]} {UZ_WEEKDAYS[dt.weekday()]}**"
             except:
-                header = f"📅 **{d_str}**"
+                header = f"✅ **{d_str}**"
             
             day_text = f"{header}\n\n"
             for o_id, o in grouped[d_str]:
@@ -1089,7 +1089,7 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
             grouped[due_date] = []
         grouped[due_date].append((o_id, o))
 
-    sorted_dates = sorted(grouped.keys(), key=parse_date)
+    sorted_dates = sorted(grouped.keys(), key=parse_date, reverse=True)
 
     order_report_items = []
     buttons = []
@@ -1099,9 +1099,9 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
         # Sarlavha tayyorlash
         try:
             dt = datetime.strptime(d_str, "%d.%m.%Y")
-            header = f"📅 **{dt.day} {UZ_MONTHS[dt.month]} {UZ_WEEKDAYS[dt.weekday()]}**"
+            header = f"✅ **{dt.day} {UZ_MONTHS[dt.month]} {UZ_WEEKDAYS[dt.weekday()]}**"
         except:
-            header = f"📅 **{d_str}**"
+            header = f"✅ **{d_str}**"
         
         day_text = f"{header}\n\n"
         for o_id, o in grouped[d_str]:
