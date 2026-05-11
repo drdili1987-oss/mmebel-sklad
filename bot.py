@@ -949,9 +949,9 @@ async def update_stock_quantity_start(message: types.Message, state: FSMContext)
     items_map = {}  # "BF 07 (8 ta)" -> "BF07"
     for m_id, m in mebellar.items():
         if isinstance(m, dict):
-            nomi = m.get('nomi', m_id)
+            model = m.get('modeli', m_id)
             soni = m.get('soni', 0)
-            btn_text = f"{nomi} — {soni} ta"
+            btn_text = f"{model} — {soni} ta"
             row.append(types.KeyboardButton(text=btn_text))
             items_map[btn_text] = m_id
             if len(row) == 2:
