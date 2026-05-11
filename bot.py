@@ -681,21 +681,30 @@ async def view_active_orders(message: types.Message):
 
         active_orders_list.sort(key=lambda x: parse_date(x[1].get('due_date', '')), reverse=True)
 
-        active_orders = ""
+        order_chunks = []
         for o_id, o in active_orders_list:
-            active_orders += f"🆔 `{o_id}` - 🧑 Mijoz: {o.get('client_name')}\n"
-            active_orders += f"📦 Mebel: {o.get('product_id')}\n"
-            active_orders += f"📊 Soni: {o.get('amount')} ta\n"
-            active_orders += f"📅 Muddat: {o.get('due_date')}\n"
+            c_text = f"🆔 `{o_id}` - 🧑 Mijoz: {o.get('client_name')}\n"
+            c_text += f"📦 Mebel: {o.get('product_id')}\n"
+            c_text += f"📊 Soni: {o.get('amount')} ta\n"
+            c_text += f"📅 Muddat: {o.get('due_date')}\n"
             if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
-                active_orders += f"📝 Izoh: {o.get('comment')}\n"
-            active_orders += "\n"
+                c_text += f"📝 Izoh: {o.get('comment')}\n"
+            c_text += "------------------------"
+            order_chunks.append(c_text)
         
-        if not active_orders:
+        if not order_chunks:
             await message.answer("Hozircha faol zakazlar yo'q.")
             return
             
-        await message.answer(f"🔨 Faol buyurtmalar ro'yxati:\n\n{active_orders}")
+        current_msg = "🔨 **Faol buyurtmalar ro'yxati:**\n\n"
+        for part in order_chunks:
+            if len(current_msg) + len(part) > 3900:
+                await message.answer(current_msg, parse_mode="Markdown")
+                current_msg = part + "\n\n"
+            else:
+                current_msg += part + "\n\n"
+        if current_msg:
+            await message.answer(current_msg, parse_mode="Markdown")
 
 class DeliveryReportState(StatesGroup):
     select_month = State()
@@ -707,15 +716,19 @@ async def delivery_report_start(message: types.Message, state: FSMContext):
     if role not in ['omborchi', 'admin']:
         return
 
-    # Show last 6 months as keyboard buttons
+    # So'nggi 6 oyni to'g'ri hisoblash
+    now = datetime.now(TASHKENT_TZ)
     months = []
     for i in range(6):
-        m = (datetime.now(TASHKENT_TZ).month - i - 1) % 12 + 1
-        y = datetime.now(TASHKENT_TZ).year + (datetime.now(TASHKENT_TZ).month - i - 1) // 12
-        if m <= 0:
-            m += 12
-            y -= 1
-        months.append(f"{y}-{m:02d}")
+        # Har oyning 1-sanasidan i oy orqaga borish
+        month_date = (now.replace(day=1) - timedelta(days=1)).replace(day=1) if i == 0 else now.replace(day=1)
+        # Oddiyroq usul: joriy oydan i oy orqaga
+        total_month = now.month - i
+        year = now.year
+        while total_month <= 0:
+            total_month += 12
+            year -= 1
+        months.append(f"{year}-{total_month:02d}")
 
     buttons = []
     for i in range(0, len(months), 2):
@@ -1024,50 +1037,75 @@ async def update_stock_new_quantity(message: types.Message, state: FSMContext):
 # --- OMBORCHI: YETKAZIB BERISH NAZORATI ---
 @dp.message(F.text == "🚚 Yetkazishlar nazorati")
 async def delivery_control_start(message: types.Message, state: FSMContext):
-    if await get_user_role(message.from_user.id) == 'omborchi':
-        orders_ref = await asyncio.to_thread(db.reference('orders').get)
-        if not orders_ref:
-            await message.answer("Hozircha hech qanday buyurtma yo'q.")
-            return
+    role = await get_user_role(message.from_user.id)
+    if role not in ['omborchi', 'admin']:
+        await message.answer("⛔ Sizda bu funksiyaga ruxsat yo'q.", reply_markup=main_menu(role))
+        return
+    orders_ref = await asyncio.to_thread(db.reference('orders').get)
+    if not orders_ref:
+        await message.answer("Hozircha hech qanday buyurtma yo'q.")
+        return
             
-        active_orders_list = []
-        for o_id, o in orders_ref.items():
-            if isinstance(o, dict) and o.get('status') in ['Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi']:
-                active_orders_list.append((o_id, o))
+    active_orders_list = []
+    for o_id, o in orders_ref.items():
+        if isinstance(o, dict) and o.get('status') in ['Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi']:
+            active_orders_list.append((o_id, o))
 
-        def parse_date(date_str):
-            try:
-                return datetime.strptime(date_str, "%d.%m.%Y")
-            except:
-                return datetime.min
+    def parse_date(date_str):
+        try:
+            return datetime.strptime(date_str, "%d.%m.%Y")
+        except:
+            return datetime.min
 
-        active_orders_list.sort(key=lambda x: parse_date(x[1].get('due_date', '')), reverse=True)
+    active_orders_list.sort(key=lambda x: parse_date(x[1].get('due_date', '')), reverse=True)
 
-        active_orders = ""
-        buttons = []
-        row = []
-        for o_id, o in active_orders_list:
-            active_orders += f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n📅 Muddat: {o.get('due_date')}\n"
-            if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
-                active_orders += f"📝 Izoh: {o.get('comment')}\n"
-            active_orders += f"📌 Holati: {o.get('status')}\n\n"
-            button_text = f"{o.get('product_id')} ({str(o_id)})"
-            row.append(types.KeyboardButton(text=button_text))
-            if len(row) == 2:
-                buttons.append(row)
-                row = []
-        
-        if row:
+    order_report_items = []
+    buttons = []
+    row = []
+    for o_id, o in active_orders_list:
+        item_text = f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n📅 Muddat: {o.get('due_date')}\n"
+        if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
+            item_text += f"📝 Izoh: {o.get('comment')}\n"
+        item_text += f"📌 Holati: {o.get('status')}\n"
+        item_text += "------------------------"
+        order_report_items.append(item_text)
+
+        button_text = f"{o.get('product_id')} ({str(o_id)})"
+        row.append(types.KeyboardButton(text=button_text))
+        if len(row) == 2:
             buttons.append(row)
-        buttons.append([types.KeyboardButton(text="Bosh menyu")])
+            row = []
+    
+    if row:
+        buttons.append(row)
+    buttons.append([types.KeyboardButton(text="Bosh menyu")])
+    
+    if not order_report_items:
+        await message.answer("Barcha buyurtmalar yetkazib berilgan yoki faol buyurtmalar yo'q.")
+        return
         
-        if not active_orders:
-            await message.answer("Barcha buyurtmalar yetkazib berilgan yoki faol buyurtmalar yo'q.")
-            return
+    markup = types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    
+    # Send items in chunks to avoid Telegram 4096 length limit
+    current_msg = "🚚 **Faol buyurtmalar:**\n\n"
+    for i, part in enumerate(order_report_items):
+        # If it's the very last item, we combine it with the prompt and markup
+        is_last = (i == len(order_report_items) - 1)
+        
+        if len(current_msg) + len(part) > 3800:
+            await message.answer(current_msg, parse_mode="Markdown")
+            current_msg = part + "\n\n"
+        else:
+            current_msg += part + "\n\n"
             
-        markup = types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-        await message.answer(f"Faol buyurtmalar:\n\n{active_orders}\nQaysi buyurtmaning holatini o'zgartirmoqchisiz? Buyurtma ID-sini tanlang:", reply_markup=markup)
-        await state.set_state(DeliveryControlState.order_id)
+    prompt = "Qaysi buyurtmaning holatini o'zgartirmoqchisiz? Buyurtma ID-sini tanlang:"
+    if len(current_msg) + len(prompt) > 4000:
+        await message.answer(current_msg, parse_mode="Markdown")
+        await message.answer(prompt, reply_markup=markup, parse_mode="Markdown")
+    else:
+        await message.answer(current_msg + prompt, reply_markup=markup, parse_mode="Markdown")
+
+    await state.set_state(DeliveryControlState.order_id)
 
 @dp.message(DeliveryControlState.order_id)
 async def delivery_order_id(message: types.Message, state: FSMContext):
@@ -1098,7 +1136,8 @@ async def delivery_order_id(message: types.Message, state: FSMContext):
 @dp.message(DeliveryControlState.new_status)
 async def delivery_new_status(message: types.Message, state: FSMContext):
     if message.text == "Bosh menyu":
-        await message.answer("Bosh menyu", reply_markup=main_menu('omborchi'))
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
         await state.clear()
         return
         
@@ -1107,7 +1146,8 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
     
     if new_status in ["Bekor qilindi", "Tayyor bo'ldi"]:
         await asyncio.to_thread(db.reference(f"orders/{data['order_id']}").update, {'status': new_status})
-        await message.answer(f"✅ Buyurtma holati yangilandi: {new_status}", reply_markup=main_menu('omborchi'))
+        _role = await get_user_role(message.from_user.id)
+        await message.answer(f"✅ Buyurtma holati yangilandi: {new_status}", reply_markup=main_menu(_role))
         
         # Notify admin and workers
         users_ref = await asyncio.to_thread(db.reference('users').get)
@@ -1169,7 +1209,8 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
 @dp.message(DeliveryControlState.driver)
 async def delivery_driver(message: types.Message, state: FSMContext):
     if message.text == "Bosh menyu":
-        await message.answer("Bosh menyu", reply_markup=main_menu('omborchi'))
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
         await state.clear()
         return
         
@@ -1199,7 +1240,8 @@ async def delivery_driver(message: types.Message, state: FSMContext):
 @dp.message(DeliveryControlState.delivery_price)
 async def delivery_price_handler(message: types.Message, state: FSMContext):
     if message.text == "Bosh menyu":
-        await message.answer("Bosh menyu", reply_markup=main_menu('omborchi'))
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
         await state.clear()
         return
         
@@ -1284,7 +1326,9 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
     await asyncio.to_thread(db.reference(f"deliveries/{current_month}").push, delivery_record)
     
     try:
-        price_val = int(str(price).replace("so'm", "").replace("$", "").replace(" ", ""))
+        import re as _re
+        _nums = _re.findall(r'\d+', str(price).replace(" ", ""))
+        price_val = int(_nums[0]) if _nums else 0
         if price_val > 0:
             if driver == "O'zi olib ketdi":
                 # Mijoz qarzidan chegirish
@@ -1306,10 +1350,11 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
                 # Tarixga yozish
                 record = {'type': 'Kirim', 'amount': price_val, 'timestamp': timestamp, 'note': f"Yetkazib berish haqi (Buyurtma: {order_id})"}
                 await asyncio.to_thread(db.reference(f"transactions/drivers/{driver}").push, record)
-    except:
-        pass
+    except Exception as _pe:
+        logging.warning(f"Narx parse yoki tranzaksiya xatoligi: {_pe}")
         
-    await message.answer(f"✅ Buyurtma holati yangilandi: {new_status}\n🚚 Haydovchi: {driver}\n💵 Narxi: {price}", reply_markup=main_menu('omborchi'))
+    _role = await get_user_role(message.from_user.id)
+    await message.answer(f"✅ Buyurtma holati yangilandi: {new_status}\n🚚 Haydovchi: {driver}\n💵 Narxi: {price}", reply_markup=main_menu(_role))
     
     # Notify admin
     admin_ref = await asyncio.to_thread(db.reference('users').get)
@@ -1506,15 +1551,16 @@ class HistoryState(StatesGroup):
 async def delivery_history_start(message: types.Message, state: FSMContext):
     role = await get_user_role(message.from_user.id)
     if role in ['admin', 'omborchi']:
-        # Show last 6 months as keyboard buttons
+        # So'nggi 6 oyni to'g'ri hisoblash
+        now = datetime.now(TASHKENT_TZ)
         months = []
         for i in range(6):
-            m = (datetime.now(TASHKENT_TZ).month - i - 1) % 12 + 1
-            y = datetime.now(TASHKENT_TZ).year + (datetime.now(TASHKENT_TZ).month - i - 1) // 12
-            if m <= 0:
-                m += 12
-                y -= 1
-            months.append(f"{y}-{m:02d}")
+            total_month = now.month - i
+            year = now.year
+            while total_month <= 0:
+                total_month += 12
+                year -= 1
+            months.append(f"{year}-{total_month:02d}")
         
         buttons = []
         for i in range(0, len(months), 2):
@@ -1697,16 +1743,19 @@ async def admin_order_control_start(message: types.Message, state: FSMContext):
         await message.answer("Hozircha faol buyurtmalar yo'q.")
         return
     
-    active_orders = ""
+    order_report_items = []
     buttons = []
     row = []
     for o_id, o in active_orders_list:
-        active_orders += f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n"
-        active_orders += f"📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n"
-        active_orders += f"📅 Muddat: {o.get('due_date')}\n"
+        item_text = f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n"
+        item_text += f"📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n"
+        item_text += f"📅 Muddat: {o.get('due_date')}\n"
         if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
-            active_orders += f"📝 Izoh: {o.get('comment')}\n"
-        active_orders += f"📌 Holati: {o.get('status')}\n\n"
+            item_text += f"📝 Izoh: {o.get('comment')}\n"
+        item_text += f"📌 Holati: {o.get('status')}\n"
+        item_text += "------------------------"
+        order_report_items.append(item_text)
+        
         button_text = f"{o.get('product_id')} ({str(o_id)})"
         row.append(types.KeyboardButton(text=button_text))
         if len(row) == 2:
@@ -1718,7 +1767,23 @@ async def admin_order_control_start(message: types.Message, state: FSMContext):
     buttons.append([types.KeyboardButton(text="Bosh menyu")])
     
     markup = types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-    await message.answer(f"📋 Faol buyurtmalar:\n\n{active_orders}\nQaysi buyurtmani boshqarmoqchisiz? Tanlang:", reply_markup=markup)
+    
+    # Send items in chunks to avoid Telegram 4096 length limit
+    current_msg = "📋 **Faol buyurtmalar:**\n\n"
+    for part in order_report_items:
+        if len(current_msg) + len(part) > 3800:
+            await message.answer(current_msg, parse_mode="Markdown")
+            current_msg = part + "\n\n"
+        else:
+            current_msg += part + "\n\n"
+            
+    prompt = "Qaysi buyurtmani boshqarmoqchisiz? Tanlang:"
+    if len(current_msg) + len(prompt) > 4000:
+        await message.answer(current_msg, parse_mode="Markdown")
+        await message.answer(prompt, reply_markup=markup, parse_mode="Markdown")
+    else:
+        await message.answer(current_msg + prompt, reply_markup=markup, parse_mode="Markdown")
+
     await state.set_state(AdminOrderControlState.select_order)
 
 @dp.message(AdminOrderControlState.select_order)
