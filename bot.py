@@ -8,6 +8,14 @@ base_dir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(base_dir, ".env"))
 from datetime import datetime, timedelta, timezone
 TASHKENT_TZ = timezone(timedelta(hours=5))
+
+UZ_MONTHS = {
+    1: "yanvar", 2: "fevral", 3: "mart", 4: "aprel", 5: "may", 6: "iyun",
+    7: "iyul", 8: "avgust", 9: "sentyabr", 10: "oktyabr", 11: "noyabr", 12: "dekabr"
+}
+UZ_WEEKDAYS = {
+    0: "dushanba", 1: "seshanba", 2: "chorshanba", 3: "payshanba", 4: "juma", 5: "shanba", 6: "yakshanba"
+}
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
@@ -679,18 +687,34 @@ async def view_active_orders(message: types.Message):
             except:
                 return datetime.min
 
-        active_orders_list.sort(key=lambda x: parse_date(x[1].get('due_date', '')), reverse=True)
+        # Guruhlash
+        grouped = {}
+        for o_id, o in active_orders_list:
+            due_date = o.get('due_date', 'Noma\'lum')
+            if due_date not in grouped:
+                grouped[due_date] = []
+            grouped[due_date].append((o_id, o))
+
+        sorted_dates = sorted(grouped.keys(), key=parse_date)
 
         order_chunks = []
-        for o_id, o in active_orders_list:
-            c_text = f"🆔 `{o_id}` - 🧑 Mijoz: {o.get('client_name')}\n"
-            c_text += f"📦 Mebel: {o.get('product_id')}\n"
-            c_text += f"📊 Soni: {o.get('amount')} ta\n"
-            c_text += f"📅 Muddat: {o.get('due_date')}\n"
-            if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
-                c_text += f"📝 Izoh: {o.get('comment')}\n"
-            c_text += "------------------------"
-            order_chunks.append(c_text)
+        for d_str in sorted_dates:
+            # Sarlavha tayyorlash
+            try:
+                dt = datetime.strptime(d_str, "%d.%m.%Y")
+                header = f"📅 **{dt.day} {UZ_MONTHS[dt.month]} {UZ_WEEKDAYS[dt.weekday()]}**"
+            except:
+                header = f"📅 **{d_str}**"
+            
+            day_text = f"{header}\n\n"
+            for o_id, o in grouped[d_str]:
+                day_text += f"🆔 `{o_id}` - 🧑 Mijoz: {o.get('client_name')}\n"
+                day_text += f"📦 Mebel: {o.get('product_id')}\n"
+                day_text += f"📊 Soni: {o.get('amount')} ta\n"
+                if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
+                    day_text += f"📝 Izoh: {o.get('comment')}\n"
+                day_text += "------------------------\n"
+            order_chunks.append(day_text)
         
         if not order_chunks:
             await message.answer("Hozircha faol zakazlar yo'q.")
@@ -700,9 +724,9 @@ async def view_active_orders(message: types.Message):
         for part in order_chunks:
             if len(current_msg) + len(part) > 3900:
                 await message.answer(current_msg, parse_mode="Markdown")
-                current_msg = part + "\n\n"
+                current_msg = part + "\n"
             else:
-                current_msg += part + "\n\n"
+                current_msg += part + "\n"
         if current_msg:
             await message.answer(current_msg, parse_mode="Markdown")
 
@@ -1057,24 +1081,45 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
         except:
             return datetime.min
 
-    active_orders_list.sort(key=lambda x: parse_date(x[1].get('due_date', '')), reverse=True)
+    # Guruhlash
+    grouped = {}
+    for o_id, o in active_orders_list:
+        due_date = o.get('due_date', 'Noma\'lum')
+        if due_date not in grouped:
+            grouped[due_date] = []
+        grouped[due_date].append((o_id, o))
+
+    sorted_dates = sorted(grouped.keys(), key=parse_date)
 
     order_report_items = []
     buttons = []
     row = []
-    for o_id, o in active_orders_list:
-        item_text = f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n📅 Muddat: {o.get('due_date')}\n"
-        if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
-            item_text += f"📝 Izoh: {o.get('comment')}\n"
-        item_text += f"📌 Holati: {o.get('status')}\n"
-        item_text += "------------------------"
-        order_report_items.append(item_text)
-
-        button_text = f"{o.get('product_id')} ({str(o_id)})"
-        row.append(types.KeyboardButton(text=button_text))
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
+    
+    for d_str in sorted_dates:
+        # Sarlavha tayyorlash
+        try:
+            dt = datetime.strptime(d_str, "%d.%m.%Y")
+            header = f"📅 **{dt.day} {UZ_MONTHS[dt.month]} {UZ_WEEKDAYS[dt.weekday()]}**"
+        except:
+            header = f"📅 **{d_str}**"
+        
+        day_text = f"{header}\n\n"
+        for o_id, o in grouped[d_str]:
+            day_text += f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n"
+            day_text += f"📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n"
+            if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
+                day_text += f"📝 Izoh: {o.get('comment')}\n"
+            day_text += f"📌 Holati: {o.get('status')}\n"
+            day_text += "------------------------\n"
+            
+            # Tugma qo'shish
+            button_text = f"{o.get('product_id')} ({str(o_id)})"
+            row.append(types.KeyboardButton(text=button_text))
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+                
+        order_report_items.append(day_text)
     
     if row:
         buttons.append(row)
@@ -1086,17 +1131,14 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
         
     markup = types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
     
-    # Send items in chunks to avoid Telegram 4096 length limit
+    # Xabarlarni yuborish
     current_msg = "🚚 **Faol buyurtmalar:**\n\n"
     for i, part in enumerate(order_report_items):
-        # If it's the very last item, we combine it with the prompt and markup
-        is_last = (i == len(order_report_items) - 1)
-        
         if len(current_msg) + len(part) > 3800:
             await message.answer(current_msg, parse_mode="Markdown")
-            current_msg = part + "\n\n"
+            current_msg = part + "\n"
         else:
-            current_msg += part + "\n\n"
+            current_msg += part + "\n"
             
     prompt = "Qaysi buyurtmaning holatini o'zgartirmoqchisiz? Buyurtma ID-sini tanlang:"
     if len(current_msg) + len(prompt) > 4000:
