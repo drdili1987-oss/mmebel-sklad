@@ -1,0 +1,30 @@
+            [types.KeyboardButton(text="🔄 Omborni yangilash"), types.KeyboardButton(text="➕ Yangi mebel")],
+            [types.KeyboardButton(text="🚚 Yetkazishlar nazorati"), types.KeyboardButton(text="📊 Dostavka hisoboti")],
+            [types.KeyboardButton(text="📦 Mavjud mebellar"), types.KeyboardButton(text="🕰 Yetkazish tarixi")]
+        ]
+    elif role == 'xodim':
+        buttons = [
+            [types.KeyboardButton(text="🔨 Faol buyurtmalar")]
+        ]
+    else:
+        buttons = [[types.KeyboardButton(text="🛍 Sotuvdagi mebellar")]]
+    return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+# --- BOSH MENYU / BEKOR QILISH ---
+MAIN_MENU_BUTTONS = {
+    "Bosh menyu", "➕ Yangi mebel", "📦 Mavjud mebellar", 
+    "📝 Yangi buyurtma", "📋 Buyurtmalar nazorati", "📊 Mijozlar hisoboti", "🚚 Haydovchilar hisoboti", "🕰 Yetkazish tarixi", "📈 Sotuv statistikasi",
+    "🔄 Omborni yangilash", "🚚 Yetkazishlar nazorati", "📊 Dostavka hisoboti", "🔨 Faol buyurtmalar", "🛍 Sotuvdagi mebellar",
+    "📦 Ombor sonini yangilash"
+}
+
+class MainMenuMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event: types.Message, data: dict):
+        if getattr(event, "text", None) in MAIN_MENU_BUTTONS:
+            state: FSMContext = data.get("state")
+            if state:
+                await state.clear()
+        return await handler(event, data)
+
+dp.message.outer_middleware(MainMenuMiddleware())
+

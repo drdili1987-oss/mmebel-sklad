@@ -1,0 +1,20 @@
+        await bot.send_message(883589794, f"✏️ Buyurtma o'zgartirildi!\n🆔 ID: {order_id}\n📦 {order_ref.get('product_id')}\n🧑 Mijoz: {order_ref.get('client_name')}\n🔄 {field_names.get(field, field)}: {new_value}")
+    except:
+        pass
+    
+    await state.clear()
+
+@dp.message(StateFilter('*'))
+async def fallback_handler(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    await state.clear()
+    await message.answer("Noto'g'ri buyruq yoki tushunarsiz matn kiritildi.\nIltimos, pastdagi tugmalardan foydalaning.", reply_markup=main_menu(role))
+
+async def handle(request):
+    return web.Response(text="Bot is running")
+
+async def keep_awake():
+    url = "https://mmebel-bot.onrender.com"
+    while True:
+        await asyncio.sleep(600)  # 10 daqiqa
+        try:

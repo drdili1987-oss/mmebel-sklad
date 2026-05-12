@@ -16,8 +16,10 @@ firebase_admin.initialize_app(cred, {
 })
 root_ref = db.reference('/')
 
-# 2. Bot Sozlamalari
-API_TOKEN = '703858792:AAHYODDVg-qx9VBJRWrdMZjdVHFTi6dj5w4'
+import os
+from dotenv import load_dotenv
+load_dotenv()
+API_TOKEN = os.getenv('API_TOKEN')
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 logging.basicConfig(level=logging.INFO)

@@ -1,0 +1,20 @@
+        buttons = [
+            [types.KeyboardButton(text="ЁЯУж Mavjud mebellar"), types.KeyboardButton(text="ЁЯУЭ Yangi buyurtma")],
+            [types.KeyboardButton(text="ЁЯУЛ Buyurtmalar nazorati"), types.KeyboardButton(text="ЁЯУК Mijozlar hisoboti")],
+            [types.KeyboardButton(text="ЁЯЪЪ Haydovchilar hisoboti"), types.KeyboardButton(text="ЁЯХ░ Yetkazish tarixi")],
+            [types.KeyboardButton(text="ЁЯУИ Sotuv statistikasi")]
+        ]
+    elif role == 'omborchi':
+        buttons = [
+            [types.KeyboardButton(text="ЁЯФД Omborni yangilash"), types.KeyboardButton(text="ЁЯЪЪ Yetkazishlar nazorati")],
+            [types.KeyboardButton(text="ЁЯУж Mavjud mebellar"), types.KeyboardButton(text="ЁЯУК Yetkazish hisoboti")]
+        ]
+    elif role == 'xodim':
+        buttons = [
+            [types.KeyboardButton(text="ЁЯФи Faol buyurtmalar")]
+        ]
+    else:
+        buttons = [[types.KeyboardButton(text="ЁЯЫН Sotuvdagi mebellar")]]
+    return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+# --- BOSH MENYU / BEKOR QILISH ---

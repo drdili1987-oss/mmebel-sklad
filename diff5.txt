@@ -1,0 +1,35 @@
+        await state.clear()
+
+    except Exception as e:
+        print(f"Dostavka hisoboti xatolik: {e}")
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Hisobotni ko'rsatishda xatolik yuz berdi.", reply_markup=main_menu(role))
+        await state.clear()
+
+# --- OMBORCHI: OMBORNI YANGILASH (SKLADGA MEBEL QO'SHISH) ---
+@dp.message(F.text == "🔄 Omborni yangilash")
+async def update_stock_quantity_start(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    if role not in ['omborchi', 'admin']:
+        return
+    await message.answer("Qaysi mebelning sonini yangilamoqchisiz? Tanlang yoki ID kiriting:", reply_markup=get_models_keyboard())
+    await state.set_state(UpdateStockState.product_id)
+
+@dp.message(UpdateStockState.product_id)
+async def update_stock_product_id(message: types.Message, state: FSMContext):
+    product_id = message.text.replace(" ", "").replace("-", "").upper()
+    product_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+    if not product_ref:
+        await message.answer("Bunday ID li mebel topilmadi. Qaytadan kiriting:", reply_markup=types.ReplyKeyboardRemove())
+        return
+    await state.update_data(product_id=product_id)
+    await message.answer(f"Mebel: {product_ref['nomi']} ({product_ref['modeli']})\nHozirgi qoldiq: {product_ref['soni']} ta\n\nYangi sonini kiriting:", reply_markup=types.ReplyKeyboardRemove())
+    await state.set_state(UpdateStockState.new_quantity)
+
+@dp.message(UpdateStockState.new_quantity)
+async def update_stock_new_quantity(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    try:
+        new_quantity = int(message.text)
+        await asyncio.to_thread(db.reference(f"mebellar/{data['product_id']}").update, {'soni': new_quantity})
+        await message.answer(f"✅ Ombor muvaffaqiyatli yangilandi!\nYangi qoldiq: {new_quantity} ta", reply_markup=main_menu('omborchi'))

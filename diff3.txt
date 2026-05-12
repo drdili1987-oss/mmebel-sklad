@@ -1,0 +1,15 @@
+MAIN_MENU_BUTTONS = {
+    "Bosh menyu", "тЮХ Yangi mebel", "ЁЯУж Mavjud mebellar", 
+    "ЁЯУЭ Yangi buyurtma", "ЁЯУЛ Buyurtmalar nazorati", "ЁЯУК Mijozlar hisoboti", "ЁЯЪЪ Haydovchilar hisoboti", "ЁЯХ░ Yetkazish tarixi", "ЁЯУИ Sotuv statistikasi",
+    "ЁЯФД Omborni yangilash", "ЁЯЪЪ Yetkazishlar nazorati", "ЁЯУК Yetkazish hisoboti", "ЁЯФи Faol buyurtmalar", "ЁЯЫН Sotuvdagi mebellar"
+}
+
+@dp.message(F.text.in_(MAIN_MENU_BUTTONS), ~StateFilter(None))
+async def main_menu_interceptor(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    await state.clear()
+    if message.text == "Bosh menyu":
+        await message.answer("Asosiy menyuga qaytdingiz.", reply_markup=main_menu(role))
+    else:
+        await message.answer("Jarayon bekor qilindi. Iltimos, tugmani qayta bosing.", reply_markup=main_menu(role))
+

@@ -1,0 +1,6 @@
+181: [types.KeyboardButton(text="🔄 Omborni yangilash"), types.KeyboardButton(text="➕ Yangi mebel")],
+197: "🔄 Omborni yangilash", "🚚 Yetkazishlar nazorati", "📊 Dostavka hisoboti", "🔨 Faol buyurtmalar", "🛍 Sotuvdagi mebellar",
+875: @dp.message(F.text.in_({"🔄 Omborni yangilash", "📦 Ombor sonini yangilash"}))
+876: async def update_stock_quantity_start(message: types.Message, state: FSMContext):
+884: async def update_stock_product_id(message: types.Message, state: FSMContext):
+895: async def update_stock_new_quantity(message: types.Message, state: FSMContext):
