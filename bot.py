@@ -2079,13 +2079,6 @@ async def fallback_handler(message: types.Message, state: FSMContext):
 async def handle(request):
     return web.Response(text="Bot is running")
 
-async def debug_token(request):
-    token = os.getenv('API_TOKEN', 'NOT_SET')
-    if token == 'NOT_SET':
-        return web.Response(text="Token is NOT SET in environment variables")
-    masked_token = f"{token[:5]}...{token[-5:]}"
-    return web.Response(text=f"Server is using token: {masked_token}")
-
 async def keep_awake():
     url = "https://mmebel-bot.onrender.com"
     while True:
@@ -2150,7 +2143,6 @@ async def main():
     
     app = web.Application()
     app.router.add_get('/', handle)
-    app.router.add_get('/debug_token', debug_token)
     
     # Webhook so'rovlarini qabul qiluvchi handler
     webhook_requests_handler = SimpleRequestHandler(
