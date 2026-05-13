@@ -230,6 +230,15 @@ async def cmd_start(message: types.Message):
     await message.answer(f"Assalomu alaykum! Rolingiz: **{role.upper()}**", 
                          reply_markup=main_menu(role), parse_mode="Markdown")
 
+# --- TEST REMINDER ---
+@dp.message(Command("test_reminder"))
+async def cmd_test_reminder(message: types.Message):
+    if await get_user_role(message.from_user.id) == 'admin':
+        await message.answer("Siz so'ragan eslatma hozir barcha xodimlarga yuboriladi...")
+        await send_daily_reminders()
+    else:
+        await message.answer("Sizda bu komandani ishlatishga ruxsat yo'q.")
+
 # --- ADMIN: MEBEL QO'SHISH ---
 @dp.message(F.text == "➕ Yangi mebel")
 async def add_product_start(message: types.Message, state: FSMContext):
@@ -665,6 +674,49 @@ async def notify_warehouse(order_data, order_id):
                 )
             except Exception as e:
                 print(f"Xodimga xabar yuborishda xatolik: {e}")
+
+# Kunlik eslatma yuborish funksiyasi
+async def send_daily_reminders():
+    now_uz = datetime.now(TASHKENT_TZ)
+    today_str = now_uz.strftime("%d.%m.%Y")
+    
+    orders_ref = await asyncio.to_thread(db.reference('orders').get)
+    if not orders_ref:
+        return
+    
+    today_orders = []
+    for o_id, o in orders_ref.items():
+        if isinstance(o, dict) and o.get('due_date') == today_str and o.get('status') == 'Tayyorlanmoqda':
+            today_orders.append(o)
+            
+    if not today_orders:
+        return
+
+    msg = f"🚚 **Bugungi kungi buyurtmalar ro'yxati ({today_str}):**\n\n"
+    msg += "Mijozga bugun mana shu modellarni yetkazishimiz kerak:\n\n"
+    
+    for i, o in enumerate(today_orders, 1):
+        msg += f"{i}. 👤 **{o.get('client_name')}** - 📦 {o.get('product_id')} ({o.get('amount')} ta)\n"
+        if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
+            msg += f"   📝 Izoh: {o.get('comment')}\n"
+        msg += "\n"
+
+    # Xabar yuboriladigan foydalanuvchilar (hardcoded va DB dagi xodimlar)
+    users_to_notify = set(['883589794']) # Asosiy omborchi
+    for uid in ['6298036669', '1349256808', '7062569902', '7941658592', '1724350130', '698145797', '5063420475']:
+        users_to_notify.add(uid)
+        
+    users_ref = await asyncio.to_thread(db.reference('users').get)
+    if users_ref:
+        for uid, udata in users_ref.items():
+            if isinstance(udata, dict) and udata.get('role') in ['admin', 'omborchi', 'ishchi', 'xodim']:
+                users_to_notify.add(str(uid))
+                
+    for user_id in users_to_notify:
+        try:
+            await bot.send_message(chat_id=int(user_id), text=msg, parse_mode="Markdown")
+        except Exception as e:
+            logging.error(f"Error sending daily reminder to {user_id}: {e}")
 
 # --- XODIM: FAOL BUYURTMALAR ---
 @dp.message(F.text == "🔨 Faol buyurtmalar")
@@ -2090,6 +2142,22 @@ async def keep_awake():
         except Exception:
             pass
 
+async def daily_reminder_task():
+    while True:
+        now = datetime.now(TASHKENT_TZ)
+        # Soat 09:00 ga rejalashtirish
+        target = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+            
+        sleep_seconds = (target - now).total_seconds()
+        await asyncio.sleep(sleep_seconds)
+        
+        try:
+            await send_daily_reminders()
+        except Exception as e:
+            logging.error(f"Daily reminder task error: {e}")
+
 async def daily_backup_task():
     import json
     import os
@@ -2160,6 +2228,9 @@ async def main():
     
     # Uygotgichni fonga ishga tushirish
     asyncio.create_task(keep_awake())
+    
+    # Kunlik eslatmani fonga ishga tushirish
+    asyncio.create_task(daily_reminder_task())
     
     # Avtomatik backupni fonga ishga tushirish
     asyncio.create_task(daily_backup_task())
