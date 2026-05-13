@@ -16,6 +16,25 @@ UZ_MONTHS = {
 UZ_WEEKDAYS = {
     0: "dushanba", 1: "seshanba", 2: "chorshanba", 3: "payshanba", 4: "juma", 5: "shanba", 6: "yakshanba"
 }
+
+def format_date(date_str):
+    if not date_str or date_str == "Noma'lum":
+        return date_str
+    try:
+        # Try YYYY-MM-DD HH:MM:SS
+        if ' ' in str(date_str):
+            dt = datetime.strptime(str(date_str), "%Y-%m-%d %H:%M:%S")
+        elif '-' in str(date_str):
+            # Try YYYY-MM-DD
+            dt = datetime.strptime(str(date_str), "%Y-%m-%d")
+        elif '.' in str(date_str):
+            # Already in DD.MM.YYYY
+            return str(date_str)
+        else:
+            return str(date_str)
+        return dt.strftime("%d.%m.%Y")
+    except:
+        return str(date_str)
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
@@ -547,11 +566,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
             if isinstance(o, dict) and str(o.get('client_name', '')).strip() == client_name.strip():
                 count += 1
                 created_at = o.get('created_at', 'Noma\'lum')
-                # Clean up date format if it's long
-                try:
-                    c_date = created_at.split(' ')[0]
-                except:
-                    c_date = created_at
+                c_date = format_date(created_at)
                 
                 status = o.get('status', 'Noma\'lum')
                 delivered_at = o.get('delivered_at', '')
@@ -564,10 +579,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
                                 delivered_at = d.get('timestamp', '')
                                 break
                 
-                try:
-                    d_date = delivered_at.split(' ')[0] if delivered_at else ''
-                except:
-                    d_date = delivered_at
+                d_date = format_date(delivered_at) if delivered_at else ''
                 
                 date_info = f"📅 {c_date}"
                 if d_date:
@@ -666,7 +678,7 @@ async def client_history(message: types.Message):
             if isinstance(t, dict):
                 icon = "🟢" if t.get('type') == 'Kirim' else "🔴"
                 history += f"{icon} {t.get('type')}: {t.get('amount')} so'm\n"
-                history += f"📅 Sana: {t.get('timestamp')}\n\n"
+                history += f"📅 Sana: {format_date(t.get('timestamp'))}\n\n"
             
         if len(history) > 4000:
             for x in range(0, len(history), 4000):
@@ -944,7 +956,7 @@ async def delivery_report(message: types.Message, state: FSMContext):
             client = d.get('client', "Noma'lum")
             product = d.get('product_id', "Noma'lum")
             driver = d.get('driver', "Noma'lum")
-            delivery_date = d.get('timestamp', "Noma'lum")
+            delivery_date = format_date(d.get('timestamp', "Noma'lum"))
             price = str(d.get('price', '0'))
             amount = d.get('amount', '1')
 
@@ -956,7 +968,7 @@ async def delivery_report(message: types.Message, state: FSMContext):
             # Buyurtma sanasini olish
             order_date = "Noma'lum"
             if orders_ref and isinstance(orders_ref, dict) and order_id in orders_ref:
-                order_date = orders_ref[order_id].get('created_at', "Noma'lum")
+                order_date = format_date(orders_ref[order_id].get('created_at', "Noma'lum"))
 
             item_text = f"🆔 ID: `{order_id}`\n"
             item_text += f"🧑 Mijoz: {client}\n"
