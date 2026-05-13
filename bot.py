@@ -531,39 +531,19 @@ async def show_client_report(message: types.Message, state: FSMContext):
     
     current_debt = debt_ref if debt_ref is not None else 0
     
-    now_uz = datetime.now(TASHKENT_TZ)
-    today_str = now_uz.strftime("%d.%m.%Y")
-    
     report_text = f"👤 **Mijoz:** {client_name}\n"
     report_text += f"💳 **Joriy qarzi:** {current_debt} so'm\n\n"
+    report_text += "📦 **Olingan mebellar tarixi:**\n"
     
-    # Bugungi kungi zakazlar
-    today_orders = []
-    other_orders = []
-    
+    count = 0
     if orders_ref:
         for o_id, o in orders_ref.items():
             if isinstance(o, dict) and str(o.get('client_name')).strip() == client_name.strip():
-                if o.get('due_date') == today_str and o.get('status') == 'Tayyorlanmoqda':
-                    today_orders.append(o)
-                else:
-                    other_orders.append(o)
-
-    if today_orders:
-        report_text += "🔴 🔴 🔴 **BUGUN YETKAZISH KERAK:** 🔴 🔴 🔴\n"
-        for o in today_orders:
-            report_text += f"🔥 **{o.get('product_id')} - {o.get('amount')} ta**\n"
-            if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
-                report_text += f"   (Izoh: {o.get('comment')})\n"
-        report_text += "------------------------\n\n"
-
-    report_text += "📦 **Olingan mebellar tarixi:**\n"
-    
-    if not today_orders and not other_orders:
+                count += 1
+                report_text += f"▪️ {o.get('product_id')} - {o.get('amount')} ta ({o.get('status')})\n"
+                
+    if count == 0:
         report_text += "Hech qanday mebel olinmagan.\n"
-    else:
-        for o in other_orders:
-            report_text += f"▪️ {o.get('product_id')} - {o.get('amount')} ta ({o.get('status')})\n"
         
     markup = types.ReplyKeyboardMarkup(
         keyboard=[
@@ -712,8 +692,9 @@ async def send_daily_reminders():
     if not today_orders:
         return
 
-    msg = f"🚚 **Bugungi kungi buyurtmalar ro'yxati ({today_str}):**\n\n"
-    msg += "Mijozga bugun mana shu modellarni yetkazishimiz kerak:\n\n"
+    msg = f"🔴 🔴 🔴 **BUGUN YETKAZISHIMIZ KERAK:** 🔴 🔴 🔴\n\n"
+    msg += f"🚚 **Bugungi kungi buyurtmalar ro'yxati ({today_str}):**\n\n"
+    msg += "Mijozga bugun mana shu modellarni yetkazib berishimiz kerak:\n\n"
     
     for i, o in enumerate(today_orders, 1):
         msg += f"{i}. 👤 **{o.get('client_name')}** - 📦 {o.get('product_id')} ({o.get('amount')} ta)\n"
