@@ -179,6 +179,12 @@ class AdminOrderControlState(StatesGroup):
     edit_field = State()
     new_value = State()
 
+class MijozOrderState(StatesGroup):
+    select_product = State()  # Mebel tanlash
+    amount = State()          # Nechta
+    due_date = State()        # Qachon kerak
+    comment = State()         # Izoh
+
 # 4. Rollarni Tekshirish (RTDB dan)
 async def get_user_role(user_id):
     user_id_str = str(user_id)
@@ -217,7 +223,9 @@ def main_menu(role):
             [types.KeyboardButton(text="🔨 Faol buyurtmalar")]
         ]
     else:
-        buttons = [[types.KeyboardButton(text="🛍 Sotuvdagi mebellar")]]
+        buttons = [
+            [types.KeyboardButton(text="🛍 Sotuvdagi mebellar"), types.KeyboardButton(text="📝 Zakaz berish")]
+        ]
     return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 # --- BOSH MENYU / BEKOR QILISH ---
@@ -225,7 +233,7 @@ MAIN_MENU_BUTTONS = {
     "Bosh menyu", "➕ Yangi mebel", "📦 Mavjud mebellar", 
     "📝 Yangi buyurtma", "📋 Buyurtmalar nazorati", "📊 Mijozlar hisoboti", "🚚 Haydovchilar hisoboti", "🕰 Yetkazish tarixi", "📈 Sotuv statistikasi",
     "🔄 Omborni yangilash", "🚚 Yetkazishlar nazorati", "📊 Dostavka hisoboti", "🔨 Faol buyurtmalar", "🛍 Sotuvdagi mebellar",
-    "📦 Ombor sonini yangilash"
+    "📦 Ombor sonini yangilash", "📝 Zakaz berish"
 }
 
 class MainMenuMiddleware(BaseMiddleware):
@@ -372,6 +380,203 @@ async def view_stock(message: types.Message):
                     await message.answer(text + f"\n📷 Rasmi: {rasm}", parse_mode="Markdown")
             else:
                 await message.answer(text, parse_mode="Markdown")
+
+# --- MIJOZ: ZAKAZ BERISH ---
+@dp.message(F.text == "📝 Zakaz berish")
+async def mijoz_order_start(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    if role not in ['mijoz', 'xodim', 'ishchi']:
+        # Admin/omborchi uchun bu tugma kerak emas
+        await message.answer("Bu funksiya faqat mijozlar uchun.", reply_markup=main_menu(role))
+        return
+
+    mebellar = await asyncio.to_thread(db.reference('mebellar').get)
+    if not mebellar:
+        await message.answer("Ombor hozircha bo'sh. Keyinroq urinib ko'ring.")
+        return
+
+    # Faqat stokdagi mebellarni ko'rsat
+    available = [(m_id, m) for m_id, m in mebellar.items()
+                 if isinstance(m, dict) and int(m.get('soni', 0)) > 0]
+
+    if not available:
+        await message.answer("Hozirda omborda mavjud mebel yo'q.")
+        return
+
+    buttons = []
+    row = []
+    items_map = {}  # button text -> m_id
+    for m_id, m in sorted(available, key=lambda x: x[1].get('nomi', '')):
+        nomi = m.get('nomi', m_id)
+        soni = m.get('soni', 0)
+        btn_text = f"{nomi} ({soni} ta)"
+        row.append(types.KeyboardButton(text=btn_text))
+        items_map[btn_text] = m_id
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([types.KeyboardButton(text="Bosh menyu")])
+
+    await state.update_data(items_map=items_map)
+    await state.set_state(MijozOrderState.select_product)
+    await message.answer(
+        "📦 Qaysi mebelni olmoqchisiz? Ro'yxatdan tanlang:",
+        reply_markup=types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    )
+
+@dp.message(MijozOrderState.select_product)
+async def mijoz_select_product(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await state.clear()
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        return
+
+    data = await state.get_data()
+    items_map = data.get('items_map', {})
+
+    if message.text not in items_map:
+        await message.answer("Iltimos, ro'yxatdan tanlang:")
+        return
+
+    product_id = items_map[message.text]
+    product_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+    if not product_ref:
+        await message.answer("Mebel topilmadi. Qaytadan tanlang:")
+        return
+
+    await state.update_data(product_id=product_id, product_name=product_ref.get('nomi', product_id),
+                            max_qty=int(product_ref.get('soni', 0)))
+    await message.answer(
+        f"✅ *{product_ref.get('nomi')}* tanlandi.\n"
+        f"📦 Omborda: *{product_ref.get('soni')} ta* mavjud.\n\n"
+        "Nechta olmoqchisiz? (faqat raqam kiriting):",
+        reply_markup=types.ReplyKeyboardRemove(),
+        parse_mode="Markdown"
+    )
+    await state.set_state(MijozOrderState.amount)
+
+@dp.message(MijozOrderState.amount)
+async def mijoz_order_amount(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await state.clear()
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        return
+
+    try:
+        amount = int(message.text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Iltimos, musbat raqam kiriting (masalan: 2):")
+        return
+
+    data = await state.get_data()
+    max_qty = data.get('max_qty', 0)
+    if amount > max_qty:
+        await message.answer(f"❌ Omborda faqat {max_qty} ta bor. Kamroq kiriting:")
+        return
+
+    await state.update_data(amount=amount)
+    await message.answer(
+        "📅 Qaysi sanaga tayyor bo'lishi kerak? Tugmadan tanlang yoki yozing (masalan: 20.05.2026):",
+        reply_markup=get_dates_keyboard()
+    )
+    await state.set_state(MijozOrderState.due_date)
+
+@dp.message(MijozOrderState.due_date)
+async def mijoz_order_due_date(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await state.clear()
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        return
+
+    await state.update_data(due_date=message.text)
+    await message.answer(
+        "📝 Izoh kiriting (masalan: rang, o'lcham, yetkazib berish manzili).\n"
+        "Agar izoh bo'lmasa 'yoq' deb yozing:",
+        reply_markup=types.ReplyKeyboardRemove()
+    )
+    await state.set_state(MijozOrderState.comment)
+
+@dp.message(MijozOrderState.comment)
+async def mijoz_order_comment(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    product_id   = data['product_id']
+    product_name = data.get('product_name', product_id)
+    amount       = data['amount']
+    due_date     = data['due_date']
+    comment      = message.text
+
+    # Telegram user info
+    user = message.from_user
+    client_name = user.full_name or user.username or str(user.id)
+
+    order_id = f"{product_id}-{str(uuid.uuid4())[:4].upper()}"
+    now_str  = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    month    = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
+
+    # Ombordan ayirish
+    mebel_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+    if mebel_ref:
+        current_qty = int(mebel_ref.get('soni', 0))
+        new_qty = max(0, current_qty - amount)
+        await asyncio.to_thread(db.reference(f'mebellar/{product_id}').update, {'soni': new_qty})
+
+    # Firebase'ga yozish
+    await asyncio.to_thread(
+        db.reference(f'orders/{order_id}').set,
+        {
+            'order_id':    order_id,
+            'client_name': client_name,
+            'client_tg_id': str(user.id),
+            'product_id':  product_id,
+            'amount':      str(amount),
+            'due_date':    due_date,
+            'comment':     comment,
+            'status':      'Tayyorlanmoqda',
+            'created_at':  now_str,
+            'month':       month,
+            'source':      'mijoz'
+        }
+    )
+
+    role = await get_user_role(message.from_user.id)
+    await message.answer(
+        f"✅ Zakaz qabul qilindi!\n"
+        f"🆔 ID: `{order_id}`\n"
+        f"📦 Mebel: {product_name} — {amount} ta\n"
+        f"📅 Muddat: {format_date(due_date)}\n"
+        f"📝 Izoh: {comment}",
+        parse_mode="Markdown",
+        reply_markup=main_menu(role)
+    )
+    await state.clear()
+
+    # Admin va omborchiga xabar
+    notify_text = (
+        f"🔔 *Yangi zakaz (mijozdan)!*\n\n"
+        f"👤 Mijoz: {client_name} (TG: {user.id})\n"
+        f"📦 Mebel: {product_name} — {amount} ta\n"
+        f"📅 Muddat: {format_date(due_date)}\n"
+        f"📝 Izoh: {comment}\n"
+        f"🆔 ID: `{order_id}`"
+    )
+    users_ref = await asyncio.to_thread(db.reference('users').get)
+    for uid, udata in (users_ref or {}).items():
+        if isinstance(udata, dict) and udata.get('role') in ['admin', 'omborchi', 'ishchi']:
+            try:
+                await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
+            except Exception:
+                pass
+    try:
+        await bot.send_message(883589794, notify_text, parse_mode="Markdown")
+    except Exception:
+        pass
 
 # --- ADMIN: YANGI BUYURTMA YOZISH ---
 @dp.message(F.text == "📝 Yangi buyurtma")
