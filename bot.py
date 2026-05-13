@@ -732,19 +732,38 @@ async def client_history(message: types.Message):
         if not trans_ref:
             await message.answer(f"👤 {client_name} bo'yicha to'lovlar tarixi yo'q.")
             return
-            
-        history = f"📜 **{client_name} to'lovlar (Kirim/Chiqim) tarixi:**\n\n"
+        
+        header = f"📜 **{client_name} to'lovlar (Kirim/Chiqim) tarixi:**\n\n"
+        items = []
         for t_id, t in trans_ref.items():
             if isinstance(t, dict):
                 icon = "🟢" if t.get('type') == 'Kirim' else "🔴"
-                history += f"{icon} {t.get('type')}: {t.get('amount')} so'm\n"
-                history += f"📅 Sana: {format_date(t.get('timestamp'))}\n\n"
-            
-        if len(history) > 4000:
-            for x in range(0, len(history), 4000):
-                await message.answer(history[x:x+4000], parse_mode="Markdown")
-        else:
-            await message.answer(history, parse_mode="Markdown")
+                entry = f"{icon} {t.get('type')}: {t.get('amount')} so'm\n"
+                entry += f"📅 Sana: {format_date(t.get('timestamp', ''))}\n"
+                note = t.get('note', '')
+                if note:
+                    entry += f"📝 {note}\n"
+                entry += "\n"
+                items.append(entry)
+        
+        # Build chunks at item boundaries (max 3800 chars)
+        all_parts = [header] + items
+        current_msg = ""
+        chunks = []
+        for part in all_parts:
+            if len(current_msg) + len(part) > 3800:
+                chunks.append(current_msg)
+                current_msg = part
+            else:
+                current_msg += part
+        if current_msg:
+            chunks.append(current_msg)
+        
+        for chunk in chunks:
+            try:
+                await message.answer(chunk, parse_mode="Markdown")
+            except Exception:
+                await message.answer(chunk)
 
 # Omborchiga yangi buyurtma haqida xabar yuborish
 async def notify_warehouse(order_data, order_id):
