@@ -531,16 +531,50 @@ async def show_client_report(message: types.Message, state: FSMContext):
     
     current_debt = debt_ref if debt_ref is not None else 0
     
+    # Fetch current month deliveries to find dates for older orders if possible
+    current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
+    deliveries_ref = await asyncio.to_thread(db.reference(f'deliveries/{current_month}').get)
+    
     report_text = f"👤 **Mijoz:** {client_name}\n"
     report_text += f"💳 **Joriy qarzi:** {current_debt} so'm\n\n"
     report_text += "📦 **Olingan mebellar tarixi:**\n"
     
     count = 0
     if orders_ref:
-        for o_id, o in orders_ref.items():
-            if isinstance(o, dict) and str(o.get('client_name')).strip() == client_name.strip():
+        # Sort orders by date
+        sorted_orders = sorted(orders_ref.items(), key=lambda x: x[1].get('created_at', '') if isinstance(x[1], dict) else '', reverse=True)
+        for o_id, o in sorted_orders:
+            if isinstance(o, dict) and str(o.get('client_name', '')).strip() == client_name.strip():
                 count += 1
-                report_text += f"▪️ {o.get('product_id')} - {o.get('amount')} ta ({o.get('status')})\n"
+                created_at = o.get('created_at', 'Noma\'lum')
+                # Clean up date format if it's long
+                try:
+                    c_date = created_at.split(' ')[0]
+                except:
+                    c_date = created_at
+                
+                status = o.get('status', 'Noma\'lum')
+                delivered_at = o.get('delivered_at', '')
+                
+                # If not in order record, try to find in current month deliveries
+                if not delivered_at and deliveries_ref:
+                    if isinstance(deliveries_ref, dict):
+                        for d_id, d in deliveries_ref.items():
+                            if isinstance(d, dict) and d.get('order_id') == o_id:
+                                delivered_at = d.get('timestamp', '')
+                                break
+                
+                try:
+                    d_date = delivered_at.split(' ')[0] if delivered_at else ''
+                except:
+                    d_date = delivered_at
+                
+                date_info = f"📅 {c_date}"
+                if d_date:
+                    date_info += f" ✅ {d_date}"
+                
+                report_text += f"▪️ {o.get('product_id')} - {o.get('amount')} ta ({status})\n"
+                report_text += f"   {date_info}\n"
                 
     if count == 0:
         report_text += "Hech qanday mebel olinmagan.\n"
@@ -1394,11 +1428,13 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
     
     # Update order
     current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
+    timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
     await asyncio.to_thread(db.reference(f"orders/{order_id}").update, {
         'status': new_status,
         'driver': driver,
         'delivery_price': price,
-        'month': current_month
+        'month': current_month,
+        'delivered_at': timestamp
     })
     
     # Get product_id and amount for history
