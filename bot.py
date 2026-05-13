@@ -179,7 +179,7 @@ class AdminOrderControlState(StatesGroup):
     edit_field = State()
     new_value = State()
 
-class MijozOrderState(StatesGroup):
+class DillerOrderState(StatesGroup):
     select_product = State()  # Mebel tanlash
     amount = State()          # Nechta
     due_date = State()        # Qachon kerak
@@ -193,6 +193,8 @@ async def get_user_role(user_id):
         return 'omborchi'
     if user_id_str in ['6298036669', '1349256808', '7062569902', '7941658592', '1724350130', '698145797', '5063420475']:
         return 'xodim'
+    if user_id_str in ['261261387']:
+        return 'diller'
     
     ref = db.reference(f'users/{user_id}')
     user_data = await asyncio.to_thread(ref.get)
@@ -223,9 +225,13 @@ def main_menu(role):
         buttons = [
             [types.KeyboardButton(text="🔨 Faol buyurtmalar")]
         ]
-    else:
+    elif role == 'diller':
         buttons = [
             [types.KeyboardButton(text="🛍 Sotuvdagi mebellar"), types.KeyboardButton(text="📝 Zakaz berish")]
+        ]
+    else:
+        buttons = [
+            [types.KeyboardButton(text="🛍 Sotuvdagi mebellar")]
         ]
     return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -382,12 +388,12 @@ async def view_stock(message: types.Message):
             else:
                 await message.answer(text, parse_mode="Markdown")
 
-# --- MIJOZ: ZAKAZ BERISH ---
+# --- DILLER: ZAKAZ BERISH ---
 @dp.message(F.text == "📝 Zakaz berish")
-async def mijoz_order_start(message: types.Message, state: FSMContext):
+async def diller_order_start(message: types.Message, state: FSMContext):
     role = await get_user_role(message.from_user.id)
-    if role not in ['mijoz', 'xodim', 'ishchi']:
-        await message.answer("Bu funksiya faqat mijozlar uchun.", reply_markup=main_menu(role))
+    if role not in ['diller', 'xodim', 'ishchi']:
+        await message.answer("Bu funksiya faqat dillerlar uchun.", reply_markup=main_menu(role))
         return
 
     # Firebase'dan hozirgi stock ma'lumotlarini olish (ixtiyoriy)
@@ -421,7 +427,7 @@ async def mijoz_order_start(message: types.Message, state: FSMContext):
     buttons.append([types.KeyboardButton(text="Bosh menyu")])
 
     await state.update_data(items_map=items_map, stock_map=stock_map)
-    await state.set_state(MijozOrderState.select_product)
+    await state.set_state(DillerOrderState.select_product)
     await message.answer(
         "📦 Qaysi mebelni olmoqchisiz?\n"
         "✅ — omborda mavjud | narxi yo'q — oldindan zakaz:",
@@ -429,8 +435,8 @@ async def mijoz_order_start(message: types.Message, state: FSMContext):
     )
 
 
-@dp.message(MijozOrderState.select_product)
-async def mijoz_select_product(message: types.Message, state: FSMContext):
+@dp.message(DillerOrderState.select_product)
+async def diller_select_product(message: types.Message, state: FSMContext):
     if message.text == "Bosh menyu":
         role = await get_user_role(message.from_user.id)
         await state.clear()
@@ -466,10 +472,10 @@ async def mijoz_select_product(message: types.Message, state: FSMContext):
         reply_markup=types.ReplyKeyboardRemove(),
         parse_mode="Markdown"
     )
-    await state.set_state(MijozOrderState.amount)
+    await state.set_state(DillerOrderState.amount)
 
-@dp.message(MijozOrderState.amount)
-async def mijoz_order_amount(message: types.Message, state: FSMContext):
+@dp.message(DillerOrderState.amount)
+async def diller_order_amount(message: types.Message, state: FSMContext):
     if message.text == "Bosh menyu":
         role = await get_user_role(message.from_user.id)
         await state.clear()
@@ -489,11 +495,11 @@ async def mijoz_order_amount(message: types.Message, state: FSMContext):
         "📅 Qaysi sanaga tayyor bo'lishi kerak? Tugmadan tanlang yoki yozing (masalan: 20.05.2026):",
         reply_markup=get_dates_keyboard()
     )
-    await state.set_state(MijozOrderState.due_date)
+    await state.set_state(DillerOrderState.due_date)
 
 
-@dp.message(MijozOrderState.due_date)
-async def mijoz_order_due_date(message: types.Message, state: FSMContext):
+@dp.message(DillerOrderState.due_date)
+async def diller_order_due_date(message: types.Message, state: FSMContext):
     if message.text == "Bosh menyu":
         role = await get_user_role(message.from_user.id)
         await state.clear()
@@ -506,10 +512,10 @@ async def mijoz_order_due_date(message: types.Message, state: FSMContext):
         "Agar izoh bo'lmasa 'yoq' deb yozing:",
         reply_markup=types.ReplyKeyboardRemove()
     )
-    await state.set_state(MijozOrderState.comment)
+    await state.set_state(DillerOrderState.comment)
 
-@dp.message(MijozOrderState.comment)
-async def mijoz_order_comment(message: types.Message, state: FSMContext):
+@dp.message(DillerOrderState.comment)
+async def diller_order_comment(message: types.Message, state: FSMContext):
     if message.text == "Bosh menyu":
         role = await get_user_role(message.from_user.id)
         await state.clear()
@@ -529,10 +535,10 @@ async def mijoz_order_comment(message: types.Message, state: FSMContext):
         "📱 Iltimos, telefon raqamingizni yuboring (pastdagi tugmani bosing yoki yozing):",
         reply_markup=markup
     )
-    await state.set_state(MijozOrderState.phone)
+    await state.set_state(DillerOrderState.phone)
 
-@dp.message(MijozOrderState.phone)
-async def mijoz_order_phone(message: types.Message, state: FSMContext):
+@dp.message(DillerOrderState.phone)
+async def diller_order_phone(message: types.Message, state: FSMContext):
     if message.text == "Bosh menyu":
         role = await get_user_role(message.from_user.id)
         await state.clear()
@@ -582,7 +588,7 @@ async def mijoz_order_phone(message: types.Message, state: FSMContext):
             'status':      'Tayyorlanmoqda',
             'created_at':  now_str,
             'month':       month,
-            'source':      'mijoz'
+            'source':      'diller'
         }
     )
 
@@ -601,7 +607,7 @@ async def mijoz_order_phone(message: types.Message, state: FSMContext):
 
     # Admin va omborchiga xabar
     notify_text = (
-        f"🔔 *Yangi zakaz (mijozdan)!*\n\n"
+        f"🔔 *Yangi zakaz (dillerdan)!*\n\n"
         f"👤 Mijoz: {client_name} (TG: {user.id})\n"
         f"📱 Telefon: {phone}\n"
         f"📦 Mebel: {product_name} — {amount} ta\n"
