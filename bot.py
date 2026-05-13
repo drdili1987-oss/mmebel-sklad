@@ -184,6 +184,7 @@ class MijozOrderState(StatesGroup):
     amount = State()          # Nechta
     due_date = State()        # Qachon kerak
     comment = State()         # Izoh
+    phone = State()           # Telefon raqam
 
 # 4. Rollarni Tekshirish (RTDB dan)
 async def get_user_role(user_id):
@@ -509,12 +510,47 @@ async def mijoz_order_due_date(message: types.Message, state: FSMContext):
 
 @dp.message(MijozOrderState.comment)
 async def mijoz_order_comment(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await state.clear()
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        return
+
+    await state.update_data(comment=message.text)
+    
+    markup = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="📞 Raqamni yuborish", request_contact=True)],
+            [types.KeyboardButton(text="Bosh menyu")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer(
+        "📱 Iltimos, telefon raqamingizni yuboring (pastdagi tugmani bosing yoki yozing):",
+        reply_markup=markup
+    )
+    await state.set_state(MijozOrderState.phone)
+
+@dp.message(MijozOrderState.phone)
+async def mijoz_order_phone(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await state.clear()
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        return
+
+    phone = ""
+    if message.contact:
+        phone = message.contact.phone_number
+    else:
+        phone = message.text
+
     data = await state.get_data()
     product_id   = data['product_id']
     product_name = data.get('product_name', product_id)
     amount       = data['amount']
     due_date     = data['due_date']
-    comment      = message.text
+    comment      = data['comment']
 
     # Telegram user info
     user = message.from_user
@@ -538,6 +574,7 @@ async def mijoz_order_comment(message: types.Message, state: FSMContext):
             'order_id':    order_id,
             'client_name': client_name,
             'client_tg_id': str(user.id),
+            'client_phone': phone,
             'product_id':  product_id,
             'amount':      str(amount),
             'due_date':    due_date,
@@ -555,7 +592,8 @@ async def mijoz_order_comment(message: types.Message, state: FSMContext):
         f"🆔 ID: `{order_id}`\n"
         f"📦 Mebel: {product_name} — {amount} ta\n"
         f"📅 Muddat: {format_date(due_date)}\n"
-        f"📝 Izoh: {comment}",
+        f"📝 Izoh: {comment}\n"
+        f"📱 Telefon: {phone}",
         parse_mode="Markdown",
         reply_markup=main_menu(role)
     )
@@ -565,6 +603,7 @@ async def mijoz_order_comment(message: types.Message, state: FSMContext):
     notify_text = (
         f"🔔 *Yangi zakaz (mijozdan)!*\n\n"
         f"👤 Mijoz: {client_name} (TG: {user.id})\n"
+        f"📱 Telefon: {phone}\n"
         f"📦 Mebel: {product_name} — {amount} ta\n"
         f"📅 Muddat: {format_date(due_date)}\n"
         f"📝 Izoh: {comment}\n"
