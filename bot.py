@@ -544,74 +544,89 @@ async def show_client_report(message: types.Message, state: FSMContext):
         await message.answer("Faqat doimiy mijozlar hisoboti mavjud.")
         return
 
-    # Fetch orders and debt
-    orders_ref = await asyncio.to_thread(db.reference('orders').get)
-    debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
-    
-    current_debt = debt_ref if debt_ref is not None else 0
-    
-    # Fetch current month deliveries to find dates for older orders if possible
-    current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
-    deliveries_ref = await asyncio.to_thread(db.reference(f'deliveries/{current_month}').get)
-    
-    report_text = f"👤 **Mijoz:** {client_name}\n"
-    report_text += f"💳 **Joriy qarzi:** {current_debt} so'm\n\n"
-    report_text += "📦 **Olingan mebellar tarixi:**\n"
-    
-    count = 0
-    if orders_ref:
-        # Handle both dict and list from Firebase
-        if isinstance(orders_ref, dict):
-            items = orders_ref.items()
-        else:
-            items = [(i, o) for i, o in enumerate(orders_ref) if o is not None]
+    try:
+        # Fetch orders and debt
+        orders_ref = await asyncio.to_thread(db.reference('orders').get)
+        debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
+        
+        current_debt = debt_ref if debt_ref is not None else 0
+        
+        # Fetch current month deliveries to find dates for older orders if possible
+        current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
+        deliveries_ref = await asyncio.to_thread(db.reference(f'deliveries/{current_month}').get)
+        
+        report_text = f"👤 **Mijoz:** {client_name}\n"
+        report_text += f"💳 **Joriy qarzi:** {current_debt} so'm\n\n"
+        report_text += "📦 **Olingan mebellar tarixi:**\n"
+        
+        count = 0
+        if orders_ref:
+            # Handle both dict and list from Firebase
+            if isinstance(orders_ref, dict):
+                items = orders_ref.items()
+            else:
+                items = [(i, o) for i, o in enumerate(orders_ref) if o is not None]
 
-        # Sort orders by date
-        sorted_orders = sorted(items, key=lambda x: x[1].get('created_at', '') if isinstance(x[1], dict) else '', reverse=True)
+            # Sort orders by date (handle None values)
+            def get_order_date(x):
+                if not isinstance(x[1], dict): return ""
+                val = x[1].get('created_at')
+                return str(val) if val else ""
+
+            sorted_orders = sorted(items, key=get_order_date, reverse=True)
+            
+            search_name = client_name.strip().lower()
+            for o_id, o in sorted_orders:
+                if isinstance(o, dict):
+                    # Get client name (defensive against None)
+                    o_client_val = o.get('client_name') or o.get('client') or ''
+                    o_client = str(o_client_val).strip().lower()
+                    
+                    if o_client == search_name:
+                        count += 1
+                        created_at = o.get('created_at') or 'Noma\'lum'
+                        c_date = format_date(created_at)
+                        
+                        status = o.get('status') or 'Noma\'lum'
+                        delivered_at = o.get('delivered_at') or ''
+                        
+                        # If not in order record, try to find in current month deliveries
+                        if not delivered_at and deliveries_ref:
+                            if isinstance(deliveries_ref, dict):
+                                for d_id, d in deliveries_ref.items():
+                                    if isinstance(d, dict) and d.get('order_id') == o_id:
+                                        delivered_at = d.get('timestamp') or ''
+                                        break
+                        
+                        d_date = format_date(delivered_at) if delivered_at else ''
+                        
+                        date_info = f"📅 {c_date}"
+                        if d_date:
+                            date_info += f" ✅ {d_date}"
+                        
+                        report_text += f"▪️ {o.get('product_id')} - {o.get('amount')} ta ({status})\n"
+                        report_text += f"   {date_info}\n"
+                    
+        if count == 0:
+            report_text += "Hech qanday mebel olinmagan.\n"
+            
+        markup = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [types.KeyboardButton(text=f"➕ {client_name} dan Pul Olish (Kirim)")],
+                [types.KeyboardButton(text=f"➖ {client_name} ga Pul Berish (Chiqim)")],
+                [types.KeyboardButton(text=f"📜 {client_name} To'lovlar Tarixi")],
+                [types.KeyboardButton(text="Bosh menyu")]
+            ],
+            resize_keyboard=True
+        )
         
-        for o_id, o in sorted_orders:
-            if isinstance(o, dict):
-                o_client = str(o.get('client_name', o.get('client', ''))).strip().lower()
-                if o_client == client_name.strip().lower():
-                    count += 1
-                    created_at = o.get('created_at', 'Noma\'lum')
-                    c_date = format_date(created_at)
-                    
-                    status = o.get('status', 'Noma\'lum')
-                    delivered_at = o.get('delivered_at', '')
-                    
-                    # If not in order record, try to find in current month deliveries
-                    if not delivered_at and deliveries_ref:
-                        if isinstance(deliveries_ref, dict):
-                            for d_id, d in deliveries_ref.items():
-                                if isinstance(d, dict) and d.get('order_id') == o_id:
-                                    delivered_at = d.get('timestamp', '')
-                                    break
-                    
-                    d_date = format_date(delivered_at) if delivered_at else ''
-                    
-                    date_info = f"📅 {c_date}"
-                    if d_date:
-                        date_info += f" ✅ {d_date}"
-                    
-                    report_text += f"▪️ {o.get('product_id')} - {o.get('amount')} ta ({status})\n"
-                    report_text += f"   {date_info}\n"
-                
-    if count == 0:
-        report_text += "Hech qanday mebel olinmagan.\n"
+        await message.answer(report_text, parse_mode="Markdown", reply_markup=markup)
+        await state.clear()
         
-    markup = types.ReplyKeyboardMarkup(
-        keyboard=[
-            [types.KeyboardButton(text=f"➕ {client_name} dan Pul Olish (Kirim)")],
-            [types.KeyboardButton(text=f"➖ {client_name} ga Pul Berish (Chiqim)")],
-            [types.KeyboardButton(text=f"📜 {client_name} To'lovlar Tarixi")],
-            [types.KeyboardButton(text="Bosh menyu")]
-        ],
-        resize_keyboard=True
-    )
-    
-    await message.answer(report_text, parse_mode="Markdown", reply_markup=markup)
-    await state.clear()
+    except Exception as e:
+        logging.error(f"Client report error: {e}")
+        await message.answer(f"Hisobot tayyorlashda xatolik yuz berdi: {e}")
+        await state.clear()
 
 @dp.message(F.text.contains("dan Pul Olish (Kirim)"))
 async def client_kirim_start(message: types.Message, state: FSMContext):
@@ -741,7 +756,7 @@ async def send_daily_reminders():
     
     today_orders = []
     for o_id, o in orders_ref.items():
-        if isinstance(o, dict) and o.get('due_date') == today_str and o.get('status') == 'Tayyorlanmoqda':
+        if isinstance(o, dict) and format_date(o.get('due_date', '')) == today_str and o.get('status') == 'Tayyorlanmoqda':
             today_orders.append(o)
             
     if not today_orders:
@@ -1688,7 +1703,7 @@ async def driver_history(message: types.Message):
             if isinstance(t, dict):
                 icon = "🔴" if t.get('type') == 'Chiqim' else "🟢"
                 history += f"{icon} {t.get('type')}: {t.get('amount')} so'm\n"
-                history += f"📅 Sana: {t.get('timestamp')}\n\n"
+                history += f"📅 Sana: {format_date(t.get('timestamp', ''))}\n\n"
             
         if len(history) > 4000:
             for x in range(0, len(history), 4000):
@@ -1755,7 +1770,7 @@ async def show_delivery_history(message: types.Message, state: FSMContext):
         
         for d_id, d in items:
             if isinstance(d, dict):
-                t_str = d.get('timestamp', "Noma'lum")
+                t_str = format_date(d.get('timestamp', "Noma'lum"))
                 c_str = d.get('client', "Noma'lum")
                 p_str = d.get('product_id', "Noma'lum")
                 a_str = d.get('amount', '1')
@@ -1858,7 +1873,9 @@ async def driver_deliveries_history(message: types.Message):
             count = 0
             for d in month_deliveries:
                 count += 1
-                report_text += f" ▪️ {d.get('client')} ga: {d.get('product_id')} (Narxi: {d.get('price')})\n"
+                d_date = format_date(d.get('timestamp', ''))
+                date_str = f" [{d_date}]" if d_date and d_date != "Noma'lum" else ""
+                report_text += f" ▪️ {d.get('client')} ga: {d.get('product_id')} (Narxi: {d.get('price')}){date_str}\n"
             report_text += f" 📦 Jami shu oyda: {count} ta yetkazib berish\n\n"
             
         if len(report_text) > 4000:
@@ -1962,7 +1979,10 @@ async def admin_order_selected(message: types.Message, state: FSMContext):
     info += f"🧑 Mijoz: {order_ref.get('client_name')}\n"
     info += f"📦 Mebel: {order_ref.get('product_id')}\n"
     info += f"📊 Soni: {order_ref.get('amount')} ta\n"
-    info += f"📅 Muddat: {order_ref.get('due_date')}\n"
+    info += f"📅 Muddat: {format_date(order_ref.get('due_date', ''))}\n"
+    created = order_ref.get('created_at', '')
+    if created:
+        info += f"📆 Yaratilgan: {format_date(created)}\n"
     if order_ref.get('comment') and str(order_ref.get('comment')).lower() != 'yoq':
         info += f"📝 Izoh: {order_ref.get('comment')}\n"
     info += f"📌 Holati: {order_ref.get('status')}\n"
