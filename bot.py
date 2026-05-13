@@ -560,33 +560,42 @@ async def show_client_report(message: types.Message, state: FSMContext):
     
     count = 0
     if orders_ref:
+        # Handle both dict and list from Firebase
+        if isinstance(orders_ref, dict):
+            items = orders_ref.items()
+        else:
+            items = [(i, o) for i, o in enumerate(orders_ref) if o is not None]
+
         # Sort orders by date
-        sorted_orders = sorted(orders_ref.items(), key=lambda x: x[1].get('created_at', '') if isinstance(x[1], dict) else '', reverse=True)
+        sorted_orders = sorted(items, key=lambda x: x[1].get('created_at', '') if isinstance(x[1], dict) else '', reverse=True)
+        
         for o_id, o in sorted_orders:
-            if isinstance(o, dict) and str(o.get('client_name', '')).strip() == client_name.strip():
-                count += 1
-                created_at = o.get('created_at', 'Noma\'lum')
-                c_date = format_date(created_at)
-                
-                status = o.get('status', 'Noma\'lum')
-                delivered_at = o.get('delivered_at', '')
-                
-                # If not in order record, try to find in current month deliveries
-                if not delivered_at and deliveries_ref:
-                    if isinstance(deliveries_ref, dict):
-                        for d_id, d in deliveries_ref.items():
-                            if isinstance(d, dict) and d.get('order_id') == o_id:
-                                delivered_at = d.get('timestamp', '')
-                                break
-                
-                d_date = format_date(delivered_at) if delivered_at else ''
-                
-                date_info = f"📅 {c_date}"
-                if d_date:
-                    date_info += f" ✅ {d_date}"
-                
-                report_text += f"▪️ {o.get('product_id')} - {o.get('amount')} ta ({status})\n"
-                report_text += f"   {date_info}\n"
+            if isinstance(o, dict):
+                o_client = str(o.get('client_name', o.get('client', ''))).strip().lower()
+                if o_client == client_name.strip().lower():
+                    count += 1
+                    created_at = o.get('created_at', 'Noma\'lum')
+                    c_date = format_date(created_at)
+                    
+                    status = o.get('status', 'Noma\'lum')
+                    delivered_at = o.get('delivered_at', '')
+                    
+                    # If not in order record, try to find in current month deliveries
+                    if not delivered_at and deliveries_ref:
+                        if isinstance(deliveries_ref, dict):
+                            for d_id, d in deliveries_ref.items():
+                                if isinstance(d, dict) and d.get('order_id') == o_id:
+                                    delivered_at = d.get('timestamp', '')
+                                    break
+                    
+                    d_date = format_date(delivered_at) if delivered_at else ''
+                    
+                    date_info = f"📅 {c_date}"
+                    if d_date:
+                        date_info += f" ✅ {d_date}"
+                    
+                    report_text += f"▪️ {o.get('product_id')} - {o.get('amount')} ta ({status})\n"
+                    report_text += f"   {date_info}\n"
                 
     if count == 0:
         report_text += "Hech qanday mebel olinmagan.\n"
