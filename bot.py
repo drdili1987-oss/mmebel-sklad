@@ -514,7 +514,7 @@ async def process_comment(message: types.Message, state: FSMContext):
         }
     )
     
-    await message.answer(f"✅ Buyurtma qabul qilindi!\n🆔 ID: {order_id}\n📅 Muddat: {data['due_date']}\n📝 Izoh: {comment}")
+    await message.answer(f"✅ Buyurtma qabul qilindi!\n🆔 ID: {order_id}\n📅 Muddat: {format_date(data['due_date'])}\n📝 Izoh: {comment}")
     data['comment'] = comment
     await state.clear()
     
@@ -1918,7 +1918,7 @@ async def admin_order_control_start(message: types.Message, state: FSMContext):
     for o_id, o in active_orders_list:
         item_text = f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n"
         item_text += f"📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n"
-        item_text += f"📅 Muddat: {o.get('due_date')}\n"
+        item_text += f"📅 Muddat: {format_date(o.get('due_date', ''))}\n"
         if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
             item_text += f"📝 Izoh: {o.get('comment')}\n"
         item_text += f"📌 Holati: {o.get('status')}\n"
