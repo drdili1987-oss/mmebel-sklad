@@ -386,45 +386,47 @@ async def view_stock(message: types.Message):
 async def mijoz_order_start(message: types.Message, state: FSMContext):
     role = await get_user_role(message.from_user.id)
     if role not in ['mijoz', 'xodim', 'ishchi']:
-        # Admin/omborchi uchun bu tugma kerak emas
         await message.answer("Bu funksiya faqat mijozlar uchun.", reply_markup=main_menu(role))
         return
 
+    # Firebase'dan hozirgi stock ma'lumotlarini olish (ixtiyoriy)
     mebellar = await asyncio.to_thread(db.reference('mebellar').get)
-    if not mebellar:
-        await message.answer("Ombor hozircha bo'sh. Keyinroq urinib ko'ring.")
-        return
+    stock_map = {}  # m_id -> soni
+    if mebellar:
+        for m_id, m in mebellar.items():
+            if isinstance(m, dict):
+                stock_map[m_id] = int(m.get('soni', 0))
 
-    # Faqat stokdagi mebellarni ko'rsat
-    available = [(m_id, m) for m_id, m in mebellar.items()
-                 if isinstance(m, dict) and int(m.get('soni', 0)) > 0]
-
-    if not available:
-        await message.answer("Hozirda omborda mavjud mebel yo'q.")
-        return
-
+    # FAVORITE_MODELS ro'yxatidan tugmalar yasash
     buttons = []
     row = []
-    items_map = {}  # button text -> m_id
-    for m_id, m in sorted(available, key=lambda x: x[1].get('nomi', '')):
-        nomi = m.get('nomi', m_id)
-        soni = m.get('soni', 0)
-        btn_text = f"{nomi} ({soni} ta)"
+    items_map = {}  # button_text -> model_name
+
+    for model in FAVORITE_MODELS:
+        # Firebase ID ni hisoblash (xuddi order yaratishdagi kabi)
+        m_id = model.replace(" ", "").replace("-", "").upper()
+        soni = stock_map.get(m_id, 0)
+        if soni > 0:
+            btn_text = f"{model} ✅ {soni} ta"
+        else:
+            btn_text = model
         row.append(types.KeyboardButton(text=btn_text))
-        items_map[btn_text] = m_id
-        if len(row) == 2:
+        items_map[btn_text] = model
+        if len(row) == 3:
             buttons.append(row)
             row = []
     if row:
         buttons.append(row)
     buttons.append([types.KeyboardButton(text="Bosh menyu")])
 
-    await state.update_data(items_map=items_map)
+    await state.update_data(items_map=items_map, stock_map=stock_map)
     await state.set_state(MijozOrderState.select_product)
     await message.answer(
-        "📦 Qaysi mebelni olmoqchisiz? Ro'yxatdan tanlang:",
+        "📦 Qaysi mebelni olmoqchisiz?\n"
+        "✅ — omborda mavjud | narxi yo'q — oldindan zakaz:",
         reply_markup=types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
     )
+
 
 @dp.message(MijozOrderState.select_product)
 async def mijoz_select_product(message: types.Message, state: FSMContext):
@@ -441,17 +443,24 @@ async def mijoz_select_product(message: types.Message, state: FSMContext):
         await message.answer("Iltimos, ro'yxatdan tanlang:")
         return
 
-    product_id = items_map[message.text]
-    product_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
-    if not product_ref:
-        await message.answer("Mebel topilmadi. Qaytadan tanlang:")
-        return
+    # items_map: btn_text -> model_name (e.g. "BF 07")
+    model_name = items_map[message.text]
+    product_id = model_name.replace(" ", "").replace("-", "").upper()
 
-    await state.update_data(product_id=product_id, product_name=product_ref.get('nomi', product_id),
-                            max_qty=int(product_ref.get('soni', 0)))
+    # Firebase'dan narx va stock olishga urinish
+    product_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+    soni = int(product_ref.get('soni', 0)) if product_ref else 0
+
+    stock_info = f"📦 Omborda: *{soni} ta* mavjud.\n" if soni > 0 else "⚠️ Hozir omborda yo'q — oldindan zakaz qabul qilinadi.\n"
+
+    await state.update_data(
+        product_id=product_id,
+        product_name=model_name,
+        stock_soni=soni
+    )
     await message.answer(
-        f"✅ *{product_ref.get('nomi')}* tanlandi.\n"
-        f"📦 Omborda: *{product_ref.get('soni')} ta* mavjud.\n\n"
+        f"✅ *{model_name}* tanlandi.\n"
+        f"{stock_info}\n"
         "Nechta olmoqchisiz? (faqat raqam kiriting):",
         reply_markup=types.ReplyKeyboardRemove(),
         parse_mode="Markdown"
@@ -474,18 +483,13 @@ async def mijoz_order_amount(message: types.Message, state: FSMContext):
         await message.answer("❌ Iltimos, musbat raqam kiriting (masalan: 2):")
         return
 
-    data = await state.get_data()
-    max_qty = data.get('max_qty', 0)
-    if amount > max_qty:
-        await message.answer(f"❌ Omborda faqat {max_qty} ta bor. Kamroq kiriting:")
-        return
-
     await state.update_data(amount=amount)
     await message.answer(
         "📅 Qaysi sanaga tayyor bo'lishi kerak? Tugmadan tanlang yoki yozing (masalan: 20.05.2026):",
         reply_markup=get_dates_keyboard()
     )
     await state.set_state(MijozOrderState.due_date)
+
 
 @dp.message(MijozOrderState.due_date)
 async def mijoz_order_due_date(message: types.Message, state: FSMContext):
