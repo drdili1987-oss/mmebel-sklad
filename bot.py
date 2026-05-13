@@ -555,19 +555,24 @@ async def show_client_report(message: types.Message, state: FSMContext):
         current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
         deliveries_ref = await asyncio.to_thread(db.reference(f'deliveries/{current_month}').get)
         
-        report_text = f"👤 **Mijoz:** {client_name}\n"
-        report_text += f"💳 **Joriy qarzi:** {current_debt} so'm\n\n"
-        report_text += "📦 **Olingan mebellar tarixi:**\n"
+        try:
+            debt_formatted = f"{int(current_debt):,}".replace(",", " ")
+        except Exception:
+            debt_formatted = str(current_debt)
         
-        count = 0
+        report_header = f"👤 **Mijoz:** {client_name}\n"
+        report_header += f"💳 **Joriy qarzi:** {debt_formatted} so'm\n\n"
+        report_header += "📦 **Olingan mebellar tarixi:**\n"
+        
+        order_items = []
         if orders_ref:
             # Handle both dict and list from Firebase
             if isinstance(orders_ref, dict):
-                items = orders_ref.items()
+                items = list(orders_ref.items())
             else:
                 items = [(i, o) for i, o in enumerate(orders_ref) if o is not None]
 
-            # Sort orders by date (handle None values)
+            # Sort orders by date (most recent first)
             def get_order_date(x):
                 if not isinstance(x[1], dict): return ""
                 val = x[1].get('created_at')
@@ -578,19 +583,15 @@ async def show_client_report(message: types.Message, state: FSMContext):
             search_name = client_name.strip().lower()
             for o_id, o in sorted_orders:
                 if isinstance(o, dict):
-                    # Get client name (defensive against None)
                     o_client_val = o.get('client_name') or o.get('client') or ''
                     o_client = str(o_client_val).strip().lower()
                     
                     if o_client == search_name:
-                        count += 1
-                        created_at = o.get('created_at') or 'Noma\'lum'
+                        created_at = o.get('created_at') or "Noma'lum"
                         c_date = format_date(created_at)
-                        
-                        status = o.get('status') or 'Noma\'lum'
+                        status = o.get('status') or "Noma'lum"
                         delivered_at = o.get('delivered_at') or ''
                         
-                        # If not in order record, try to find in current month deliveries
                         if not delivered_at and deliveries_ref:
                             if isinstance(deliveries_ref, dict):
                                 for d_id, d in deliveries_ref.items():
@@ -599,17 +600,25 @@ async def show_client_report(message: types.Message, state: FSMContext):
                                         break
                         
                         d_date = format_date(delivered_at) if delivered_at else ''
-                        
                         date_info = f"📅 {c_date}"
                         if d_date:
                             date_info += f" ✅ {d_date}"
                         
-                        report_text += f"▪️ {o.get('product_id')} - {o.get('amount')} ta ({status})\n"
-                        report_text += f"   {date_info}\n"
-                    
-        if count == 0:
-            report_text += "Hech qanday mebel olinmagan.\n"
-            
+                        # Strip chars that break Markdown from product ID
+                        safe_pid = str(o.get('product_id', '-')).replace('`', '').replace('*', '')
+                        item = f"▪️ {safe_pid} — {o.get('amount')} ta ({status})\n"
+                        item += f"   {date_info}\n"
+                        order_items.append(item)
+        
+        total_count = len(order_items)
+        # Limit to 50 most recent orders
+        displayed_items = order_items[:50]
+        
+        if total_count == 0:
+            report_header += "Hech qanday mebel olinmagan.\n"
+        elif total_count > 50:
+            report_header += f"_(Jami {total_count} ta buyurtma — oxirgi 50 tasi ko'rsatilmoqda)_\n"
+        
         markup = types.ReplyKeyboardMarkup(
             keyboard=[
                 [types.KeyboardButton(text=f"➕ {client_name} dan Pul Olish (Kirim)")],
@@ -620,7 +629,34 @@ async def show_client_report(message: types.Message, state: FSMContext):
             resize_keyboard=True
         )
         
-        await message.answer(report_text, parse_mode="Markdown", reply_markup=markup)
+        # Build message chunks (max 3800 chars each)
+        all_parts = [report_header] + displayed_items
+        current_msg = ""
+        chunks = []
+        for part in all_parts:
+            if len(current_msg) + len(part) > 3800:
+                chunks.append(current_msg)
+                current_msg = part
+            else:
+                current_msg += part
+        if current_msg:
+            chunks.append(current_msg)
+        
+        for i, chunk in enumerate(chunks):
+            is_last = (i == len(chunks) - 1)
+            try:
+                await message.answer(
+                    chunk,
+                    parse_mode="Markdown",
+                    reply_markup=markup if is_last else None
+                )
+            except Exception:
+                # Fallback without Markdown if special chars break parser
+                await message.answer(
+                    chunk,
+                    reply_markup=markup if is_last else None
+                )
+        
         await state.clear()
         
     except Exception as e:
