@@ -1444,7 +1444,7 @@ async def delivery_driver(message: types.Message, state: FSMContext):
         
         markup = types.ReplyKeyboardMarkup(
             keyboard=[
-                [types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
+                [types.KeyboardButton(text="3,5 so'm"), types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
                 [types.KeyboardButton(text="Boshqa narx"), types.KeyboardButton(text="Bosh menyu")]
             ],
             resize_keyboard=True
@@ -1495,7 +1495,7 @@ async def delivery_custom_driver(message: types.Message, state: FSMContext):
         
         markup = types.ReplyKeyboardMarkup(
             keyboard=[
-                [types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
+                [types.KeyboardButton(text="3,5 so'm"), types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
                 [types.KeyboardButton(text="Boshqa narx"), types.KeyboardButton(text="Bosh menyu")]
             ],
             resize_keyboard=True
