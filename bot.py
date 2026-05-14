@@ -50,7 +50,7 @@ from firebase_admin import credentials, db
 REGULAR_CLIENTS = [
     "Comfort", "Iskandar", "Grand plaza", "Baxrom Uchtepa", 
     "Baxrom 9703", "Bahodir aka🚛", "Bahodir aka Andijon", "Akrom aka", 
-    "Zoʻr mebel", "Umid", "Akmal aka", "Doʻkon 707", "Farxod Jomiy", "Munosib Mebel", "Islom aka"
+    "Zoʻr mebel", "Umid", "Akmal aka", "Doʻkon 707", "Farxod Jomiy", "Munosib Mebel", "Islom aka", "Muxtor aka"
 ]
 
 def get_clients_keyboard():
@@ -100,11 +100,11 @@ def get_models_keyboard(include_other=False):
     buttons.append([types.KeyboardButton(text="Bosh menyu")])
     return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
-def get_dates_keyboard():
+def get_dates_keyboard(start_day=0):
     buttons = []
     row = []
     now = datetime.now(TASHKENT_TZ)
-    for i in range(15):
+    for i in range(start_day, start_day + 15):
         date_str = (now + timedelta(days=i)).strftime("%d.%m.%Y")
         row.append(types.KeyboardButton(text=date_str))
         if len(row) == 3:
@@ -491,9 +491,17 @@ async def diller_order_amount(message: types.Message, state: FSMContext):
         return
 
     await state.update_data(amount=amount)
+    
+    data = await state.get_data()
+    stock_soni = data.get('stock_soni', 0)
+    
+    start_day = 0
+    if amount > stock_soni:
+        start_day = 2
+        
     await message.answer(
         "📅 Qaysi sanaga tayyor bo'lishi kerak? Tugmadan tanlang yoki yozing (masalan: 20.05.2026):",
-        reply_markup=get_dates_keyboard()
+        reply_markup=get_dates_keyboard(start_day)
     )
     await state.set_state(DillerOrderState.due_date)
 
