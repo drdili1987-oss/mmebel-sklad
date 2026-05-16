@@ -809,79 +809,151 @@ async def show_client_report(message: types.Message, state: FSMContext):
         return
 
     try:
-        # Fetch orders and debt
+        # Fetch orders, debt, deliveries and mebellar
         orders_ref = await asyncio.to_thread(db.reference('orders').get)
         debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
+        mebellar_ref = await asyncio.to_thread(db.reference('mebellar').get)
         
         current_debt = debt_ref if debt_ref is not None else 0
         
-        # Fetch current month deliveries to find dates for older orders if possible
-        current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
-        deliveries_ref = await asyncio.to_thread(db.reference(f'deliveries/{current_month}').get)
+        # Barcha oylar uchun yetkazishlarni olish
+        all_deliveries_ref = await asyncio.to_thread(db.reference('deliveries').get)
+        deliveries_map = {}  # order_id -> delivery data
+        if all_deliveries_ref and isinstance(all_deliveries_ref, dict):
+            for month_key, month_data in all_deliveries_ref.items():
+                if isinstance(month_data, dict):
+                    for d_id, d in month_data.items():
+                        if isinstance(d, dict) and d.get('order_id'):
+                            deliveries_map[d.get('order_id')] = d
         
         try:
             debt_formatted = f"{int(current_debt):,}".replace(",", " ")
         except Exception:
             debt_formatted = str(current_debt)
         
-        report_header = f"👤 **Mijoz:** {client_name}\n"
-        report_header += f"💳 **Joriy qarzi:** {debt_formatted} so'm\n\n"
-        report_header += "📦 **Olingan mebellar tarixi:**\n"
+        # Buyurtmalarni ajratish: tayyorlanmoqda va yetkazilgan
+        pending_orders = []  # Hali olib ketilmagan
+        delivered_orders = []  # Olib ketilgan
         
-        order_items = []
         if orders_ref:
-            # Handle both dict and list from Firebase
             if isinstance(orders_ref, dict):
                 items = list(orders_ref.items())
             else:
                 items = [(i, o) for i, o in enumerate(orders_ref) if o is not None]
-
-            # Sort orders by date (most recent first)
-            def get_order_date(x):
-                if not isinstance(x[1], dict): return ""
-                val = x[1].get('created_at')
-                return str(val) if val else ""
-
-            sorted_orders = sorted(items, key=get_order_date, reverse=True)
             
             search_name = client_name.strip().lower()
-            for o_id, o in sorted_orders:
+            for o_id, o in items:
                 if isinstance(o, dict):
                     o_client_val = o.get('client_name') or o.get('client') or ''
                     o_client = str(o_client_val).strip().lower()
                     
                     if o_client == search_name:
-                        created_at = o.get('created_at') or "Noma'lum"
-                        c_date = format_date(created_at)
                         status = o.get('status') or "Noma'lum"
-                        delivered_at = o.get('delivered_at') or ''
+                        product_id = o.get('product_id', '-')
+                        amount = o.get('amount', '1')
                         
-                        if not delivered_at and deliveries_ref:
-                            if isinstance(deliveries_ref, dict):
-                                for d_id, d in deliveries_ref.items():
-                                    if isinstance(d, dict) and d.get('order_id') == o_id:
-                                        delivered_at = d.get('timestamp') or ''
-                                        break
+                        # Mebel narxini olish
+                        price_text = ""
+                        p_id_key = str(product_id).replace(" ", "").replace("-", "").upper()
+                        if mebellar_ref and isinstance(mebellar_ref, dict) and p_id_key in mebellar_ref:
+                            mebel = mebellar_ref[p_id_key]
+                            if isinstance(mebel, dict) and mebel.get('narxi'):
+                                price_text = str(mebel.get('narxi'))
                         
-                        d_date = format_date(delivered_at) if delivered_at else ''
-                        date_info = f"📅 {c_date}"
-                        if d_date:
-                            date_info += f" ✅ {d_date}"
-                        
-                        # Strip chars that break Markdown from product ID
-                        safe_pid = str(o.get('product_id', '-')).replace('`', '').replace('*', '')
-                        item = f"▪️ {safe_pid} — {o.get('amount')} ta ({status})\n"
-                        item += f"   {date_info}\n"
-                        order_items.append(item)
+                        if status in ['Tayyorlanmoqda', "Tayyor bo'ldi"]:
+                            due_date = format_date(o.get('due_date', ''))
+                            pending_orders.append({
+                                'o_id': o_id,
+                                'product_id': product_id,
+                                'amount': amount,
+                                'status': status,
+                                'due_date': due_date,
+                                'price': price_text,
+                                'comment': o.get('comment', ''),
+                                'created_at': o.get('created_at', '')
+                            })
+                        else:
+                            # Yetkazilgan buyurtma
+                            delivered_at = o.get('delivered_at', '')
+                            driver = o.get('driver', '')
+                            delivery_price = o.get('delivery_price', '')
+                            
+                            # Delivery ma'lumotlarini delivery_map dan olish
+                            if str(o_id) in deliveries_map:
+                                d_data = deliveries_map[str(o_id)]
+                                if not delivered_at:
+                                    delivered_at = d_data.get('timestamp', '')
+                                if not driver:
+                                    driver = d_data.get('driver', '')
+                                if not delivery_price:
+                                    delivery_price = d_data.get('price', '')
+                            
+                            d_date = format_date(delivered_at) if delivered_at else ''
+                            
+                            # Status text
+                            if driver == "O'zi olib ketdi":
+                                status_text = "Mijozni o'zi olib ketdi"
+                            elif driver:
+                                status_text = f"Yetkazildi ({driver})"
+                            else:
+                                status_text = status
+                            
+                            delivered_orders.append({
+                                'o_id': o_id,
+                                'product_id': product_id,
+                                'amount': amount,
+                                'status_text': status_text,
+                                'delivered_at': d_date,
+                                'price': price_text,
+                                'delivery_price': delivery_price,
+                                'created_at': o.get('created_at', '')
+                            })
         
-        total_count = len(order_items)
-        # Limit to 50 most recent orders
-        displayed_items = order_items[:50]
+        # Delivered orders ni sanasi bo'yicha saralash (oxirgi birinchi)
+        def get_sort_date(item):
+            try:
+                if item.get('delivered_at'):
+                    return datetime.strptime(item['delivered_at'], "%d.%m.%Y")
+                elif item.get('created_at'):
+                    return datetime.strptime(str(item['created_at']).split(' ')[0], "%Y-%m-%d")
+            except:
+                pass
+            return datetime.min
         
-        if total_count == 0:
-            report_header += "Hech qanday mebel olinmagan.\n"
-        elif total_count > 50:
-            report_header += f"_(Jami {total_count} ta buyurtma — oxirgi 50 tasi ko'rsatilmoqda)_\n"
+        delivered_orders.sort(key=get_sort_date, reverse=True)
+        
+        # Hisobot tayyorlash
+        report = f"👤 Mijoz: {client_name}\n"
+        report += f"💳 Joriy qarzi: {debt_formatted} 💰\n\n"
+        
+        # 1. Olib ketilmagan (tayyorlanmoqda) mebellar
+        if pending_orders:
+            report += "⏳Buyurtma berilgan, lekin olib ketilmagan mebellar ro'yxati:\n"
+            for po in pending_orders:
+                safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
+                status_label = "Tayyor" if po['status'] == "Tayyor bo'ldi" else "Tayyorlanmoqda"
+                report += f"▪️ {safe_pid} — {po['amount']} ta ({status_label})\n"
+                report += f"   📅 {po['due_date']}\n"
+                if po['price']:
+                    report += f"   {po['price']}💰\n"
+                if po.get('comment') and str(po.get('comment')).lower() != 'yoq':
+                    report += f"   📝 {po['comment']}\n"
+            report += "\n"
+        
+        # 2. Olingan mebellar tarixi
+        report += "📦 Olingan mebellar tarixi:\n"
+        if delivered_orders:
+            displayed = delivered_orders[:50]
+            if len(delivered_orders) > 50:
+                report += f"_(Jami {len(delivered_orders)} ta — oxirgi 50 tasi ko'rsatilmoqda)_\n"
+            
+            for do in displayed:
+                safe_pid = str(do['product_id']).replace('`', '').replace('*', '')
+                report += f"▪️ {safe_pid} — {do['amount']} ta ({do['status_text']}) 🚛 {do['delivered_at']}\n"
+                if do['price']:
+                    report += f"   {do['price']}💰\n"
+        else:
+            report += "Hech qanday mebel olinmagan.\n"
         
         markup = types.ReplyKeyboardMarkup(
             keyboard=[
@@ -893,16 +965,15 @@ async def show_client_report(message: types.Message, state: FSMContext):
             resize_keyboard=True
         )
         
-        # Build message chunks (max 3800 chars each)
-        all_parts = [report_header] + displayed_items
-        current_msg = ""
+        # Xabarni bo'laklarga bo'lib yuborish
         chunks = []
-        for part in all_parts:
-            if len(current_msg) + len(part) > 3800:
+        current_msg = ""
+        for line in report.split("\n"):
+            if len(current_msg) + len(line) + 1 > 3800:
                 chunks.append(current_msg)
-                current_msg = part
+                current_msg = line + "\n"
             else:
-                current_msg += part
+                current_msg += line + "\n"
         if current_msg:
             chunks.append(current_msg)
         
@@ -915,11 +986,19 @@ async def show_client_report(message: types.Message, state: FSMContext):
                     reply_markup=markup if is_last else None
                 )
             except Exception:
-                # Fallback without Markdown if special chars break parser
                 await message.answer(
                     chunk,
                     reply_markup=markup if is_last else None
                 )
+        
+        # 💵 Dollar stikeri yuborish
+        try:
+            await bot.send_sticker(
+                chat_id=message.chat.id,
+                sticker="CAACAgIAAxkBAAEBjGRoJ3YXSZ4AAeJE5gVF2gJfdWpB8QACWAADr8ZRGvrHuZ6K-cGINgQ"
+            )
+        except Exception:
+            pass
         
         await state.clear()
         
