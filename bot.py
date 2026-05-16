@@ -1065,48 +1065,152 @@ async def notify_warehouse(order_data, order_id):
                 print(f"Xodimga xabar yuborishda xatolik: {e}")
 
 # Kunlik eslatma yuborish funksiyasi
-async def send_daily_reminders():
+def parse_order_date(date_str):
+    """Buyurtma sanasini datetime obyektiga o'girish"""
+    if not date_str:
+        return None
+    try:
+        if '.' in str(date_str):
+            return datetime.strptime(str(date_str), "%d.%m.%Y")
+        elif '-' in str(date_str):
+            if ' ' in str(date_str):
+                return datetime.strptime(str(date_str).split(' ')[0], "%Y-%m-%d")
+            return datetime.strptime(str(date_str), "%Y-%m-%d")
+    except:
+        return None
+    return None
+
+async def get_notifiable_users():
+    """Xabar yuboriladigan foydalanuvchilar ro'yxatini olish (omborchi va xodimlar)"""
+    users_to_notify = set(['883589794'])  # Asosiy omborchi
+    for uid in ['6298036669', '1349256808', '7062569902', '7941658592', '1724350130', '698145797', '5063420475']:
+        users_to_notify.add(uid)
+    
+    users_ref = await asyncio.to_thread(db.reference('users').get)
+    if users_ref:
+        for uid, udata in users_ref.items():
+            if isinstance(udata, dict) and udata.get('role') in ['admin', 'omborchi', 'ishchi', 'xodim']:
+                users_to_notify.add(str(uid))
+    return users_to_notify
+
+async def send_notification(msg):
+    """Xabarni barcha omborchi va xodimlarga yuborish"""
+    users_to_notify = await get_notifiable_users()
+    for user_id in users_to_notify:
+        try:
+            await bot.send_message(chat_id=int(user_id), text=msg, parse_mode="Markdown")
+        except Exception as e:
+            logging.error(f"Error sending reminder to {user_id}: {e}")
+
+async def send_morning_reminder():
+    """9:00 - Bugungacha bo'lgan barcha faol zakazlar"""
     now_uz = datetime.now(TASHKENT_TZ)
+    today = now_uz.replace(hour=0, minute=0, second=0, microsecond=0)
     today_str = now_uz.strftime("%d.%m.%Y")
     
     orders_ref = await asyncio.to_thread(db.reference('orders').get)
     if not orders_ref:
         return
     
-    today_orders = []
+    overdue_orders = []
     for o_id, o in orders_ref.items():
-        if isinstance(o, dict) and format_date(o.get('due_date', '')) == today_str and o.get('status') == 'Tayyorlanmoqda':
-            today_orders.append(o)
-            
-    if not today_orders:
-        return
-
-    msg = f"🔴 🔴 🔴 **BUGUN YETKAZISHIMIZ KERAK:** 🔴 🔴 🔴\n\n"
-    msg += f"🚚 **Bugungi kungi buyurtmalar ro'yxati ({today_str}):**\n\n"
-    msg += "Mijozga bugun mana shu modellarni yetkazib berishimiz kerak:\n\n"
+        if isinstance(o, dict) and o.get('status') == 'Tayyorlanmoqda':
+            due = parse_order_date(o.get('due_date', ''))
+            if due and due <= today:
+                overdue_orders.append((o_id, o, due))
     
-    for i, o in enumerate(today_orders, 1):
+    if not overdue_orders:
+        return
+    
+    overdue_orders.sort(key=lambda x: x[2])
+    
+    msg = f"🔔 **ERTALABKI ESLATMA** ({today_str})\n\n"
+    msg += f"📋 Bugungacha tayyor bo'lishi kerak bo'lgan zakazlar:\n\n"
+    
+    for i, (o_id, o, due) in enumerate(overdue_orders, 1):
+        due_formatted = format_date(o.get('due_date', ''))
+        msg += f"{i}. 👤 **{o.get('client_name')}** - 📦 {o.get('product_id')} ({o.get('amount')} ta)\n"
+        msg += f"   📅 Muddat: {due_formatted}\n"
+        if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
+            msg += f"   📝 Izoh: {o.get('comment')}\n"
+        msg += "\n"
+    
+    await send_notification(msg)
+
+async def send_overdue_reminder():
+    """15:00 - Bugungacha berib ulgurmagan mebellar ro'yxati"""
+    now_uz = datetime.now(TASHKENT_TZ)
+    today = now_uz.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_str = now_uz.strftime("%d.%m.%Y")
+    
+    orders_ref = await asyncio.to_thread(db.reference('orders').get)
+    if not orders_ref:
+        return
+    
+    overdue_orders = []
+    for o_id, o in orders_ref.items():
+        if isinstance(o, dict) and o.get('status') == 'Tayyorlanmoqda':
+            due = parse_order_date(o.get('due_date', ''))
+            if due and due <= today:
+                overdue_orders.append((o_id, o, due))
+    
+    if not overdue_orders:
+        return
+    
+    overdue_orders.sort(key=lambda x: x[2])
+    
+    msg = f"🔴 🔴 🔴 **DIQQAT! BUGUNGACHA YETKAZILMAGAN ZAKAZLAR** 🔴 🔴 🔴\n\n"
+    msg += f"📅 Bugun: {today_str}\n\n"
+    msg += "Quyidagi mebellarni tayyorlab berishimiz kerak:\n\n"
+    
+    for i, (o_id, o, due) in enumerate(overdue_orders, 1):
+        due_formatted = format_date(o.get('due_date', ''))
+        msg += f"{i}. 👤 **{o.get('client_name')}** - 📦 {o.get('product_id')} ({o.get('amount')} ta)\n"
+        msg += f"   📅 Muddat: {due_formatted}\n"
+        if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
+            msg += f"   📝 Izoh: {o.get('comment')}\n"
+        msg += "\n"
+    
+    await send_notification(msg)
+
+async def send_tomorrow_reminder():
+    """15:05 - Ertangi zakazlar ro'yxati"""
+    now_uz = datetime.now(TASHKENT_TZ)
+    tomorrow = (now_uz + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_str = (now_uz + timedelta(days=1)).strftime("%d.%m.%Y")
+    
+    orders_ref = await asyncio.to_thread(db.reference('orders').get)
+    if not orders_ref:
+        return
+    
+    tomorrow_orders = []
+    for o_id, o in orders_ref.items():
+        if isinstance(o, dict) and o.get('status') == 'Tayyorlanmoqda':
+            due = parse_order_date(o.get('due_date', ''))
+            if due and due.year == tomorrow.year and due.month == tomorrow.month and due.day == tomorrow.day:
+                tomorrow_orders.append((o_id, o))
+    
+    if not tomorrow_orders:
+        return
+    
+    msg = f"📢 **ERTANGI ZAKAZLAR** ({tomorrow_str})\n\n"
+    msg += f"Ertaga yetkazishimiz kerak bo'lgan mebellar:\n\n"
+    
+    for i, (o_id, o) in enumerate(tomorrow_orders, 1):
         msg += f"{i}. 👤 **{o.get('client_name')}** - 📦 {o.get('product_id')} ({o.get('amount')} ta)\n"
         if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
             msg += f"   📝 Izoh: {o.get('comment')}\n"
         msg += "\n"
+    
+    await send_notification(msg)
 
-    # Xabar yuboriladigan foydalanuvchilar (hardcoded va DB dagi xodimlar)
-    users_to_notify = set(['883589794']) # Asosiy omborchi
-    for uid in ['6298036669', '1349256808', '7062569902', '7941658592', '1724350130', '698145797', '5063420475']:
-        users_to_notify.add(uid)
-        
-    users_ref = await asyncio.to_thread(db.reference('users').get)
-    if users_ref:
-        for uid, udata in users_ref.items():
-            if isinstance(udata, dict) and udata.get('role') in ['admin', 'omborchi', 'ishchi', 'xodim']:
-                users_to_notify.add(str(uid))
-                
-    for user_id in users_to_notify:
-        try:
-            await bot.send_message(chat_id=int(user_id), text=msg, parse_mode="Markdown")
-        except Exception as e:
-            logging.error(f"Error sending daily reminder to {user_id}: {e}")
+async def send_daily_reminders():
+    """Test uchun barcha eslatmalarni bir vaqtda yuborish"""
+    await send_morning_reminder()
+    await asyncio.sleep(2)
+    await send_overdue_reminder()
+    await asyncio.sleep(2)
+    await send_tomorrow_reminder()
 
 # --- XODIM: FAOL BUYURTMALAR ---
 @dp.message(F.text == "🔨 Faol buyurtmalar")
@@ -2540,18 +2644,37 @@ async def keep_awake():
             pass
 
 async def daily_reminder_task():
+    """Kuniga 3 marta eslatma yuborish: 9:00, 15:00, 15:05"""
     while True:
         now = datetime.now(TASHKENT_TZ)
-        # Soat 09:00 ga rejalashtirish
-        target = now.replace(hour=9, minute=0, second=0, microsecond=0)
-        if now >= target:
-            target += timedelta(days=1)
-            
-        sleep_seconds = (target - now).total_seconds()
+        
+        # Bugungi uchta vaqtni hisoblash
+        schedule = [
+            (now.replace(hour=9, minute=0, second=0, microsecond=0), send_morning_reminder),
+            (now.replace(hour=15, minute=0, second=0, microsecond=0), send_overdue_reminder),
+            (now.replace(hour=15, minute=5, second=0, microsecond=0), send_tomorrow_reminder),
+        ]
+        
+        # Navbatdagi eng yaqin vaqtni topish
+        next_target = None
+        next_func = None
+        for target_time, func in schedule:
+            if now < target_time:
+                next_target = target_time
+                next_func = func
+                break
+        
+        # Agar bugungi barcha vaqtlar o'tgan bo'lsa, ertangi 9:00 ga o'tish
+        if next_target is None:
+            next_target = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+            next_func = send_morning_reminder
+        
+        sleep_seconds = (next_target - now).total_seconds()
+        logging.info(f"Keyingi eslatma: {next_target.strftime('%H:%M')} da ({sleep_seconds:.0f} sekund qoldi)")
         await asyncio.sleep(sleep_seconds)
         
         try:
-            await send_daily_reminders()
+            await next_func()
         except Exception as e:
             logging.error(f"Daily reminder task error: {e}")
 
