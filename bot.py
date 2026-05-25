@@ -1201,7 +1201,7 @@ async def build_undelivered_msg(header: str, today_str: str) -> str | None:
         if status in DONE_STATUSES:
             continue
         due = parse_order_date(o.get('due_date', ''))
-        if due and due <= today:
+        if due and due.date() <= today.date():
             overdue.append((o_id, o, due))
 
     if not overdue:
@@ -2726,41 +2726,45 @@ async def daily_reminder_task():
     Har ikkala vaqtda ham shu kungacha yetkazilmagan mebellar ro'yxati yuboriladi.
     Qo'shimcha: 15:05 da ertangi zakazlar ham yuboriladi.
     """
+    last_sent = {
+        'morning': None,
+        'overdue': None,
+        'tomorrow': None
+    }
+
     while True:
         now = datetime.now(TASHKENT_TZ)
+        today_str = now.strftime("%Y-%m-%d")
 
-        # Bugungi jadval (vaqt o'sish tartibida)
-        schedule = [
-            (now.replace(hour=9,  minute=0,  second=0, microsecond=0), send_morning_reminder),
-            (now.replace(hour=15, minute=0,  second=0, microsecond=0), send_overdue_reminder),
-            (now.replace(hour=15, minute=5,  second=0, microsecond=0), send_tomorrow_reminder),
-        ]
+        # 09:00 dan 10:00 gacha oraliqda yuborish (agar server o'chib yongan bo'lsa)
+        if 9 <= now.hour < 10 and last_sent['morning'] != today_str:
+            try:
+                await send_morning_reminder()
+                last_sent['morning'] = today_str
+                logging.info("[Scheduler] Morning reminder sent.")
+            except Exception as e:
+                logging.error(f"[Scheduler] Morning xato: {e}")
 
-        # Navbatdagi kelayotgan vaqtni topish
-        next_target = None
-        next_func   = None
-        for target_time, func in schedule:
-            if now < target_time:
-                next_target = target_time
-                next_func   = func
-                break
+        # 15:00 dan 16:00 gacha
+        if 15 <= now.hour < 16 and last_sent['overdue'] != today_str:
+            try:
+                await send_overdue_reminder()
+                last_sent['overdue'] = today_str
+                logging.info("[Scheduler] Overdue reminder sent.")
+            except Exception as e:
+                logging.error(f"[Scheduler] Overdue xato: {e}")
 
-        # Bugungi barcha vaqtlar o'tgan bo'lsa → ertangi 09:00 ga o'tish
-        if next_target is None:
-            next_target = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
-            next_func   = send_morning_reminder
+        # 15:05 dan keyin ertangi zakazlar
+        if 15 <= now.hour < 16 and now.minute >= 5 and last_sent['tomorrow'] != today_str:
+            try:
+                await send_tomorrow_reminder()
+                last_sent['tomorrow'] = today_str
+                logging.info("[Scheduler] Tomorrow reminder sent.")
+            except Exception as e:
+                logging.error(f"[Scheduler] Tomorrow xato: {e}")
 
-        sleep_seconds = (next_target - now).total_seconds()
-        logging.info(
-            f"[Scheduler] Keyingi eslatma: {next_target.strftime('%d.%m.%Y %H:%M')} "
-            f"({sleep_seconds/3600:.1f} soat qoldi)"
-        )
-        await asyncio.sleep(sleep_seconds)
-
-        try:
-            await next_func()
-        except Exception as e:
-            logging.error(f"[Scheduler] Eslatma yuborishda xatolik: {e}")
+        # Har 1 daqiqada tekshirish (uzoq sleep server o'chishida yo'qolmasligi uchun)
+        await asyncio.sleep(60)
 
 async def daily_backup_task():
     import json
