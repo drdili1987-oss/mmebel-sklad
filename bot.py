@@ -60,7 +60,7 @@ def get_clients_keyboard():
         if i+1 < len(REGULAR_CLIENTS):
             row.append(types.KeyboardButton(text=REGULAR_CLIENTS[i+1]))
         buttons.append(row)
-    buttons.append([types.KeyboardButton(text="Boshqa (Yangi mijoz)")])
+    buttons.append([types.KeyboardButton(text="Boshqa (Yangi diller)")])
     buttons.append([types.KeyboardButton(text="Bosh menyu")])
     return types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
@@ -211,7 +211,7 @@ def main_menu(role):
     if role == 'admin':
         buttons = [
             [types.KeyboardButton(text="📦 Mavjud mebellar"), types.KeyboardButton(text="📝 Yangi buyurtma")],
-            [types.KeyboardButton(text="📋 Buyurtmalar nazorati"), types.KeyboardButton(text="📊 Mijozlar hisoboti")],
+            [types.KeyboardButton(text="📋 Buyurtmalar nazorati"), types.KeyboardButton(text="📊 Hisob kitoblar")],
             [types.KeyboardButton(text="🚚 Haydovchilar hisoboti")],
             [types.KeyboardButton(text="🕰 Yetkazish tarixi"), types.KeyboardButton(text="📈 Sotuv statistikasi")]
         ]
@@ -238,7 +238,7 @@ def main_menu(role):
 # --- BOSH MENYU / BEKOR QILISH ---
 MAIN_MENU_BUTTONS = {
     "Bosh menyu", "➕ Yangi mebel", "📦 Mavjud mebellar", 
-    "📝 Yangi buyurtma", "📋 Buyurtmalar nazorati", "📊 Mijozlar hisoboti", "🚚 Haydovchilar hisoboti", "🕰 Yetkazish tarixi", "📈 Sotuv statistikasi",
+    "📝 Yangi buyurtma", "📋 Buyurtmalar nazorati", "📊 Hisob kitoblar", "🚚 Haydovchilar hisoboti", "🕰 Yetkazish tarixi", "📈 Sotuv statistikasi",
     "🔄 Omborni yangilash", "🚚 Yetkazishlar nazorati", "📊 Dostavka hisoboti", "🔨 Faol buyurtmalar", "🛍 Sotuvdagi mebellar",
     "📦 Ombor sonini yangilash", "📝 Zakaz berish"
 }
@@ -651,7 +651,7 @@ async def diller_order_phone(message: types.Message, state: FSMContext):
 @dp.message(F.text == "📝 Yangi buyurtma")
 async def new_order_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'admin':
-        await message.answer("Mijozni tanlang yoki 'Boshqa' ni bosing:", reply_markup=get_clients_keyboard())
+        await message.answer("Dillerni tanlang yoki 'Boshqa' ni bosing:", reply_markup=get_clients_keyboard())
         await state.set_state(OrderState.client)
 
 @dp.message(OrderState.client)
@@ -662,8 +662,8 @@ async def process_client(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    if message.text == "Boshqa (Yangi mijoz)":
-        await message.answer("Yangi mijoz ismini kiriting:", reply_markup=types.ReplyKeyboardRemove())
+    if message.text == "Boshqa (Yangi diller)":
+        await message.answer("Yangi diller ismini kiriting:", reply_markup=types.ReplyKeyboardRemove())
         await state.set_state(OrderState.custom_client)
         return
 
@@ -792,10 +792,10 @@ async def process_comment(message: types.Message, state: FSMContext):
 class ReportState(StatesGroup):
     select_client = State()
 
-@dp.message(F.text == "📊 Mijozlar hisoboti")
+@dp.message(F.text == "📊 Hisob kitoblar")
 async def report_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'admin':
-        await message.answer("Qaysi mijozning hisobotini ko'rmoqchisiz?", reply_markup=get_clients_keyboard())
+        await message.answer("Qaysi dillerning hisobotini ko'rmoqchisiz?", reply_markup=get_clients_keyboard())
         await state.set_state(ReportState.select_client)
 
 @dp.message(ReportState.select_client)
@@ -807,8 +807,8 @@ async def show_client_report(message: types.Message, state: FSMContext):
         return
         
     client_name = message.text
-    if client_name == "Boshqa (Yangi mijoz)":
-        await message.answer("Faqat doimiy mijozlar hisoboti mavjud.")
+    if client_name == "Boshqa (Yangi diller)":
+        await message.answer("Faqat doimiy dillerlar hisoboti mavjud.")
         return
 
     try:
@@ -895,7 +895,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
                             
                             # Status text
                             if driver == "O'zi olib ketdi":
-                                status_text = "Mijozni o'zi olib ketdi"
+                                status_text = "Dillerni o'zi olib ketdi"
                             elif driver:
                                 status_text = f"Yetkazildi ({driver})"
                             else:
@@ -940,7 +940,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
         delivered_orders.sort(key=get_sort_date, reverse=False)
         
         # Hisobot tayyorlash
-        report = f"👤 Mijoz: {client_name}\n"
+        report = f"🧑 Diller: {client_name}\n"
         report += f"💳 Joriy qarzi: {debt_formatted} 💰\n\n"
         
         # 1. Olib ketilmagan (tayyorlanmoqda) mebellar
@@ -1134,7 +1134,7 @@ async def notify_warehouse(order_data, order_id):
         await bot.send_message(
             883589794,
             f"🔔 Yangi buyurtma!\n\n"
-            f"🧑 Mijoz: {order_data['client']}\n"
+            f"🧑 Diller: {order_data['client']}\n"
             f"📦 Mebel: {order_data['product_id']}\n"
             f"📊 Soni: {order_data['amount']}\n"
             f"📅 Muddat: {order_data['due_date']}\n"
@@ -1152,7 +1152,7 @@ async def notify_warehouse(order_data, order_id):
                 await bot.send_message(
                     int(user_id),
                     f"🔔 Yangi buyurtma!\n\n"
-                    f"🧑 Mijoz: {order_data['client']}\n"
+                    f"🧑 Diller: {order_data['client']}\n"
                     f"📦 Mebel: {order_data['product_id']}\n"
                     f"📊 Soni: {order_data['amount']}\n"
                     f"📅 Muddat: {order_data['due_date']}\n"
@@ -1217,7 +1217,7 @@ async def send_notification(msg):
 async def build_undelivered_msg(header: str, today_str: str) -> str | None:
     """Shu kungacha yetkazilmagan barcha mebellar ro'yxatini tayyorlash"""
     ACTIVE_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi'}
-    DONE_STATUSES   = {"Biz yetkazib berdik", "Mijozni o'zi olib ketdi", 'Bekor qilindi'}
+    DONE_STATUSES   = {"Biz yetkazib berdik", "Dillerni o'zi olib ketdi", 'Bekor qilindi'}
 
     orders_ref = await asyncio.to_thread(db.reference('orders').get)
     if not orders_ref:
@@ -1445,7 +1445,7 @@ async def delivery_report(message: types.Message, state: FSMContext):
                 if isinstance(o, dict):
                     order_month = o.get('month', '')
                     order_status = o.get('status', '')
-                    if order_month == selected_month and order_status in ["Biz yetkazib berdik", "Mijozni o'zi olib ketdi"]:
+                    if order_month == selected_month and order_status in ["Biz yetkazib berdik", "Dillerni o'zi olib ketdi"]:
                         completed_orders.append((o_id, o))
 
         # Combine deliveries and completed orders
@@ -1826,7 +1826,7 @@ async def delivery_order_id(message: types.Message, state: FSMContext):
     markup = types.ReplyKeyboardMarkup(
         keyboard=[
             [types.KeyboardButton(text="Tayyor bo'ldi"), types.KeyboardButton(text="Biz yetkazib berdik")],
-            [types.KeyboardButton(text="Mijozni o'zi olib ketdi"), types.KeyboardButton(text="Bekor qilindi")],
+            [types.KeyboardButton(text="Dillerni o'zi olib ketdi"), types.KeyboardButton(text="Bekor qilindi")],
             [types.KeyboardButton(text="Bosh menyu")]
         ],
         resize_keyboard=True
@@ -1880,7 +1880,7 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    elif new_status == "Mijozni o'zi olib ketdi":
+    elif new_status == "Dillerni o'zi olib ketdi":
         await state.update_data(new_status=new_status, driver="O'zi olib ketdi")
         markup = types.ReplyKeyboardMarkup(
             keyboard=[
@@ -2018,6 +2018,8 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
     # Save delivery report
     current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
     timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    # Buyurtma izohini ham saqlash
+    order_comment = order_ref.get('comment', '') if order_ref else ''
     delivery_record = {
         'order_id': order_id,
         'client': client,
@@ -2025,7 +2027,8 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
         'price': price,
         'product_id': product_id,
         'amount': amount,
-        'timestamp': timestamp
+        'timestamp': timestamp,
+        'comment': order_comment
     }
     await asyncio.to_thread(db.reference(f"deliveries/{current_month}").push, delivery_record)
 
@@ -2108,7 +2111,7 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
             try:
                 await bot.send_message(
                     int(user_id),
-                    f"📦 **Buyurtma holati o'zgardi!**\n\n🆔 ID: `{order_id}`\n🧑 Mijoz: {client}\n📌 Yangi holat: {new_status}\n🚚 Haydovchi: {driver}\n💵 Narxi: {price}",
+                    f"📦 **Buyurtma holati o'zgardi!**\n\n🆔 ID: `{order_id}`\n🧑 Diller: {client}\n📌 Yangi holat: {new_status}\n🚚 Haydovchi: {driver}\n💵 Narxi: {price}",
                     parse_mode="Markdown"
                 )
             except Exception:
@@ -2341,7 +2344,7 @@ async def show_delivery_history(message: types.Message, state: FSMContext):
         else:
             items = []
             
-        items.reverse() # Oxirgisi tepada
+        # Xronologik tartib: eskisi tepada (reverse qilmaymiz)
 
         history_header = f"🕰 **{month} oyi yetkazib berish tarixi:**\n\n"
         history_items = []
@@ -2354,11 +2357,14 @@ async def show_delivery_history(message: types.Message, state: FSMContext):
                 a_str = d.get('amount', '1')
                 dr_str = d.get('driver', "Noma'lum")
                 pr_str = d.get('price', '0')
+                comment_str = d.get('comment', '')
                 
                 item_text = f"📅 Vaqt: {t_str}\n"
-                item_text += f"🧑 Mijoz: {c_str}\n"
+                item_text += f"🧑 Diller: {c_str}\n"
                 item_text += f"📦 Mebel: {p_str} ({a_str} ta)\n"
                 item_text += f"🚚 Dostavchik: {dr_str} ({pr_str})\n"
+                if comment_str and str(comment_str).lower() not in ['', 'yoq']:
+                    item_text += f"📝 Izoh: {comment_str}\n"
                 item_text += "------------------------"
                 history_items.append(item_text)
                 
@@ -2554,7 +2560,7 @@ async def admin_order_selected(message: types.Message, state: FSMContext):
     await state.update_data(order_id=order_id)
     
     info = f"🆔 Buyurtma: `{order_id}`\n"
-    info += f"🧑 Mijoz: {order_ref.get('client_name')}\n"
+    info += f"🧑 Diller: {order_ref.get('client_name')}\n"
     info += f"📦 Mebel: {order_ref.get('product_id')}\n"
     info += f"📊 Soni: {order_ref.get('amount')} ta\n"
     info += f"📅 Muddat: {format_date(order_ref.get('due_date', ''))}\n"
@@ -2638,13 +2644,13 @@ async def admin_order_action(message: types.Message, state: FSMContext):
                 try:
                     await bot.send_message(
                         int(user_id),
-                        f"⚠️ Buyurtma bekor qilindi!\n🆔 ID: {order_id}\n📦 Mebel: {order_ref.get('product_id')}\n🧑 Mijoz: {order_ref.get('client_name')}"
+                        f"⚠️ Buyurtma bekor qilindi!\n🆔 ID: {order_id}\n📦 Mebel: {order_ref.get('product_id')}\n🧑 Diller: {order_ref.get('client_name')}"
                     )
                 except:
                     pass
         # Hardcoded omborchi
         try:
-            await bot.send_message(883589794, f"⚠️ Buyurtma bekor qilindi!\n🆔 ID: {order_id}\n📦 Mebel: {order_ref.get('product_id')}\n🧑 Mijoz: {order_ref.get('client_name')}")
+            await bot.send_message(883589794, f"⚠️ Buyurtma bekor qilindi!\n🆔 ID: {order_id}\n📦 Mebel: {order_ref.get('product_id')}\n🧑 Diller: {order_ref.get('client_name')}")
         except:
             pass
         
@@ -2767,12 +2773,12 @@ async def admin_order_new_value(message: types.Message, state: FSMContext):
             try:
                 await bot.send_message(
                     int(user_id),
-                    f"✏️ Buyurtma o'zgartirildi!\n🆔 ID: {order_id}\n📦 {order_ref.get('product_id')}\n🧑 Mijoz: {order_ref.get('client_name')}\n🔄 {field_names.get(field, field)}: {new_value}"
+                    f"✏️ Buyurtma o'zgartirildi!\n🆔 ID: {order_id}\n📦 {order_ref.get('product_id')}\n🧑 Diller: {order_ref.get('client_name')}\n🔄 {field_names.get(field, field)}: {new_value}"
                 )
             except:
                 pass
     try:
-        await bot.send_message(883589794, f"✏️ Buyurtma o'zgartirildi!\n🆔 ID: {order_id}\n📦 {order_ref.get('product_id')}\n🧑 Mijoz: {order_ref.get('client_name')}\n🔄 {field_names.get(field, field)}: {new_value}")
+        await bot.send_message(883589794, f"✏️ Buyurtma o'zgartirildi!\n🆔 ID: {order_id}\n📦 {order_ref.get('product_id')}\n🧑 Diller: {order_ref.get('client_name')}\n🔄 {field_names.get(field, field)}: {new_value}")
     except:
         pass
     
