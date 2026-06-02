@@ -581,6 +581,16 @@ async def diller_order_phone(message: types.Message, state: FSMContext):
         new_qty = max(0, current_qty - amount)
         await asyncio.to_thread(db.reference(f'mebellar/{product_id}').update, {'soni': new_qty})
 
+    # Fetch price to store in order
+    price_val = 0
+    if mebel_ref and 'narxi' in mebel_ref:
+        price_str = str(mebel_ref['narxi']).replace("so'm", "").replace("$", "").replace(" ", "")
+        try:
+            price_val = int(price_str)
+        except:
+            price_val = 0
+    total_price = price_val * int(amount)
+
     # Firebase'ga yozish
     await asyncio.to_thread(
         db.reference(f'orders/{order_id}').set,
@@ -596,7 +606,9 @@ async def diller_order_phone(message: types.Message, state: FSMContext):
             'status':      'Tayyorlanmoqda',
             'created_at':  now_str,
             'month':       month,
-            'source':      'diller'
+            'source':      'diller',
+            'price':       price_val,
+            'total_price': total_price
         }
     )
 
@@ -744,17 +756,6 @@ async def process_comment(message: types.Message, state: FSMContext):
 
     total_price = price_val * amount
     
-    # Mijoz qarzini hisoblash va tarixga yozish
-    if total_price > 0:
-        debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
-        current_debt = int(debt_ref) if debt_ref else 0
-        new_debt = current_debt + total_price
-        await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
-        
-        timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
-        record = {'type': 'Chiqim', 'amount': total_price, 'timestamp': timestamp, 'note': f"Buyurtma qildi: {product_id} ({amount} ta)"}
-        await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
-
     # Ombor qoldig'ini kamaytirish
     mebel_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
     if mebel_ref and 'soni' in mebel_ref:
@@ -774,7 +775,9 @@ async def process_comment(message: types.Message, state: FSMContext):
             'comment': comment,
             'status': 'Tayyorlanmoqda',
             'created_at': datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S"),
-            'month': datetime.now(TASHKENT_TZ).strftime("%Y-%m")
+            'month': datetime.now(TASHKENT_TZ).strftime("%Y-%m"),
+            'price': price_val,
+            'total_price': total_price
         }
     )
     
@@ -906,10 +909,24 @@ async def show_client_report(message: types.Message, state: FSMContext):
                                 'delivered_at': d_date,
                                 'price': price_text,
                                 'delivery_price': delivery_price,
-                                'created_at': o.get('created_at', '')
+                                'created_at': o.get('created_at', ''),
+                                'comment': o.get('comment', '')
                             })
         
-        # Delivered orders ni sanasi bo'yicha saralash (oxirgi birinchi)
+        # Pending orders ni sanasi bo'yicha saralash (eskisi tepada, yangisi pasda)
+        def get_pending_sort_date(item):
+            try:
+                if item.get('due_date') and item['due_date'] != "Noma'lum":
+                    return datetime.strptime(item['due_date'], "%d.%m.%Y")
+                elif item.get('created_at'):
+                    return datetime.strptime(str(item['created_at']).split(' ')[0], "%Y-%m-%d")
+            except:
+                pass
+            return datetime.min
+        
+        pending_orders.sort(key=get_pending_sort_date, reverse=False)
+
+        # Delivered orders ni sanasi bo'yicha saralash (eskisi tepada, yangisi pasda)
         def get_sort_date(item):
             try:
                 if item.get('delivered_at'):
@@ -920,7 +937,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
                 pass
             return datetime.min
         
-        delivered_orders.sort(key=get_sort_date, reverse=True)
+        delivered_orders.sort(key=get_sort_date, reverse=False)
         
         # Hisobot tayyorlash
         report = f"👤 Mijoz: {client_name}\n"
@@ -943,7 +960,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
         # 2. Olingan mebellar tarixi
         report += "📦 Olingan mebellar tarixi:\n"
         if delivered_orders:
-            displayed = delivered_orders[:50]
+            displayed = delivered_orders[-50:]
             if len(delivered_orders) > 50:
                 report += f"_(Jami {len(delivered_orders)} ta — oxirgi 50 tasi ko'rsatilmoqda)_\n"
             
@@ -952,6 +969,8 @@ async def show_client_report(message: types.Message, state: FSMContext):
                 report += f"▪️ {safe_pid} — {do['amount']} ta ({do['status_text']}) 🚛 {do['delivered_at']}\n"
                 if do['price']:
                     report += f"   {do['price']}💰\n"
+                if do.get('comment') and str(do.get('comment')).lower() != 'yoq':
+                    report += f"   📝 {do['comment']}\n"
         else:
             report += "Hech qanday mebel olinmagan.\n"
         
@@ -1175,11 +1194,25 @@ async def get_notifiable_users():
 async def send_notification(msg):
     """Xabarni barcha omborchi va xodimlarga yuborish"""
     users_to_notify = await get_notifiable_users()
+    
+    # Bo'laklarga bo'lish (max 3800 belgi)
+    chunks = []
+    current_msg = ""
+    for line in msg.split("\n"):
+        if len(current_msg) + len(line) + 1 > 3800:
+            chunks.append(current_msg)
+            current_msg = line + "\n"
+        else:
+            current_msg += line + "\n"
+    if current_msg:
+        chunks.append(current_msg)
+        
     for user_id in users_to_notify:
-        try:
-            await bot.send_message(chat_id=int(user_id), text=msg, parse_mode="Markdown")
-        except Exception as e:
-            logging.error(f"Error sending reminder to {user_id}: {e}")
+        for chunk in chunks:
+            try:
+                await bot.send_message(chat_id=int(user_id), text=chunk, parse_mode="Markdown")
+            except Exception as e:
+                logging.error(f"Error sending reminder to {user_id}: {e}")
 
 async def build_undelivered_msg(header: str, today_str: str) -> str | None:
     """Shu kungacha yetkazilmagan barcha mebellar ro'yxatini tayyorlash"""
@@ -1256,21 +1289,24 @@ async def send_tomorrow_reminder():
     tomorrow_str = (now_uz + timedelta(days=1)).strftime("%d.%m.%Y")
 
     orders_ref = await asyncio.to_thread(db.reference('orders').get)
-    if not orders_ref:
-        return
-
     ACTIVE_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi'}
     tomorrow_orders = []
-    for o_id, o in orders_ref.items():
-        if not isinstance(o, dict):
-            continue
-        if o.get('status', '') not in ACTIVE_STATUSES:
-            continue
-        due = parse_order_date(o.get('due_date', ''))
-        if due and due.date() == tomorrow.date():
-            tomorrow_orders.append((o_id, o))
+
+    if orders_ref:
+        for o_id, o in orders_ref.items():
+            if not isinstance(o, dict):
+                continue
+            if o.get('status', '') not in ACTIVE_STATUSES:
+                continue
+            due = parse_order_date(o.get('due_date', ''))
+            if due and due.date() == tomorrow.date():
+                tomorrow_orders.append((o_id, o))
 
     if not tomorrow_orders:
+        await send_notification(
+            f"📢 *ERTANGI ZAKAZLAR ({tomorrow_str})*\n\n"
+            f"✅ Ertaga yetkazilishi kerak bo'lgan zakazlar yo'q."
+        )
         return
 
     msg = f"📢 *ERTANGI ZAKAZLAR ({tomorrow_str})*\n"
@@ -1992,6 +2028,47 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
         'timestamp': timestamp
     }
     await asyncio.to_thread(db.reference(f"deliveries/{current_month}").push, delivery_record)
+
+    # Calculate and update client debt only when delivered or picked up
+    try:
+        try:
+            amount_int = int(amount)
+        except:
+            amount_int = 1
+
+        order_total_price = 0
+        if order_ref:
+            if 'total_price' in order_ref:
+                order_total_price = int(order_ref.get('total_price', 0))
+            elif 'price' in order_ref:
+                order_total_price = int(order_ref.get('price', 0)) * amount_int
+            else:
+                # Fallback to mebellar database if not present in order (for old orders)
+                mebel_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+                if mebel_ref and 'narxi' in mebel_ref:
+                    price_str = str(mebel_ref['narxi']).replace("so'm", "").replace("$", "").replace(" ", "")
+                    try:
+                        price_val = int(price_str)
+                        order_total_price = price_val * amount_int
+                    except:
+                        pass
+
+        if order_total_price > 0:
+            debt_ref = await asyncio.to_thread(db.reference(f'debts/{client}').get)
+            current_debt = int(debt_ref) if debt_ref else 0
+            new_debt = current_debt + order_total_price
+            await asyncio.to_thread(db.reference(f'debts/{client}').set, new_debt)
+            
+            # Tarixga yozish (Chiqim)
+            record = {
+                'type': 'Chiqim', 
+                'amount': order_total_price, 
+                'timestamp': timestamp, 
+                'note': f"Yetkazildi/Olib ketildi: {product_id} ({amount_int} ta) (Buyurtma: {order_id})"
+            }
+            await asyncio.to_thread(db.reference(f'transactions/clients/{client}').push, record)
+    except Exception as _de:
+        logging.warning(f"Qarz hisoblashda xatolik: {_de}")
     
     try:
         import re as _re
@@ -2710,6 +2787,39 @@ async def fallback_handler(message: types.Message, state: FSMContext):
 async def handle(request):
     return web.Response(text="Bot is running")
 
+async def handle_morning_cron(request):
+    token = request.query.get('token')
+    if not token or token != API_TOKEN:
+        return web.Response(text="Unauthorized", status=403)
+    try:
+        await send_morning_reminder()
+        return web.Response(text="Morning reminder triggered successfully")
+    except Exception as e:
+        logging.error(f"Cron morning error: {e}")
+        return web.Response(text=f"Error: {e}", status=500)
+
+async def handle_overdue_cron(request):
+    token = request.query.get('token')
+    if not token or token != API_TOKEN:
+        return web.Response(text="Unauthorized", status=403)
+    try:
+        await send_overdue_reminder()
+        return web.Response(text="Overdue reminder triggered successfully")
+    except Exception as e:
+        logging.error(f"Cron overdue error: {e}")
+        return web.Response(text=f"Error: {e}", status=500)
+
+async def handle_tomorrow_cron(request):
+    token = request.query.get('token')
+    if not token or token != API_TOKEN:
+        return web.Response(text="Unauthorized", status=403)
+    try:
+        await send_tomorrow_reminder()
+        return web.Response(text="Tomorrow reminder triggered successfully")
+    except Exception as e:
+        logging.error(f"Cron tomorrow error: {e}")
+        return web.Response(text=f"Error: {e}", status=500)
+
 async def keep_awake():
     url = "https://mmebel-bot.onrender.com"
     while True:
@@ -2819,6 +2929,9 @@ async def main():
     
     app = web.Application()
     app.router.add_get('/', handle)
+    app.router.add_get('/cron/morning', handle_morning_cron)
+    app.router.add_get('/cron/overdue', handle_overdue_cron)
+    app.router.add_get('/cron/tomorrow', handle_tomorrow_cron)
     
     # Webhook so'rovlarini qabul qiluvchi handler
     webhook_requests_handler = SimpleRequestHandler(
