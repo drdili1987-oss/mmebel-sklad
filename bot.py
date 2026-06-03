@@ -1479,6 +1479,10 @@ async def show_client_accounting_history(message, client_name):
         )
         return
     
+    # Narx fallback uchun orders va mebellar jadvallarini yuklab olish
+    orders_ref = await asyncio.to_thread(db.reference('orders').get)
+    mebellar_ref = await asyncio.to_thread(db.reference('mebellar').get)
+    
     header = f"📜 *{client_name} — Hisob kitob tarixi:*\n\n"
     items = []
     
@@ -1515,7 +1519,7 @@ async def show_client_accounting_history(message, client_name):
         due_date = format_date(h.get('due_date', ''))
         comment = h.get('comment', '')
         
-        # Narxni ko'rsatish
+        # Narxni aniqlash: tarix yozuvi → orders → mebellar
         price_val = h.get('price', 0)
         total_val = h.get('total_price', 0)
         try:
@@ -1523,6 +1527,8 @@ async def show_client_accounting_history(message, client_name):
         except:
             amount_int = 1
         
+        # 1. Tarix yozuvidan narx olish
+        narx_text = ""
         if total_val and str(total_val).strip() not in ('', '0', 'None'):
             try:
                 narx_text = f"{int(float(str(total_val))):,}".replace(",", " ") + " so'm"
@@ -1530,18 +1536,50 @@ async def show_client_accounting_history(message, client_name):
                 narx_text = str(total_val) + " so'm"
         elif price_val and str(price_val).strip() not in ('', '0', 'None'):
             try:
-                narx_text = f"{int(float(str(price_val))):,}".replace(",", " ") + f" so'm × {amount_int} = " + f"{int(float(str(price_val))) * amount_int:,}".replace(",", " ") + " so'm"
+                p_int = int(float(str(price_val)))
+                narx_text = f"{p_int:,}".replace(",", " ") + f" so'm × {amount_int} = " + f"{p_int * amount_int:,}".replace(",", " ") + " so'm"
             except:
                 narx_text = str(price_val) + " so'm"
-        else:
-            narx_text = ""
+        
+        # 2. Narx topilmasa — orders jadvalidan olish
+        if not narx_text:
+            order_id_h = h.get('order_id', '')
+            if order_id_h and orders_ref and isinstance(orders_ref, dict):
+                o = orders_ref.get(str(order_id_h))
+                if isinstance(o, dict):
+                    raw_total = o.get('total_price', None)
+                    raw_price = o.get('price', None)
+                    if raw_total and str(raw_total).strip() not in ('', '0', 'None'):
+                        try:
+                            narx_text = f"{int(float(str(raw_total))):,}".replace(",", " ") + " so'm"
+                        except:
+                            pass
+                    elif raw_price and str(raw_price).strip() not in ('', '0', 'None'):
+                        try:
+                            p_int = int(float(str(raw_price)))
+                            narx_text = f"{p_int:,}".replace(",", " ") + f" so'm × {amount_int} = " + f"{p_int * amount_int:,}".replace(",", " ") + " so'm"
+                        except:
+                            pass
+        
+        # 3. Narx topilmasa — mebellar jadvalidan joriy narxni olish
+        if not narx_text:
+            p_id_key = str(product_id).replace(" ", "").replace("-", "").upper()
+            if mebellar_ref and isinstance(mebellar_ref, dict) and p_id_key in mebellar_ref:
+                mebel = mebellar_ref[p_id_key]
+                if isinstance(mebel, dict) and mebel.get('narxi'):
+                    try:
+                        m_price_str = str(mebel['narxi']).replace("so'm", "").replace("$", "").replace(" ", "").replace(",", "")
+                        m_price = int(float(m_price_str))
+                        narx_text = f"{m_price:,}".replace(",", " ") + f" so'm × {amount_int} = " + f"{m_price * amount_int:,}".replace(",", " ") + " so'm ⚠️(joriy narx)"
+                    except:
+                        pass
         
         entry = f"{icon} *{product_id}* — {amount} ta\n"
         entry += f"   📋 {type_text}\n"
         entry += f"   📅 Sana: {acc_date}\n"
         if narx_text:
             entry += f"   💰 Narxi: {narx_text}\n"
-        if comment and str(comment).strip().lower() not in ('', 'yoq', 'yo\'q'):
+        if comment and str(comment).strip().lower() not in ('', 'yoq', "yo'q"):
             entry += f"   📝 Izoh: {comment}\n"
         if due_date:
             entry += f"   🗓 Muddat: {due_date}\n"
