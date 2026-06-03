@@ -931,22 +931,46 @@ async def show_client_report(message: types.Message, state: FSMContext):
         
         pending_orders.sort(key=get_pending_sort_date, reverse=False)
         
-        # ===== MIJOZNING MEBELLARINI TUGMALAR SHAKLIDA KO'RSATISH =====
+        # Delivered orders ni sanasi bo'yicha saralash (yangirog'i birinchi)
+        def get_sort_date(item):
+            try:
+                if item.get('delivered_at'):
+                    return datetime.strptime(item['delivered_at'], "%d.%m.%Y")
+                elif item.get('created_at'):
+                    return datetime.strptime(str(item['created_at']).split(' ')[0], "%Y-%m-%d")
+            except:
+                pass
+            return datetime.min
+        delivered_orders.sort(key=get_sort_date, reverse=True)
+        
+        # ===== XABAR MATNI =====
         header_text = f"🧑 *{client_name}* — Hisob kitob bo'limi\n"
         header_text += f"💳 Joriy qarzi: *{debt_formatted}* so'm\n\n"
         
-        if not pending_orders:
-            header_text += "✅ Hozirda faol buyurtma yo'q.\n"
-        else:
-            header_text += f"📦 Faol buyurtmalar: *{len(pending_orders)} ta*\n"
-            header_text += "Hisob kitob qilish uchun mebelni tanlang:"
+        # 1. Tayyorlanmoqda (olib ketilmagan) — faqat ro'yxat sifatida
+        if pending_orders:
+            header_text += f"⏳ *Tayyorlanmoqda (hali olib ketilmagan) — {len(pending_orders)} ta:*\n"
+            for po in pending_orders:
+                safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
+                status_label = "✅ Tayyor" if po['status'] == "Tayyor bo'ldi" else "🔧 Tayyorlanmoqda"
+                header_text += f"  ▪️ {safe_pid} — {po['amount']} ta ({status_label})\n"
+                header_text += f"     📅 Muddat: {po['due_date']}\n"
+                if po.get('price'):
+                    header_text += f"     💰 {po['price']}\n"
+            header_text += "\n"
         
-        # Tugmalar yasash — har bir faol buyurtma uchun
+        # 2. Yetkazilgan (olib ketilgan) — tugmalar shaklida
+        if delivered_orders:
+            header_text += f"📦 *Olib ketilgan mebellar — hisob kitob uchun tanlang:*"
+        else:
+            header_text += "❌ Hisob kitob qilinadigan (olib ketilgan) mebel yo'q."
+        
+        # Tugmalar — FAQAT yetkazilgan buyurtmalar uchun
         order_buttons = []
-        for po in pending_orders:
-            safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
-            status_label = "✅" if po['status'] == "Tayyor bo'ldi" else "🔧"
-            btn_text = f"{status_label} {safe_pid} — {po['amount']} ta | {po['due_date']}"
+        for do in delivered_orders:
+            safe_pid = str(do['product_id']).replace('`', '').replace('*', '')
+            d_date = do.get('delivered_at', '')
+            btn_text = f"🚛 {safe_pid} — {do['amount']} ta | {d_date}"
             order_buttons.append([types.KeyboardButton(text=btn_text)])
         
         # Tarix va Bosh menyu tugmalari
@@ -970,7 +994,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
         except Exception:
             pass
         
-        # Pending orders ma'lumotlarini saqlash (keyingi qadamda kerak)
+        # Ma'lumotlarni saqlash (keyingi qadamda kerak)
         await state.update_data(
             client_name=client_name,
             pending_orders=pending_orders,
@@ -987,7 +1011,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
 
 @dp.message(ClientAccountingState.select_order)
 async def client_order_selected(message: types.Message, state: FSMContext):
-    """Mijoz mebelini tanlaganda, hisob kitob qilindi/qisman to'ladi tugmalarini chiqarish"""
+    """Mijoz yetkazilgan mebelini tanlaganda, hisob kitob qilindi/qisman to'ladi tugmalarini chiqarish"""
     if message.text == "Bosh menyu":
         role = await get_user_role(message.from_user.id)
         await message.answer("Bosh menyu", reply_markup=main_menu(role))
@@ -996,21 +1020,21 @@ async def client_order_selected(message: types.Message, state: FSMContext):
     
     data = await state.get_data()
     client_name = data.get('client_name', '')
-    pending_orders = data.get('pending_orders', [])
+    delivered_orders = data.get('delivered_orders', [])
     
     # Tarix tugmasi bosilsa
     if message.text == f"📜 {client_name} Hisob Tarix":
         await show_client_accounting_history(message, client_name)
         return
     
-    # Qaysi buyurtma tanlanganini aniqlash
+    # Qaysi yetkazilgan buyurtma tanlanganini aniqlash
     selected_order = None
-    for po in pending_orders:
-        safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
-        status_label = "✅" if po['status'] == "Tayyor bo'ldi" else "🔧"
-        expected_btn = f"{status_label} {safe_pid} — {po['amount']} ta | {po['due_date']}"
+    for do in delivered_orders:
+        safe_pid = str(do['product_id']).replace('`', '').replace('*', '')
+        d_date = do.get('delivered_at', '')
+        expected_btn = f"🚛 {safe_pid} — {do['amount']} ta | {d_date}"
         if message.text == expected_btn:
-            selected_order = po
+            selected_order = do
             break
     
     if not selected_order:
@@ -1021,13 +1045,13 @@ async def client_order_selected(message: types.Message, state: FSMContext):
     await state.update_data(selected_order_id=selected_order['o_id'])
     
     safe_pid = str(selected_order['product_id']).replace('`', '').replace('*', '')
-    order_info = f"📦 *{safe_pid}* — {selected_order['amount']} ta\n"
-    order_info += f"📅 Muddat: {selected_order['due_date']}\n"
+    order_info = f"🚛 *{safe_pid}* — {selected_order['amount']} ta\n"
+    order_info += f"📅 Yetkazilgan: {selected_order.get('delivered_at', '')}\n"
     if selected_order.get('price'):
         order_info += f"💰 Narxi: {selected_order['price']}\n"
     if selected_order.get('comment') and str(selected_order.get('comment')).lower() != 'yoq':
         order_info += f"📝 Izoh: {selected_order['comment']}\n"
-    order_info += f"📌 Holati: {selected_order['status']}\n\n"
+    order_info += f"📌 Holati: {selected_order.get('status_text', '')}\n\n"
     order_info += "Hisob kitob turini tanlang:"
     
     markup = types.ReplyKeyboardMarkup(
@@ -1065,10 +1089,8 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
     
     if message.text == "🔙 Orqaga":
         # Qayta mijoz sahifasiga qaytish
-        await state.set_state(ReportState.select_client)
-        # Qayta hisobotni chaqirish
-        fake_msg = message
-        await show_client_report_inner(fake_msg, state, client_name, pending_orders, current_debt)
+        delivered_orders = data.get('delivered_orders', [])
+        await show_client_report_inner(message, state, client_name, data.get('pending_orders', []), delivered_orders, current_debt)
         return
     
     if message.text == "✅ Hisob kitob qilindi":
