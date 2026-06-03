@@ -832,11 +832,34 @@ async def show_client_report(message: types.Message, state: FSMContext):
                             deliveries_map[d.get('order_id')] = d
 
         # ===== QARZNI TO'G'RI HISOBLASH =====
-        # Faqat YETKAZILGAN buyurtmalar summasi (Tayyorlanmoqda/Tayyor bo'ldi emas)
-        PENDING_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi"}
-        correct_debt = 0
+        # Faqat YETKAZILGAN statusdagi buyurtmalar (whitelist)
+        DELIVERED_STATUSES = {"Biz yetkazib berdik", "Dillerni o'zi olib ketdi"}
         search_name_for_debt = client_name.strip().lower()
 
+        # 1-qadam: Hisob kitob tarixidan to'liq to'langan order_id lar va qisman to'lovlarni olish
+        acc_history_ref_for_debt = await asyncio.to_thread(
+            db.reference(f'accounting_history/{client_name}').get
+        )
+        accounted_order_ids_set = set()   # to'liq hisob kitob qilingan order IDlar
+        total_partial_paid = 0            # jami qisman to'lovlar summasi
+
+        if acc_history_ref_for_debt and isinstance(acc_history_ref_for_debt, dict):
+            for h_id, h in acc_history_ref_for_debt.items():
+                if not isinstance(h, dict):
+                    continue
+                if h.get('accounting_type') == 'toliq':
+                    oid = str(h.get('order_id', ''))
+                    if oid:
+                        accounted_order_ids_set.add(oid)
+                elif h.get('accounting_type') == 'qisman':
+                    try:
+                        pp = h.get('partial_payment', 0)
+                        total_partial_paid += int(float(str(pp))) if pp else 0
+                    except Exception:
+                        pass
+
+        # 2-qadam: Yetkazilgan, lekin hali hisob kitob qilinmagan buyurtmalar narxini qo'shish
+        correct_debt = 0
         if orders_ref and isinstance(orders_ref, dict):
             for o_id, o in orders_ref.items():
                 if not isinstance(o, dict):
@@ -845,9 +868,11 @@ async def show_client_report(message: types.Message, state: FSMContext):
                 if o_client != search_name_for_debt:
                     continue
                 o_status = o.get('status', '')
-                if o_status in PENDING_STATUSES:
-                    continue  # Hali olib ketilmagan — qarzga kiritmaydi
-                # Yetkazilgan buyurtma narxini qo'shish
+                if o_status not in DELIVERED_STATUSES:
+                    continue  # Faqat yetkazilganlar (pending, bekor va boshqalar kiritilmaydi)
+                if str(o_id) in accounted_order_ids_set:
+                    continue  # To'liq hisob kitob qilingan — qarzdan chiqarilgan
+                # Narxni qo'shish
                 try:
                     raw_total = o.get('total_price', None)
                     raw_price = o.get('price', None)
@@ -860,29 +885,10 @@ async def show_client_report(message: types.Message, state: FSMContext):
                 except Exception:
                     pass
 
-        # Hisob kitob tarixidan barcha to'lovlarni ayirish
-        acc_history_ref_for_debt = await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').get)
-        if acc_history_ref_for_debt and isinstance(acc_history_ref_for_debt, dict):
-            for h_id, h in acc_history_ref_for_debt.items():
-                if not isinstance(h, dict):
-                    continue
-                try:
-                    if h.get('accounting_type') == 'toliq':
-                        raw_total = h.get('total_price', None)
-                        raw_price = h.get('price', None)
-                        raw_amount = h.get('amount', 1)
-                        a_int = int(float(str(raw_amount))) if raw_amount else 1
-                        if raw_total is not None and str(raw_total).strip() not in ('', '0', 'None'):
-                            correct_debt -= int(float(str(raw_total)))
-                        elif raw_price is not None and str(raw_price).strip() not in ('', '0', 'None'):
-                            correct_debt -= int(float(str(raw_price))) * a_int
-                    elif h.get('accounting_type') == 'qisman':
-                        pp = h.get('partial_payment', 0)
-                        correct_debt -= int(float(str(pp))) if pp else 0
-                except Exception:
-                    pass
+        # 3-qadam: Qisman to'lovlarni ayirish
+        correct_debt -= total_partial_paid
 
-        # Firebase qiymatini to'g'rilash (eski noto'g'ri qiymatni tozalash)
+        # Firebase qiymatini to'g'rilash
         try:
             await asyncio.to_thread(db.reference(f'debts/{client_name}').set, correct_debt)
         except Exception:
