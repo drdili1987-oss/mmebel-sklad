@@ -839,9 +839,19 @@ async def show_client_report(message: types.Message, state: FSMContext):
         except Exception:
             debt_formatted = str(current_debt)
         
+        # Hisob kitob qilingan buyurtmalar ro'yxatini olish (tugmalardan yashirish uchun)
+        accounted_order_ids = set()
+        acc_history_ref = await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').get)
+        if acc_history_ref and isinstance(acc_history_ref, dict):
+            for h_id, h in acc_history_ref.items():
+                if isinstance(h, dict) and h.get('accounting_type') == 'toliq':
+                    oid = h.get('order_id', '')
+                    if oid:
+                        accounted_order_ids.add(str(oid))
+        
         # Buyurtmalarni ajratish: faol va yetkazilgan
         pending_orders = []  # Hali olib ketilmagan (faol)
-        delivered_orders = []  # Yetkazilgan (tarix)
+        delivered_orders = []  # Yetkazilgan, hisob kitob qilinmagan
         
         if orders_ref:
             if isinstance(orders_ref, dict):
@@ -905,6 +915,10 @@ async def show_client_report(message: types.Message, state: FSMContext):
                                 status_text = f"Yetkazildi ({driver})"
                             else:
                                 status_text = status
+
+                            # Hisob kitob qilingan bo'lsa tugmadan yashirish
+                            if str(o_id) in accounted_order_ids:
+                                continue
                             
                             delivered_orders.append({
                                 'o_id': o_id,
