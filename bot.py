@@ -1115,6 +1115,22 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
             await state.clear()
             return
         
+        # ⚠️ Duplikat oldini olish: bu order allaqachon hisob kitob qilinganmi?
+        existing_acc = await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').get)
+        if existing_acc and isinstance(existing_acc, dict):
+            for h_id, h in existing_acc.items():
+                if isinstance(h, dict) and h.get('order_id') == str(order_id) and h.get('accounting_type') == 'toliq':
+                    product_id = order_ref.get('product_id', '')
+                    safe_pid = str(product_id).replace('`', '').replace('*', '')
+                    await message.answer(
+                        f"⚠️ *{safe_pid}* uchun hisob kitob allaqachon qilingan!\n"
+                        f"📋 Tarixda mavjud. Qayta yozilmadi.",
+                        parse_mode="Markdown",
+                        reply_markup=main_menu('admin')
+                    )
+                    await state.clear()
+                    return
+        
         timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
         history_record = {
             'order_id': order_id,
