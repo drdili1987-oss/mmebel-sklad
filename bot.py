@@ -792,6 +792,11 @@ async def process_comment(message: types.Message, state: FSMContext):
 class ReportState(StatesGroup):
     select_client = State()
 
+class ClientAccountingState(StatesGroup):
+    select_order = State()      # Buyurtma tanlash
+    select_action = State()     # Hisob kitob qilindi / Qisman to'ladi
+    partial_amount = State()    # Qisman to'lov summasi
+
 @dp.message(F.text == "📊 Hisob kitoblar")
 async def report_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'admin':
@@ -834,9 +839,9 @@ async def show_client_report(message: types.Message, state: FSMContext):
         except Exception:
             debt_formatted = str(current_debt)
         
-        # Buyurtmalarni ajratish: tayyorlanmoqda va yetkazilgan
-        pending_orders = []  # Hali olib ketilmagan
-        delivered_orders = []  # Olib ketilgan
+        # Buyurtmalarni ajratish: faol va yetkazilgan
+        pending_orders = []  # Hali olib ketilmagan (faol)
+        delivered_orders = []  # Yetkazilgan (tarix)
         
         if orders_ref:
             if isinstance(orders_ref, dict):
@@ -913,7 +918,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
                                 'comment': o.get('comment', '')
                             })
         
-        # Pending orders ni sanasi bo'yicha saralash (eskisi tepada, yangisi pasda)
+        # Pending orders ni sanasi bo'yicha saralash
         def get_pending_sort_date(item):
             try:
                 if item.get('due_date') and item['due_date'] != "Noma'lum":
@@ -925,90 +930,36 @@ async def show_client_report(message: types.Message, state: FSMContext):
             return datetime.min
         
         pending_orders.sort(key=get_pending_sort_date, reverse=False)
-
-        # Delivered orders ni sanasi bo'yicha saralash (eskisi tepada, yangisi pasda)
-        def get_sort_date(item):
-            try:
-                if item.get('delivered_at'):
-                    return datetime.strptime(item['delivered_at'], "%d.%m.%Y")
-                elif item.get('created_at'):
-                    return datetime.strptime(str(item['created_at']).split(' ')[0], "%Y-%m-%d")
-            except:
-                pass
-            return datetime.min
         
-        delivered_orders.sort(key=get_sort_date, reverse=False)
+        # ===== MIJOZNING MEBELLARINI TUGMALAR SHAKLIDA KO'RSATISH =====
+        header_text = f"🧑 *{client_name}* — Hisob kitob bo'limi\n"
+        header_text += f"💳 Joriy qarzi: *{debt_formatted}* so'm\n\n"
         
-        # Hisobot tayyorlash
-        report = f"🧑 Diller: {client_name}\n"
-        report += f"💳 Joriy qarzi: {debt_formatted} 💰\n\n"
-        
-        # 1. Olib ketilmagan (tayyorlanmoqda) mebellar
-        if pending_orders:
-            report += "⏳Buyurtma berilgan, lekin olib ketilmagan mebellar ro'yxati:\n"
-            for po in pending_orders:
-                safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
-                status_label = "Tayyor" if po['status'] == "Tayyor bo'ldi" else "Tayyorlanmoqda"
-                report += f"▪️ {safe_pid} — {po['amount']} ta ({status_label})\n"
-                report += f"   📅 {po['due_date']}\n"
-                if po['price']:
-                    report += f"   {po['price']}💰\n"
-                if po.get('comment') and str(po.get('comment')).lower() != 'yoq':
-                    report += f"   📝 {po['comment']}\n"
-            report += "\n"
-        
-        # 2. Olingan mebellar tarixi
-        report += "📦 Olingan mebellar tarixi:\n"
-        if delivered_orders:
-            displayed = delivered_orders[-50:]
-            if len(delivered_orders) > 50:
-                report += f"_(Jami {len(delivered_orders)} ta — oxirgi 50 tasi ko'rsatilmoqda)_\n"
-            
-            for do in displayed:
-                safe_pid = str(do['product_id']).replace('`', '').replace('*', '')
-                report += f"▪️ {safe_pid} — {do['amount']} ta ({do['status_text']}) 🚛 {do['delivered_at']}\n"
-                if do['price']:
-                    report += f"   {do['price']}💰\n"
-                if do.get('comment') and str(do.get('comment')).lower() != 'yoq':
-                    report += f"   📝 {do['comment']}\n"
+        if not pending_orders:
+            header_text += "✅ Hozirda faol buyurtma yo'q.\n"
         else:
-            report += "Hech qanday mebel olinmagan.\n"
+            header_text += f"📦 Faol buyurtmalar: *{len(pending_orders)} ta*\n"
+            header_text += "Hisob kitob qilish uchun mebelni tanlang:"
         
-        markup = types.ReplyKeyboardMarkup(
-            keyboard=[
-                [types.KeyboardButton(text=f"➕ {client_name} dan Pul Olish (Kirim)")],
-                [types.KeyboardButton(text=f"➖ {client_name} ga Pul Berish (Chiqim)")],
-                [types.KeyboardButton(text=f"📜 {client_name} To'lovlar Tarixi")],
-                [types.KeyboardButton(text="Bosh menyu")]
-            ],
-            resize_keyboard=True
-        )
+        # Tugmalar yasash — har bir faol buyurtma uchun
+        order_buttons = []
+        for po in pending_orders:
+            safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
+            status_label = "✅" if po['status'] == "Tayyor bo'ldi" else "🔧"
+            btn_text = f"{status_label} {safe_pid} — {po['amount']} ta | {po['due_date']}"
+            order_buttons.append([types.KeyboardButton(text=btn_text)])
         
-        # Xabarni bo'laklarga bo'lib yuborish
-        chunks = []
-        current_msg = ""
-        for line in report.split("\n"):
-            if len(current_msg) + len(line) + 1 > 3800:
-                chunks.append(current_msg)
-                current_msg = line + "\n"
-            else:
-                current_msg += line + "\n"
-        if current_msg:
-            chunks.append(current_msg)
+        # Tarix va Bosh menyu tugmalari
+        order_buttons.append([types.KeyboardButton(text=f"📜 {client_name} Hisob Tarix")])
+        order_buttons.append([types.KeyboardButton(text="Bosh menyu")])
         
-        for i, chunk in enumerate(chunks):
-            is_last = (i == len(chunks) - 1)
-            try:
-                await message.answer(
-                    chunk,
-                    parse_mode="Markdown",
-                    reply_markup=markup if is_last else None
-                )
-            except Exception:
-                await message.answer(
-                    chunk,
-                    reply_markup=markup if is_last else None
-                )
+        markup = types.ReplyKeyboardMarkup(keyboard=order_buttons, resize_keyboard=True)
+        
+        # Xabar yuborish
+        try:
+            await message.answer(header_text, parse_mode="Markdown", reply_markup=markup)
+        except Exception:
+            await message.answer(header_text, reply_markup=markup)
         
         # 💵 Dollar stikeri yuborish
         try:
@@ -1019,113 +970,367 @@ async def show_client_report(message: types.Message, state: FSMContext):
         except Exception:
             pass
         
-        await state.clear()
+        # Pending orders ma'lumotlarini saqlash (keyingi qadamda kerak)
+        await state.update_data(
+            client_name=client_name,
+            pending_orders=pending_orders,
+            delivered_orders=delivered_orders,
+            current_debt=current_debt
+        )
+        await state.set_state(ClientAccountingState.select_order)
         
     except Exception as e:
         logging.error(f"Client report error: {e}")
         await message.answer(f"Hisobot tayyorlashda xatolik yuz berdi: {e}")
         await state.clear()
 
-@dp.message(F.text.contains("dan Pul Olish (Kirim)"))
-async def client_kirim_start(message: types.Message, state: FSMContext):
-    if await get_user_role(message.from_user.id) == 'admin':
-        client_name = message.text.replace("➕ ", "").replace(" dan Pul Olish (Kirim)", "").strip()
-        await state.update_data(client_name=client_name)
-        await message.answer(f"👤 {client_name} dan olingan pul summasini kiriting (faqat raqam):", reply_markup=types.ReplyKeyboardRemove())
-        await state.set_state(FinanceState.amount_kirim)
 
-@dp.message(FinanceState.amount_kirim)
-async def process_client_kirim(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    client_name = data['client_name']
-    try:
-        amount = int(message.text)
-        # Qarzni kamaytirish
-        debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
-        current_debt = debt_ref if debt_ref is not None else 0
-        new_debt = current_debt - amount
-        await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
-        
-        # Tarixga yozish
-        timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
-        record = {'type': 'Kirim', 'amount': amount, 'timestamp': timestamp, 'note': "Mijoz pul berdi"}
-        await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
-        
-        await message.answer(f"✅ {client_name} dan {amount} so'm qabul qilindi.\n💳 Yangi qarzi: {new_debt} so'm", reply_markup=main_menu('admin'))
+@dp.message(ClientAccountingState.select_order)
+async def client_order_selected(message: types.Message, state: FSMContext):
+    """Mijoz mebelini tanlaganda, hisob kitob qilindi/qisman to'ladi tugmalarini chiqarish"""
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
         await state.clear()
-    except ValueError:
-        await message.answer("Iltimos, faqat raqam kiriting:")
-
-@dp.message(F.text.contains("ga Pul Berish (Chiqim)"))
-async def client_chiqim_start(message: types.Message, state: FSMContext):
-    if await get_user_role(message.from_user.id) == 'admin':
-        client_name = message.text.replace("➖ ", "").replace(" ga Pul Berish (Chiqim)", "").strip()
-        await state.update_data(client_name=client_name)
-        await message.answer(f"👤 {client_name} ga qarz sifatida yoziladigan yoki qaytariladigan pul summasini kiriting (faqat raqam):", reply_markup=types.ReplyKeyboardRemove())
-        await state.set_state(FinanceState.amount_chiqim)
-
-@dp.message(FinanceState.amount_chiqim)
-async def process_client_chiqim(message: types.Message, state: FSMContext):
+        return
+    
     data = await state.get_data()
-    client_name = data['client_name']
+    client_name = data.get('client_name', '')
+    pending_orders = data.get('pending_orders', [])
+    
+    # Tarix tugmasi bosilsa
+    if message.text == f"📜 {client_name} Hisob Tarix":
+        await show_client_accounting_history(message, client_name)
+        return
+    
+    # Qaysi buyurtma tanlanganini aniqlash
+    selected_order = None
+    for po in pending_orders:
+        safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
+        status_label = "✅" if po['status'] == "Tayyor bo'ldi" else "🔧"
+        expected_btn = f"{status_label} {safe_pid} — {po['amount']} ta | {po['due_date']}"
+        if message.text == expected_btn:
+            selected_order = po
+            break
+    
+    if not selected_order:
+        await message.answer("Iltimos, tugmalardan birini tanlang:")
+        return
+    
+    # Tanlangan buyurtma ma'lumotlarini saqlash
+    await state.update_data(selected_order_id=selected_order['o_id'])
+    
+    safe_pid = str(selected_order['product_id']).replace('`', '').replace('*', '')
+    order_info = f"📦 *{safe_pid}* — {selected_order['amount']} ta\n"
+    order_info += f"📅 Muddat: {selected_order['due_date']}\n"
+    if selected_order.get('price'):
+        order_info += f"💰 Narxi: {selected_order['price']}\n"
+    if selected_order.get('comment') and str(selected_order.get('comment')).lower() != 'yoq':
+        order_info += f"📝 Izoh: {selected_order['comment']}\n"
+    order_info += f"📌 Holati: {selected_order['status']}\n\n"
+    order_info += "Hisob kitob turini tanlang:"
+    
+    markup = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="✅ Hisob kitob qilindi")],
+            [types.KeyboardButton(text="💰 Qisman to'ladi")],
+            [types.KeyboardButton(text="🔙 Orqaga")],
+            [types.KeyboardButton(text="Bosh menyu")]
+        ],
+        resize_keyboard=True
+    )
+    
     try:
-        amount = int(message.text)
-        # Qarzni ko'paytirish
-        debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
-        current_debt = debt_ref if debt_ref is not None else 0
-        new_debt = current_debt + amount
-        await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
-        
-        # Tarixga yozish
-        timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
-        record = {'type': 'Chiqim', 'amount': amount, 'timestamp': timestamp, 'note': "Mijoz qarzi ko'paydi"}
-        await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
-        
-        await message.answer(f"✅ {client_name} qarziga {amount} so'm qo'shildi.\n💳 Yangi qarzi: {new_debt} so'm", reply_markup=main_menu('admin'))
-        await state.clear()
-    except ValueError:
-        await message.answer("Iltimos, faqat raqam kiriting:")
+        await message.answer(order_info, parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        await message.answer(order_info, reply_markup=markup)
+    
+    await state.set_state(ClientAccountingState.select_action)
 
-@dp.message(F.text.contains("To'lovlar Tarixi"))
-async def client_history(message: types.Message):
-    if await get_user_role(message.from_user.id) == 'admin':
-        client_name = message.text.replace("📜 ", "").replace(" To'lovlar Tarixi", "").strip()
-        trans_ref = await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').get)
-        if not trans_ref:
-            await message.answer(f"👤 {client_name} bo'yicha to'lovlar tarixi yo'q.")
+
+@dp.message(ClientAccountingState.select_action)
+async def client_accounting_action(message: types.Message, state: FSMContext):
+    """Hisob kitob qilindi yoki qisman to'ladi"""
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        await state.clear()
+        return
+    
+    data = await state.get_data()
+    client_name = data.get('client_name', '')
+    order_id = data.get('selected_order_id', '')
+    pending_orders = data.get('pending_orders', [])
+    current_debt = data.get('current_debt', 0)
+    
+    if message.text == "🔙 Orqaga":
+        # Qayta mijoz sahifasiga qaytish
+        await state.set_state(ReportState.select_client)
+        # Qayta hisobotni chaqirish
+        fake_msg = message
+        await show_client_report_inner(fake_msg, state, client_name, pending_orders, current_debt)
+        return
+    
+    if message.text == "✅ Hisob kitob qilindi":
+        # Buyurtma tarixga o'tsin — accounting_history ga yozish
+        order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
+        if not order_ref:
+            await message.answer("Buyurtma topilmadi.")
+            await state.clear()
             return
         
-        header = f"📜 **{client_name} to'lovlar (Kirim/Chiqim) tarixi:**\n\n"
-        items = []
-        for t_id, t in trans_ref.items():
-            if isinstance(t, dict):
-                icon = "🟢" if t.get('type') == 'Kirim' else "🔴"
-                entry = f"{icon} {t.get('type')}: {t.get('amount')} so'm\n"
-                entry += f"📅 Sana: {format_date(t.get('timestamp', ''))}\n"
-                note = t.get('note', '')
-                if note:
-                    entry += f"📝 {note}\n"
-                entry += "\n"
-                items.append(entry)
+        timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        history_record = {
+            'order_id': order_id,
+            'client_name': client_name,
+            'product_id': order_ref.get('product_id', ''),
+            'amount': order_ref.get('amount', '1'),
+            'due_date': order_ref.get('due_date', ''),
+            'price': order_ref.get('price', 0),
+            'total_price': order_ref.get('total_price', 0),
+            'comment': order_ref.get('comment', ''),
+            'accounting_type': 'toliq',
+            'accounting_date': timestamp,
+            'status': 'Hisob kitob qilindi'
+        }
+        await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').push, history_record)
         
-        # Build chunks at item boundaries (max 3800 chars)
-        all_parts = [header] + items
-        current_msg = ""
-        chunks = []
-        for part in all_parts:
-            if len(current_msg) + len(part) > 3800:
-                chunks.append(current_msg)
-                current_msg = part
-            else:
-                current_msg += part
-        if current_msg:
-            chunks.append(current_msg)
-        
-        for chunk in chunks:
+        # Qarzni yangilash
+        total_price = int(order_ref.get('total_price', 0) or order_ref.get('price', 0) or 0)
+        if total_price > 0:
             try:
-                await message.answer(chunk, parse_mode="Markdown")
-            except Exception:
-                await message.answer(chunk)
+                amount_int = int(order_ref.get('amount', 1))
+                if 'total_price' not in order_ref or not order_ref.get('total_price'):
+                    total_price = total_price * amount_int
+            except:
+                pass
+            debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
+            current_debt_val = int(debt_ref) if debt_ref else 0
+            new_debt = current_debt_val - total_price
+            await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
+            
+            # Tranzaksiya tarixiga yozish
+            record = {
+                'type': 'Kirim', 
+                'amount': total_price, 
+                'timestamp': timestamp, 
+                'note': f"Hisob kitob qilindi: {order_id} ({order_ref.get('product_id', '')})"
+            }
+            await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
+        
+        product_id = order_ref.get('product_id', '')
+        amount_str = order_ref.get('amount', '1')
+        safe_pid = str(product_id).replace('`', '').replace('*', '')
+        
+        await message.answer(
+            f"✅ *{safe_pid}* — {amount_str} ta buyurtma hisob kitob qilindi!\n"
+            f"📋 Tarixga saqlandi.\n"
+            f"💳 Yangi qarz yangilandi.",
+            parse_mode="Markdown",
+            reply_markup=main_menu('admin')
+        )
+        await state.clear()
+        return
+    
+    if message.text == "💰 Qisman to'ladi":
+        order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
+        product_id = order_ref.get('product_id', '') if order_ref else ''
+        safe_pid = str(product_id).replace('`', '').replace('*', '')
+        
+        await state.update_data(order_id=order_id)
+        await message.answer(
+            f"💰 *{safe_pid}* uchun qancha pul to'ladi?\n"
+            f"(Faqat raqam kiriting, so'mda):",
+            parse_mode="Markdown",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+        await state.set_state(ClientAccountingState.partial_amount)
+        return
+    
+    await message.answer("Iltimos, tugmalardan birini tanlang.")
+
+
+@dp.message(ClientAccountingState.partial_amount)
+async def client_partial_payment(message: types.Message, state: FSMContext):
+    """Qisman to'lov summasini qabul qilish"""
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        await state.clear()
+        return
+    
+    try:
+        amount = int(message.text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Iltimos, musbat raqam kiriting:")
+        return
+    
+    data = await state.get_data()
+    client_name = data.get('client_name', '')
+    order_id = data.get('selected_order_id', '')
+    
+    order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
+    if not order_ref:
+        await message.answer("Buyurtma topilmadi.")
+        await state.clear()
+        return
+    
+    timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Qisman to'lov tarixiga yozish
+    history_record = {
+        'order_id': order_id,
+        'client_name': client_name,
+        'product_id': order_ref.get('product_id', ''),
+        'amount': order_ref.get('amount', '1'),
+        'due_date': order_ref.get('due_date', ''),
+        'partial_payment': amount,
+        'comment': order_ref.get('comment', ''),
+        'accounting_type': 'qisman',
+        'accounting_date': timestamp,
+        'status': 'Qisman to\'ladi'
+    }
+    await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').push, history_record)
+    
+    # Qarzni kamaytirish
+    debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
+    current_debt_val = int(debt_ref) if debt_ref else 0
+    new_debt = current_debt_val - amount
+    await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
+    
+    # Tranzaksiya tarixiga yozish
+    record = {
+        'type': 'Kirim', 
+        'amount': amount, 
+        'timestamp': timestamp, 
+        'note': f"Qisman to'lov: {order_id} ({order_ref.get('product_id', '')})"
+    }
+    await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
+    
+    product_id = order_ref.get('product_id', '')
+    safe_pid = str(product_id).replace('`', '').replace('*', '')
+    
+    try:
+        new_debt_fmt = f"{new_debt:,}".replace(",", " ")
+    except:
+        new_debt_fmt = str(new_debt)
+    
+    await message.answer(
+        f"💰 *{safe_pid}* uchun {amount:,} so'm qisman to'lov qabul qilindi!\n"
+        f"📋 Tarixga saqlandi.\n"
+        f"💳 Yangi qarz: *{new_debt_fmt}* so'm",
+        parse_mode="Markdown",
+        reply_markup=main_menu('admin')
+    )
+    await state.clear()
+
+
+async def show_client_report_inner(message, state, client_name, pending_orders, current_debt):
+    """Mijoz hisobot sahifasini qayta ko'rsatish (orqaga qaytganda)"""
+    try:
+        debt_formatted = f"{int(current_debt):,}".replace(",", " ")
+    except:
+        debt_formatted = str(current_debt)
+    
+    header_text = f"🧑 *{client_name}* — Hisob kitob bo'limi\n"
+    header_text += f"💳 Joriy qarzi: *{debt_formatted}* so'm\n\n"
+    
+    if not pending_orders:
+        header_text += "✅ Hozirda faol buyurtma yo'q.\n"
+    else:
+        header_text += f"📦 Faol buyurtmalar: *{len(pending_orders)} ta*\n"
+        header_text += "Hisob kitob qilish uchun mebelni tanlang:"
+    
+    order_buttons = []
+    for po in pending_orders:
+        safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
+        status_label = "✅" if po['status'] == "Tayyor bo'ldi" else "🔧"
+        btn_text = f"{status_label} {safe_pid} — {po['amount']} ta | {po['due_date']}"
+        order_buttons.append([types.KeyboardButton(text=btn_text)])
+    
+    order_buttons.append([types.KeyboardButton(text=f"📜 {client_name} Hisob Tarix")])
+    order_buttons.append([types.KeyboardButton(text="Bosh menyu")])
+    
+    markup = types.ReplyKeyboardMarkup(keyboard=order_buttons, resize_keyboard=True)
+    
+    try:
+        await message.answer(header_text, parse_mode="Markdown", reply_markup=markup)
+    except Exception:
+        await message.answer(header_text, reply_markup=markup)
+    
+    await state.set_state(ClientAccountingState.select_order)
+
+
+async def show_client_accounting_history(message, client_name):
+    """Mijozning hisob kitob tarixini ko'rsatish"""
+    history_ref = await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').get)
+    
+    if not history_ref:
+        await message.answer(
+            f"📜 *{client_name}* — Hisob kitob tarixi bo'sh.\n"
+            "Hali hech qanday hisob kitob qilinmagan.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    header = f"📜 *{client_name} — Hisob kitob tarixi:*\n\n"
+    items = []
+    
+    history_list = []
+    for h_id, h in history_ref.items():
+        if isinstance(h, dict):
+            history_list.append(h)
+    
+    # Sanasi bo'yicha saralash (yangirog'i birinchi)
+    def get_acc_date(item):
+        try:
+            return datetime.strptime(item.get('accounting_date', ''), "%Y-%m-%d %H:%M:%S")
+        except:
+            return datetime.min
+    history_list.sort(key=get_acc_date, reverse=True)
+    
+    for h in history_list:
+        acc_type = h.get('accounting_type', '')
+        if acc_type == 'toliq':
+            icon = "✅"
+            type_text = "To'liq hisob kitob"
+        else:
+            icon = "💰"
+            type_text = f"Qisman to'lov: {h.get('partial_payment', 0):,} so'm".replace(",", " ")
+        
+        product_id = str(h.get('product_id', '')).replace('`', '').replace('*', '')
+        amount = h.get('amount', '1')
+        acc_date = format_date(h.get('accounting_date', ''))
+        due_date = format_date(h.get('due_date', ''))
+        
+        entry = f"{icon} *{product_id}* — {amount} ta\n"
+        entry += f"   📋 {type_text}\n"
+        entry += f"   📅 Sana: {acc_date}\n"
+        if due_date:
+            entry += f"   🗓 Muddat: {due_date}\n"
+        entry += "\n"
+        items.append(entry)
+    
+    # Bo'laklarga ajratib yuborish
+    all_parts = [header] + items
+    current_msg = ""
+    chunks = []
+    for part in all_parts:
+        if len(current_msg) + len(part) > 3800:
+            chunks.append(current_msg)
+            current_msg = part
+        else:
+            current_msg += part
+    if current_msg:
+        chunks.append(current_msg)
+    
+    for chunk in chunks:
+        try:
+            await message.answer(chunk, parse_mode="Markdown")
+        except Exception:
+            await message.answer(chunk)
 
 # Omborchiga yangi buyurtma haqida xabar yuborish
 async def notify_warehouse(order_data, order_id):
