@@ -962,6 +962,8 @@ async def show_client_report(message: types.Message, state: FSMContext):
                                 'comment': o.get('comment', ''),
                                 'created_at': o.get('created_at', '')
                             })
+                        elif status == 'Bekor qilindi':
+                            continue  # Bekor qilingan — na pending, na delivered
                         else:
                             # Yetkazilgan buyurtma
                             delivered_at = o.get('delivered_at', '')
