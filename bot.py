@@ -817,13 +817,10 @@ async def show_client_report(message: types.Message, state: FSMContext):
         return
 
     try:
-        # Fetch orders, debt, deliveries and mebellar
+        # Fetch orders, deliveries and mebellar
         orders_ref = await asyncio.to_thread(db.reference('orders').get)
-        debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
         mebellar_ref = await asyncio.to_thread(db.reference('mebellar').get)
-        
-        current_debt = debt_ref if debt_ref is not None else 0
-        
+
         # Barcha oylar uchun yetkazishlarni olish
         all_deliveries_ref = await asyncio.to_thread(db.reference('deliveries').get)
         deliveries_map = {}  # order_id -> delivery data
@@ -833,15 +830,69 @@ async def show_client_report(message: types.Message, state: FSMContext):
                     for d_id, d in month_data.items():
                         if isinstance(d, dict) and d.get('order_id'):
                             deliveries_map[d.get('order_id')] = d
-        
+
+        # ===== QARZNI TO'G'RI HISOBLASH =====
+        # Faqat YETKAZILGAN buyurtmalar summasi (Tayyorlanmoqda/Tayyor bo'ldi emas)
+        PENDING_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi"}
+        correct_debt = 0
+        search_name_for_debt = client_name.strip().lower()
+
+        if orders_ref and isinstance(orders_ref, dict):
+            for o_id, o in orders_ref.items():
+                if not isinstance(o, dict):
+                    continue
+                o_client = str(o.get('client_name') or o.get('client') or '').strip().lower()
+                if o_client != search_name_for_debt:
+                    continue
+                o_status = o.get('status', '')
+                if o_status in PENDING_STATUSES:
+                    continue  # Hali olib ketilmagan — qarzga kiritmaydi
+                # Yetkazilgan buyurtma narxini qo'shish
+                try:
+                    raw_total = o.get('total_price', None)
+                    raw_price = o.get('price', None)
+                    raw_amount = o.get('amount', 1)
+                    a_int = int(float(str(raw_amount))) if raw_amount else 1
+                    if raw_total is not None and str(raw_total).strip() not in ('', '0', 'None'):
+                        correct_debt += int(float(str(raw_total)))
+                    elif raw_price is not None and str(raw_price).strip() not in ('', '0', 'None'):
+                        correct_debt += int(float(str(raw_price))) * a_int
+                except Exception:
+                    pass
+
+        # Hisob kitob tarixidan barcha to'lovlarni ayirish
+        acc_history_ref_for_debt = await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').get)
+        if acc_history_ref_for_debt and isinstance(acc_history_ref_for_debt, dict):
+            for h_id, h in acc_history_ref_for_debt.items():
+                if not isinstance(h, dict):
+                    continue
+                try:
+                    if h.get('accounting_type') == 'toliq':
+                        raw_total = h.get('total_price', None)
+                        raw_price = h.get('price', None)
+                        raw_amount = h.get('amount', 1)
+                        a_int = int(float(str(raw_amount))) if raw_amount else 1
+                        if raw_total is not None and str(raw_total).strip() not in ('', '0', 'None'):
+                            correct_debt -= int(float(str(raw_total)))
+                        elif raw_price is not None and str(raw_price).strip() not in ('', '0', 'None'):
+                            correct_debt -= int(float(str(raw_price))) * a_int
+                    elif h.get('accounting_type') == 'qisman':
+                        pp = h.get('partial_payment', 0)
+                        correct_debt -= int(float(str(pp))) if pp else 0
+                except Exception:
+                    pass
+
+        # Firebase qiymatini to'g'rilash (eski noto'g'ri qiymatni tozalash)
         try:
-            debt_formatted = f"{int(current_debt):,}".replace(",", " ")
+            await asyncio.to_thread(db.reference(f'debts/{client_name}').set, correct_debt)
         except Exception:
-            debt_formatted = str(current_debt)
+            pass
+
+        current_debt = correct_debt
         
         # Hisob kitob qilingan buyurtmalar ro'yxatini olish (tugmalardan yashirish uchun)
         accounted_order_ids = set()
-        acc_history_ref = await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').get)
+        acc_history_ref = acc_history_ref_for_debt  # allaqachon yuklab olingan
         if acc_history_ref and isinstance(acc_history_ref, dict):
             for h_id, h in acc_history_ref.items():
                 if isinstance(h, dict) and h.get('accounting_type') == 'toliq':
@@ -958,19 +1009,24 @@ async def show_client_report(message: types.Message, state: FSMContext):
         delivered_orders.sort(key=get_sort_date, reverse=True)
         
         # ===== XABAR MATNI =====
+        try:
+            debt_formatted = f"{int(current_debt):,}".replace(",", " ")
+        except Exception:
+            debt_formatted = str(current_debt)
+
         header_text = f"🧑 *{client_name}* — Hisob kitob bo'limi\n"
         header_text += f"💳 Joriy qarzi: *{debt_formatted}* so'm\n\n"
-        
+
         # 1. Tayyorlanmoqda (olib ketilmagan) — faqat ro'yxat sifatida
         if pending_orders:
-            header_text += f"⏳ *Tayyorlanmoqda (hali olib ketilmagan) — {len(pending_orders)} ta:*\n"
+            header_text += f"⏳ *Tayyorlanmoqda (qarzga qo'shilmagan) — {len(pending_orders)} ta:*\n"
             for po in pending_orders:
                 safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
                 status_label = "✅ Tayyor" if po['status'] == "Tayyor bo'ldi" else "🔧 Tayyorlanmoqda"
                 header_text += f"  ▪️ {safe_pid} — {po['amount']} ta ({status_label})\n"
                 header_text += f"     📅 Muddat: {po['due_date']}\n"
                 if po.get('price'):
-                    header_text += f"     💰 {po['price']}\n"
+                    header_text += f"     💰 {po['price']} *(yetkazilganda qarzga qo'shiladi)*\n"
             header_text += "\n"
         
         # 2. Yetkazilgan (olib ketilgan) — tugmalar shaklida
