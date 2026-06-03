@@ -1148,36 +1148,56 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
         await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').push, history_record)
         
         # Qarzni yangilash
-        total_price = int(order_ref.get('total_price', 0) or order_ref.get('price', 0) or 0)
+        try:
+            raw_total = order_ref.get('total_price', None)
+            raw_price = order_ref.get('price', None)
+            raw_amount = order_ref.get('amount', 1)
+            amount_int = int(float(str(raw_amount))) if raw_amount else 1
+
+            if raw_total is not None and str(raw_total).strip() not in ('', '0', 'None'):
+                total_price = int(float(str(raw_total)))
+            elif raw_price is not None and str(raw_price).strip() not in ('', '0', 'None'):
+                # total_price yo'q, faqat birlik narxi bor — soniga ko'paytir
+                total_price = int(float(str(raw_price))) * amount_int
+            else:
+                total_price = 0
+        except Exception as _tp_err:
+            logging.warning(f"total_price hisoblashda xatolik: {_tp_err}")
+            total_price = 0
+
+        try:
+            debt_raw = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
+            current_debt_val = int(float(str(debt_raw))) if debt_raw is not None else 0
+        except Exception:
+            current_debt_val = 0
+
+        new_debt = current_debt_val - total_price
+        await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
+
+        # Tranzaksiya tarixiga yozish (total_price > 0 bo'lsa)
         if total_price > 0:
-            try:
-                amount_int = int(order_ref.get('amount', 1))
-                if 'total_price' not in order_ref or not order_ref.get('total_price'):
-                    total_price = total_price * amount_int
-            except:
-                pass
-            debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
-            current_debt_val = int(debt_ref) if debt_ref else 0
-            new_debt = current_debt_val - total_price
-            await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
-            
-            # Tranzaksiya tarixiga yozish
             record = {
-                'type': 'Kirim', 
-                'amount': total_price, 
-                'timestamp': timestamp, 
+                'type': 'Kirim',
+                'amount': total_price,
+                'timestamp': timestamp,
                 'note': f"Hisob kitob qilindi: {order_id} ({order_ref.get('product_id', '')})"
             }
             await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
-        
+
         product_id = order_ref.get('product_id', '')
         amount_str = order_ref.get('amount', '1')
         safe_pid = str(product_id).replace('`', '').replace('*', '')
-        
+
+        try:
+            new_debt_fmt = f"{new_debt:,}".replace(",", " ")
+        except Exception:
+            new_debt_fmt = str(new_debt)
+
+        paid_info = f"\n💸 To'landi: *{total_price:,}* so'm".replace(",", " ") if total_price > 0 else ""
         await message.answer(
             f"✅ *{safe_pid}* — {amount_str} ta buyurtma hisob kitob qilindi!\n"
-            f"📋 Tarixga saqlandi.\n"
-            f"💳 Yangi qarz yangilandi.",
+            f"📋 Tarixga saqlandi.{paid_info}\n"
+            f"💳 Yangi qarz: *{new_debt_fmt}* so'm",
             parse_mode="Markdown",
             reply_markup=main_menu('admin')
         )
@@ -2865,29 +2885,8 @@ async def admin_order_action(message: types.Message, state: FSMContext):
                     new_qty = int(mebel_ref['soni']) + amount
                     await asyncio.to_thread(db.reference(f'mebellar/{product_id}').update, {'soni': new_qty})
             
-            # Mijoz qarzini kamaytirish
-            client_name = order_ref.get('client_name')
-            if client_name:
-                # Narxni hisoblash
-                price_val = 0
-                mebel_data = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
-                if mebel_data and 'narxi' in mebel_data:
-                    price_str = str(mebel_data['narxi']).replace("so'm", "").replace("$", "").replace(" ", "")
-                    try:
-                        price_val = int(price_str)
-                    except:
-                        price_val = 0
-                
-                total_price = price_val * amount
-                if total_price > 0:
-                    debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
-                    current_debt = int(debt_ref) if debt_ref else 0
-                    new_debt = current_debt - total_price
-                    await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
-                    
-                    timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
-                    record = {'type': 'Kirim', 'amount': total_price, 'timestamp': timestamp, 'note': f"Buyurtma bekor qilindi: {order_id}"}
-                    await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
+            # ℹ️ Qarz O'ZGARTIRILMAYDI: mebel hali yetkazilmagan (Tayyorlanmoqda),
+            # shuning uchun qarzga hech qachon qo'shilmagan. Yetkazilganda qarz qo'shiladi.
             
             # Buyurtmani bekor qilish
             await asyncio.to_thread(db.reference(f'orders/{order_id}').update, {'status': 'Bekor qilindi'})
@@ -2991,24 +2990,8 @@ async def admin_order_new_value(message: types.Message, state: FSMContext):
                     new_qty = int(mebel_ref['soni']) - diff
                     await asyncio.to_thread(db.reference(f'mebellar/{product_id}').update, {'soni': new_qty})
             
-            # Qarzni tuzatish
-            client_name = order_ref.get('client_name')
-            if client_name:
-                price_val = 0
-                mebel_data = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
-                if mebel_data and 'narxi' in mebel_data:
-                    price_str = str(mebel_data['narxi']).replace("so'm", "").replace("$", "").replace(" ", "")
-                    try:
-                        price_val = int(price_str)
-                    except:
-                        price_val = 0
-                
-                price_diff = price_val * diff
-                if price_diff != 0:
-                    debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
-                    current_debt = int(debt_ref) if debt_ref else 0
-                    new_debt = current_debt + price_diff
-                    await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
+            # ℹ️ Qarz O'ZGARTIRILMAYDI: mebel hali yetkazilmagan (Tayyorlanmoqda),
+            # shuning uchun qarzga hech qachon qo'shilmagan. Yetkazilganda qarz qo'shiladi.
         
         await asyncio.to_thread(db.reference(f'orders/{order_id}').update, {'amount': str(new_amount)})
         await message.answer(f"✅ Buyurtma `{order_id}` soni {new_amount} taga o'zgartirildi!", reply_markup=main_menu('admin'), parse_mode="Markdown")
