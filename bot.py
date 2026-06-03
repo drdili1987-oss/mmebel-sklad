@@ -1310,10 +1310,12 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
             f"✅ *{safe_pid}* — {amount_str} ta buyurtma hisob kitob qilindi!\n"
             f"📋 Tarixga saqlandi.{paid_info}\n"
             f"💳 Yangi qarz: *{new_debt_fmt}* so'm",
-            parse_mode="Markdown",
-            reply_markup=main_menu('admin')
+            parse_mode="Markdown"
         )
-        await state.clear()
+        # Hisob kitob qilingan order ni delivered_orders dan olib tashlash va sahifani qayta ko'rsatish
+        updated_delivered = [d for d in data.get('delivered_orders', []) if str(d['o_id']) != str(order_id)]
+        await state.update_data(delivered_orders=updated_delivered, current_debt=new_debt)
+        await show_client_report_inner(message, state, client_name, data.get('pending_orders', []), updated_delivered, new_debt)
         return
     
     if message.text == "💰 Qisman to'ladi":
@@ -1405,14 +1407,16 @@ async def client_partial_payment(message: types.Message, state: FSMContext):
         f"💰 *{safe_pid}* uchun {amount:,} so'm qisman to'lov qabul qilindi!\n"
         f"📋 Tarixga saqlandi.\n"
         f"💳 Yangi qarz: *{new_debt_fmt}* so'm",
-        parse_mode="Markdown",
-        reply_markup=main_menu('admin')
+        parse_mode="Markdown"
     )
-    await state.clear()
+    # Sahifani qayta ko'rsatish — diller ro'yxatida qolish
+    await state.update_data(current_debt=new_debt)
+    updated_data = await state.get_data()
+    await show_client_report_inner(message, state, client_name, updated_data.get('pending_orders', []), updated_data.get('delivered_orders', []), new_debt)
 
 
-async def show_client_report_inner(message, state, client_name, pending_orders, current_debt):
-    """Mijoz hisobot sahifasini qayta ko'rsatish (orqaga qaytganda)"""
+async def show_client_report_inner(message, state, client_name, pending_orders, delivered_orders, current_debt):
+    """Mijoz hisobot sahifasini qayta ko'rsatish (orqaga qaytganda yoki hisob kitob qilingandan so'ng)"""
     try:
         debt_formatted = f"{int(current_debt):,}".replace(",", " ")
     except:
@@ -1421,17 +1425,33 @@ async def show_client_report_inner(message, state, client_name, pending_orders, 
     header_text = f"🧑 *{client_name}* — Hisob kitob bo'limi\n"
     header_text += f"💳 Joriy qarzi: *{debt_formatted}* so'm\n\n"
     
-    if not pending_orders:
-        header_text += "✅ Hozirda faol buyurtma yo'q.\n"
+    # Pending orders ro'yxati
+    if pending_orders:
+        header_text += f"⏳ *Tayyorlanmoqda (qarzga qo'shilmagan) — {len(pending_orders)} ta:*\n"
+        for po in pending_orders[:30]:
+            safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
+            status_icon = "✅" if po.get('status') == "Tayyor bo'ldi" else "🔧"
+            header_text += f"  {status_icon} {safe_pid} — {po['amount']} ta | {po.get('due_date', '')}\n"
+        header_text += "\n"
+    
+    # Delivered orders tugmalari
+    MAX_BUTTONS = 30
+    displayed_delivered = delivered_orders[:MAX_BUTTONS]
+    hidden_count = len(delivered_orders) - len(displayed_delivered)
+    
+    if delivered_orders:
+        if hidden_count > 0:
+            header_text += f"📦 *Olib ketilgan mebellar — hisob kitob uchun tanlang:*\n_({hidden_count} ta eskisi yashirilgan)_"
+        else:
+            header_text += f"📦 *Olib ketilgan mebellar — hisob kitob uchun tanlang:*"
     else:
-        header_text += f"📦 Faol buyurtmalar: *{len(pending_orders)} ta*\n"
-        header_text += "Hisob kitob qilish uchun mebelni tanlang:"
+        header_text += "✅ Barcha mebellar hisob kitob qilindi."
     
     order_buttons = []
-    for po in pending_orders:
-        safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
-        status_label = "✅" if po['status'] == "Tayyor bo'ldi" else "🔧"
-        btn_text = f"{status_label} {safe_pid} — {po['amount']} ta | {po['due_date']}"
+    for do in displayed_delivered:
+        safe_pid = str(do['product_id']).replace('`', '').replace('*', '')
+        d_date = do.get('delivered_at', '')
+        btn_text = f"🚛 {safe_pid} — {do['amount']} ta | {d_date}"
         order_buttons.append([types.KeyboardButton(text=btn_text)])
     
     order_buttons.append([types.KeyboardButton(text=f"📜 {client_name} Hisob Tarix")])
@@ -1482,16 +1502,47 @@ async def show_client_accounting_history(message, client_name):
             type_text = "To'liq hisob kitob"
         else:
             icon = "💰"
-            type_text = f"Qisman to'lov: {h.get('partial_payment', 0):,} so'm".replace(",", " ")
+            paid_amount = h.get('partial_payment', 0)
+            try:
+                paid_fmt = f"{int(paid_amount):,}".replace(",", " ")
+            except:
+                paid_fmt = str(paid_amount)
+            type_text = f"Qisman to'lov: {paid_fmt} so'm"
         
         product_id = str(h.get('product_id', '')).replace('`', '').replace('*', '')
         amount = h.get('amount', '1')
         acc_date = format_date(h.get('accounting_date', ''))
         due_date = format_date(h.get('due_date', ''))
+        comment = h.get('comment', '')
+        
+        # Narxni ko'rsatish
+        price_val = h.get('price', 0)
+        total_val = h.get('total_price', 0)
+        try:
+            amount_int = int(float(str(amount))) if amount else 1
+        except:
+            amount_int = 1
+        
+        if total_val and str(total_val).strip() not in ('', '0', 'None'):
+            try:
+                narx_text = f"{int(float(str(total_val))):,}".replace(",", " ") + " so'm"
+            except:
+                narx_text = str(total_val) + " so'm"
+        elif price_val and str(price_val).strip() not in ('', '0', 'None'):
+            try:
+                narx_text = f"{int(float(str(price_val))):,}".replace(",", " ") + f" so'm × {amount_int} = " + f"{int(float(str(price_val))) * amount_int:,}".replace(",", " ") + " so'm"
+            except:
+                narx_text = str(price_val) + " so'm"
+        else:
+            narx_text = ""
         
         entry = f"{icon} *{product_id}* — {amount} ta\n"
         entry += f"   📋 {type_text}\n"
         entry += f"   📅 Sana: {acc_date}\n"
+        if narx_text:
+            entry += f"   💰 Narxi: {narx_text}\n"
+        if comment and str(comment).strip().lower() not in ('', 'yoq', 'yo\'q'):
+            entry += f"   📝 Izoh: {comment}\n"
         if due_date:
             entry += f"   🗓 Muddat: {due_date}\n"
         entry += "\n"
