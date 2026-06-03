@@ -832,8 +832,8 @@ async def show_client_report(message: types.Message, state: FSMContext):
                             deliveries_map[d.get('order_id')] = d
 
         # ===== QARZNI TO'G'RI HISOBLASH =====
-        # Faqat YETKAZILGAN statusdagi buyurtmalar (whitelist)
-        DELIVERED_STATUSES = {"Biz yetkazib berdik", "Dillerni o'zi olib ketdi"}
+        # Yetkazilmagan yoki bekor qilingan statuslar (blacklist) — qolganlar qarzga kiradi
+        EXCLUDED_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi", 'Bekor qilindi'}
         search_name_for_debt = client_name.strip().lower()
 
         # 1-qadam: Hisob kitob tarixidan to'liq to'langan order_id lar va qisman to'lovlarni olish
@@ -868,20 +868,35 @@ async def show_client_report(message: types.Message, state: FSMContext):
                 if o_client != search_name_for_debt:
                     continue
                 o_status = o.get('status', '')
-                if o_status not in DELIVERED_STATUSES:
-                    continue  # Faqat yetkazilganlar (pending, bekor va boshqalar kiritilmaydi)
+                if o_status in EXCLUDED_STATUSES:
+                    continue  # Pending yoki bekor — qarzga kiritmaydi
                 if str(o_id) in accounted_order_ids_set:
                     continue  # To'liq hisob kitob qilingan — qarzdan chiqarilgan
-                # Narxni qo'shish
+                # Narxni aniqlash
                 try:
                     raw_total = o.get('total_price', None)
                     raw_price = o.get('price', None)
                     raw_amount = o.get('amount', 1)
                     a_int = int(float(str(raw_amount))) if raw_amount else 1
+
+                    order_price = 0
                     if raw_total is not None and str(raw_total).strip() not in ('', '0', 'None'):
-                        correct_debt += int(float(str(raw_total)))
+                        order_price = int(float(str(raw_total)))
                     elif raw_price is not None and str(raw_price).strip() not in ('', '0', 'None'):
-                        correct_debt += int(float(str(raw_price))) * a_int
+                        order_price = int(float(str(raw_price))) * a_int
+                    else:
+                        # Fallback: mebellar jadvalidan narx olish (eski buyurtmalar)
+                        p_id = str(o.get('product_id', '')).replace(' ', '').replace('-', '').upper()
+                        if mebellar_ref and isinstance(mebellar_ref, dict) and p_id in mebellar_ref:
+                            mebel = mebellar_ref[p_id]
+                            if isinstance(mebel, dict) and mebel.get('narxi'):
+                                price_str = str(mebel['narxi']).replace("so'm", '').replace('$', '').replace(' ', '').replace(',', '')
+                                try:
+                                    order_price = int(float(price_str)) * a_int
+                                except Exception:
+                                    pass
+
+                    correct_debt += order_price
                 except Exception:
                     pass
 
