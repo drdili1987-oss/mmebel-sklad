@@ -1038,43 +1038,76 @@ async def show_client_report(message: types.Message, state: FSMContext):
         header_text = f"🧑 *{client_name}* — Hisob kitob bo'limi\n"
         header_text += f"💳 Joriy qarzi: *{debt_formatted}* so'm\n\n"
 
-        # 1. Tayyorlanmoqda (olib ketilmagan) — faqat ro'yxat sifatida
+        # 1. Tayyorlanmoqda — qisqa ro'yxat (har biri 1 qator)
         if pending_orders:
             header_text += f"⏳ *Tayyorlanmoqda (qarzga qo'shilmagan) — {len(pending_orders)} ta:*\n"
-            for po in pending_orders:
+            for po in pending_orders[:30]:  # Max 30 ta ko'rsatish
                 safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
-                status_label = "✅ Tayyor" if po['status'] == "Tayyor bo'ldi" else "🔧 Tayyorlanmoqda"
-                header_text += f"  ▪️ {safe_pid} — {po['amount']} ta ({status_label})\n"
-                header_text += f"     📅 Muddat: {po['due_date']}\n"
-                if po.get('price'):
-                    header_text += f"     💰 {po['price']} *(yetkazilganda qarzga qo'shiladi)*\n"
+                status_icon = "✅" if po['status'] == "Tayyor bo'ldi" else "🔧"
+                header_text += f"  {status_icon} {safe_pid} — {po['amount']} ta | {po['due_date']}\n"
+            if len(pending_orders) > 30:
+                header_text += f"  _...va yana {len(pending_orders) - 30} ta_\n"
             header_text += "\n"
-        
-        # 2. Yetkazilgan (olib ketilgan) — tugmalar shaklida
+
+        # 2. Yetkazilgan — tugmalar shaklida (max 30 ta, eng yangi birinchi)
+        MAX_BUTTONS = 30
+        displayed_delivered = delivered_orders[:MAX_BUTTONS]
+        hidden_count = len(delivered_orders) - len(displayed_delivered)
+
         if delivered_orders:
-            header_text += f"📦 *Olib ketilgan mebellar — hisob kitob uchun tanlang:*"
+            if hidden_count > 0:
+                header_text += f"📦 *Olib ketilgan mebellar — hisob kitob uchun tanlang:*\n_({hidden_count} ta eskisi yashirilgan, avval yangilarini hisob kitob qiling)_"
+            else:
+                header_text += f"📦 *Olib ketilgan mebellar — hisob kitob uchun tanlang:*"
         else:
             header_text += "❌ Hisob kitob qilinadigan (olib ketilgan) mebel yo'q."
-        
-        # Tugmalar — FAQAT yetkazilgan buyurtmalar uchun
+
+        # Tugmalar — faqat ko'rsatiladigan buyurtmalar uchun
         order_buttons = []
-        for do in delivered_orders:
+        for do in displayed_delivered:
             safe_pid = str(do['product_id']).replace('`', '').replace('*', '')
             d_date = do.get('delivered_at', '')
             btn_text = f"🚛 {safe_pid} — {do['amount']} ta | {d_date}"
             order_buttons.append([types.KeyboardButton(text=btn_text)])
-        
+
         # Tarix va Bosh menyu tugmalari
         order_buttons.append([types.KeyboardButton(text=f"📜 {client_name} Hisob Tarix")])
         order_buttons.append([types.KeyboardButton(text="Bosh menyu")])
-        
+
         markup = types.ReplyKeyboardMarkup(keyboard=order_buttons, resize_keyboard=True)
-        
-        # Xabar yuborish
-        try:
-            await message.answer(header_text, parse_mode="Markdown", reply_markup=markup)
-        except Exception:
-            await message.answer(header_text, reply_markup=markup)
+
+        # Xabar yuborish — hajm bo'yicha bo'laklash
+        MAX_MSG = 3800
+        if len(header_text) <= MAX_MSG:
+            try:
+                await message.answer(header_text, parse_mode="Markdown", reply_markup=markup)
+            except Exception:
+                await message.answer(header_text, reply_markup=markup)
+        else:
+            # Matnni bo'laklarga ajratib yuborish
+            lines = header_text.split('\n')
+            chunk = ""
+            chunks = []
+            for line in lines:
+                if len(chunk) + len(line) + 1 > MAX_MSG:
+                    chunks.append(chunk)
+                    chunk = line + '\n'
+                else:
+                    chunk += line + '\n'
+            if chunk:
+                chunks.append(chunk)
+            # Birinchi bo'laklar oddiy, oxirgisi keyboard bilan
+            for i, ch in enumerate(chunks):
+                try:
+                    if i == len(chunks) - 1:
+                        await message.answer(ch, parse_mode="Markdown", reply_markup=markup)
+                    else:
+                        await message.answer(ch, parse_mode="Markdown")
+                except Exception:
+                    if i == len(chunks) - 1:
+                        await message.answer(ch, reply_markup=markup)
+                    else:
+                        await message.answer(ch)
         
         # 💵 Dollar stikeri yuborish
         try:
