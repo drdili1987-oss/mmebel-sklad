@@ -3234,13 +3234,28 @@ async def fallback_handler(message: types.Message, state: FSMContext):
 async def handle(request):
     return web.Response(text="Bot is running")
 
+async def check_and_mark_reminder(reminder_type: str) -> bool:
+    """Firebase da bugun ushbu eslatma yuborilganligini tekshiradi.
+    Yuborilmagan bo'lsa True qaytaradi va belgilab qo'yadi.
+    Yuborilgan bo'lsa False qaytaradi (duplicate oldini olish)."""
+    today_str = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d")
+    ref_path = f"reminder_sent/{today_str}/{reminder_type}"
+    already_sent = await asyncio.to_thread(db.reference(ref_path).get)
+    if already_sent:
+        logging.info(f"[Reminder] {reminder_type} bugun allaqachon yuborilgan, o'tkazib yuborildi.")
+        return False
+    await asyncio.to_thread(db.reference(ref_path).set, True)
+    return True
+
 async def handle_morning_cron(request):
     token = request.query.get('token')
     if not token or token != API_TOKEN:
         return web.Response(text="Unauthorized", status=403)
     try:
-        await send_morning_reminder()
-        return web.Response(text="Morning reminder triggered successfully")
+        if await check_and_mark_reminder('morning'):
+            await send_morning_reminder()
+            return web.Response(text="Morning reminder sent")
+        return web.Response(text="Morning reminder already sent today")
     except Exception as e:
         logging.error(f"Cron morning error: {e}")
         return web.Response(text=f"Error: {e}", status=500)
@@ -3250,8 +3265,10 @@ async def handle_overdue_cron(request):
     if not token or token != API_TOKEN:
         return web.Response(text="Unauthorized", status=403)
     try:
-        await send_overdue_reminder()
-        return web.Response(text="Overdue reminder triggered successfully")
+        if await check_and_mark_reminder('overdue'):
+            await send_overdue_reminder()
+            return web.Response(text="Overdue reminder sent")
+        return web.Response(text="Overdue reminder already sent today")
     except Exception as e:
         logging.error(f"Cron overdue error: {e}")
         return web.Response(text=f"Error: {e}", status=500)
@@ -3261,8 +3278,10 @@ async def handle_tomorrow_cron(request):
     if not token or token != API_TOKEN:
         return web.Response(text="Unauthorized", status=403)
     try:
-        await send_tomorrow_reminder()
-        return web.Response(text="Tomorrow reminder triggered successfully")
+        if await check_and_mark_reminder('tomorrow'):
+            await send_tomorrow_reminder()
+            return web.Response(text="Tomorrow reminder sent")
+        return web.Response(text="Tomorrow reminder already sent today")
     except Exception as e:
         logging.error(f"Cron tomorrow error: {e}")
         return web.Response(text=f"Error: {e}", status=500)
@@ -3279,49 +3298,44 @@ async def keep_awake():
             pass
 
 async def daily_reminder_task():
-    """Kuniga 2 marta eslatma yuborish: 09:00 va 15:00
-    Har ikkala vaqtda ham shu kungacha yetkazilmagan mebellar ro'yxati yuboriladi.
-    Qo'shimcha: 15:05 da ertangi zakazlar ham yuboriladi.
+    """Kuniga 3 marta eslatma yuborish:
+    - 09:00 — ertalabki (yetkazilmagan mebellar)
+    - 15:00 — tushki (yetkazilmagan mebellar)
+    - 15:05 — ertangi zakazlar ro'yxati
+    Firebase orqali duplicate yuborishdan himoyalangan.
     """
-    last_sent = {
-        'morning': None,
-        'overdue': None,
-        'tomorrow': None
-    }
-
     while True:
         now = datetime.now(TASHKENT_TZ)
-        today_str = now.strftime("%Y-%m-%d")
 
-        # 09:00 dan 10:00 gacha oraliqda yuborish (agar server o'chib yongan bo'lsa)
-        if 9 <= now.hour < 10 and last_sent['morning'] != today_str:
+        # 09:00 da ertalabki eslatma
+        if now.hour == 9 and now.minute == 0:
             try:
-                await send_morning_reminder()
-                last_sent['morning'] = today_str
-                logging.info("[Scheduler] Morning reminder sent.")
+                if await check_and_mark_reminder('morning'):
+                    await send_morning_reminder()
+                    logging.info("[Scheduler] Morning reminder sent.")
             except Exception as e:
                 logging.error(f"[Scheduler] Morning xato: {e}")
 
-        # 15:00 dan 16:00 gacha
-        if 15 <= now.hour < 16 and last_sent['overdue'] != today_str:
+        # 15:00 da tushki eslatma
+        if now.hour == 15 and now.minute == 0:
             try:
-                await send_overdue_reminder()
-                last_sent['overdue'] = today_str
-                logging.info("[Scheduler] Overdue reminder sent.")
+                if await check_and_mark_reminder('overdue'):
+                    await send_overdue_reminder()
+                    logging.info("[Scheduler] Overdue reminder sent.")
             except Exception as e:
                 logging.error(f"[Scheduler] Overdue xato: {e}")
 
-        # 15:05 dan keyin ertangi zakazlar
-        if 15 <= now.hour < 16 and now.minute >= 5 and last_sent['tomorrow'] != today_str:
+        # 15:05 da ertangi zakazlar
+        if now.hour == 15 and now.minute == 5:
             try:
-                await send_tomorrow_reminder()
-                last_sent['tomorrow'] = today_str
-                logging.info("[Scheduler] Tomorrow reminder sent.")
+                if await check_and_mark_reminder('tomorrow'):
+                    await send_tomorrow_reminder()
+                    logging.info("[Scheduler] Tomorrow reminder sent.")
             except Exception as e:
                 logging.error(f"[Scheduler] Tomorrow xato: {e}")
 
-        # Har 1 daqiqada tekshirish (uzoq sleep server o'chishida yo'qolmasligi uchun)
-        await asyncio.sleep(60)
+        # Har 30 soniyada tekshirish (aniq vaqtda yuborish uchun)
+        await asyncio.sleep(30)
 
 async def daily_backup_task():
     import json
