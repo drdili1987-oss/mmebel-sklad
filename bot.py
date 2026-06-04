@@ -1695,7 +1695,6 @@ async def send_notification(msg):
 async def build_undelivered_msg(header: str, today_str: str) -> str | None:
     """Shu kungacha yetkazilmagan barcha mebellar ro'yxatini tayyorlash"""
     ACTIVE_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi'}
-    DONE_STATUSES   = {"Biz yetkazib berdik", "Dillerni o'zi olib ketdi", 'Bekor qilindi'}
 
     orders_ref = await asyncio.to_thread(db.reference('orders').get)
     if not orders_ref:
@@ -1709,7 +1708,8 @@ async def build_undelivered_msg(header: str, today_str: str) -> str | None:
         if not isinstance(o, dict):
             continue
         status = o.get('status', '')
-        if status in DONE_STATUSES:
+        # Faqat faol statusdagi buyurtmalarni ko'rsatish (allaqachon ketgan yoki bekor qilinganlarni emas)
+        if status not in ACTIVE_STATUSES:
             continue
         due = parse_order_date(o.get('due_date', ''))
         if due and due.date() <= today.date():
