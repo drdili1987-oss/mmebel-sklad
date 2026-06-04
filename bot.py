@@ -299,7 +299,7 @@ async def add_name(message: types.Message, state: FSMContext):
 @dp.message(ProductState.model)
 async def add_model(message: types.Message, state: FSMContext):
     await state.update_data(model=message.text)
-    await message.answer("Narxini kiriting (so'mda):")
+    await message.answer("Narxini kiriting ($da, masalan: 340):")
     await state.set_state(ProductState.price)
 
 @dp.message(ProductState.price)
@@ -350,7 +350,7 @@ async def add_final(message: types.Message, state: FSMContext):
     )
     
     role = await get_user_role(message.from_user.id)
-    result_text = f"✅ Mebel qo'shildi!\n🆔 ID: `{p_id}`\n🪑 Nomi: {data['name']}\n📦 Modeli: {data['model']}\n💰 Narxi: {data['price']} so'm\n📦 Soni: {data['quantity']} ta"
+    result_text = f"✅ Mebel qo'shildi!\n🆔 ID: `{p_id}`\n🪑 Nomi: {data['name']}\n📦 Modeli: {data['model']}\n💰 Narxi: {data['price']}$\n📦 Soni: {data['quantity']} ta"
     
     if rasm_url:
         try:
@@ -1038,7 +1038,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
             debt_formatted = str(current_debt)
 
         header_text = f"🧑 *{client_name}* — Hisob kitob bo'limi\n"
-        header_text += f"💳 Joriy qarzi: *{debt_formatted}* so'm\n\n"
+        header_text += f"💳 Joriy qarzi: *{debt_formatted}*$\n\n"
 
         # 1. Tayyorlanmoqda — qisqa ro'yxat (har biri 1 qator)
         if pending_orders:
@@ -1305,11 +1305,11 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
         except Exception:
             new_debt_fmt = str(new_debt)
 
-        paid_info = f"\n💸 To'landi: *{total_price:,}* so'm".replace(",", " ") if total_price > 0 else ""
+        paid_info = f"\n💸 To'landi: *{total_price:,}*$".replace(",", " ") if total_price > 0 else ""
         await message.answer(
             f"✅ *{safe_pid}* — {amount_str} ta buyurtma hisob kitob qilindi!\n"
             f"📋 Tarixga saqlandi.{paid_info}\n"
-            f"💳 Yangi qarz: *{new_debt_fmt}* so'm",
+            f"💳 Yangi qarz: *{new_debt_fmt}*$",
             parse_mode="Markdown"
         )
         # Hisob kitob qilingan order ni delivered_orders dan olib tashlash va sahifani qayta ko'rsatish
@@ -1326,7 +1326,7 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
         await state.update_data(order_id=order_id)
         await message.answer(
             f"💰 *{safe_pid}* uchun qancha pul to'ladi?\n"
-            f"(Faqat raqam kiriting, so'mda):",
+            f"(Faqat raqam kiriting, $da):",
             parse_mode="Markdown",
             reply_markup=types.ReplyKeyboardRemove()
         )
@@ -1404,9 +1404,9 @@ async def client_partial_payment(message: types.Message, state: FSMContext):
         new_debt_fmt = str(new_debt)
     
     await message.answer(
-        f"💰 *{safe_pid}* uchun {amount:,} so'm qisman to'lov qabul qilindi!\n"
+        f"💰 *{safe_pid}* uchun {amount:,}$ qisman to'lov qabul qilindi!\n"
         f"📋 Tarixga saqlandi.\n"
-        f"💳 Yangi qarz: *{new_debt_fmt}* so'm",
+        f"💳 Yangi qarz: *{new_debt_fmt}*$",
         parse_mode="Markdown"
     )
     # Sahifani qayta ko'rsatish — diller ro'yxatida qolish
@@ -1423,7 +1423,7 @@ async def show_client_report_inner(message, state, client_name, pending_orders, 
         debt_formatted = str(current_debt)
     
     header_text = f"🧑 *{client_name}* — Hisob kitob bo'limi\n"
-    header_text += f"💳 Joriy qarzi: *{debt_formatted}* so'm\n\n"
+    header_text += f"💳 Joriy qarzi: *{debt_formatted}*$\n\n"
     
     # Pending orders ro'yxati
     if pending_orders:
@@ -1511,7 +1511,7 @@ async def show_client_accounting_history(message, client_name):
                 paid_fmt = f"{int(paid_amount):,}".replace(",", " ")
             except:
                 paid_fmt = str(paid_amount)
-            type_text = f"Qisman to'lov: {paid_fmt} so'm"
+            type_text = f"Qisman to'lov: {paid_fmt}$"
         
         product_id = str(h.get('product_id', '')).replace('`', '').replace('*', '')
         amount = h.get('amount', '1')
@@ -1531,15 +1531,15 @@ async def show_client_accounting_history(message, client_name):
         narx_text = ""
         if total_val and str(total_val).strip() not in ('', '0', 'None'):
             try:
-                narx_text = f"{int(float(str(total_val))):,}".replace(",", " ") + " so'm"
+                narx_text = f"{int(float(str(total_val))):,}".replace(",", " ") + "$"
             except:
-                narx_text = str(total_val) + " so'm"
+                narx_text = str(total_val) + "$"
         elif price_val and str(price_val).strip() not in ('', '0', 'None'):
             try:
                 p_int = int(float(str(price_val)))
-                narx_text = f"{p_int:,}".replace(",", " ") + f" so'm × {amount_int} = " + f"{p_int * amount_int:,}".replace(",", " ") + " so'm"
+                narx_text = f"{p_int:,}".replace(",", " ") + f"$ × {amount_int} = " + f"{p_int * amount_int:,}".replace(",", " ") + "$"
             except:
-                narx_text = str(price_val) + " so'm"
+                narx_text = str(price_val) + "$"
         
         # 2. Narx topilmasa — orders jadvalidan olish
         if not narx_text:
@@ -1551,13 +1551,13 @@ async def show_client_accounting_history(message, client_name):
                     raw_price = o.get('price', None)
                     if raw_total and str(raw_total).strip() not in ('', '0', 'None'):
                         try:
-                            narx_text = f"{int(float(str(raw_total))):,}".replace(",", " ") + " so'm"
+                            narx_text = f"{int(float(str(raw_total))):,}".replace(",", " ") + "$"
                         except:
                             pass
                     elif raw_price and str(raw_price).strip() not in ('', '0', 'None'):
                         try:
                             p_int = int(float(str(raw_price)))
-                            narx_text = f"{p_int:,}".replace(",", " ") + f" so'm × {amount_int} = " + f"{p_int * amount_int:,}".replace(",", " ") + " so'm"
+                            narx_text = f"{p_int:,}".replace(",", " ") + f"$ × {amount_int} = " + f"{p_int * amount_int:,}".replace(",", " ") + "$"
                         except:
                             pass
         
@@ -1570,7 +1570,7 @@ async def show_client_accounting_history(message, client_name):
                     try:
                         m_price_str = str(mebel['narxi']).replace("so'm", "").replace("$", "").replace(" ", "").replace(",", "")
                         m_price = int(float(m_price_str))
-                        narx_text = f"{m_price:,}".replace(",", " ") + f" so'm × {amount_int} = " + f"{m_price * amount_int:,}".replace(",", " ") + " so'm ⚠️(joriy narx)"
+                        narx_text = f"{m_price:,}".replace(",", " ") + f"$ × {amount_int} = " + f"{m_price * amount_int:,}".replace(",", " ") + "$ ⚠️(joriy narx)"
                     except:
                         pass
         
@@ -2040,7 +2040,7 @@ async def delivery_report(message: types.Message, state: FSMContext):
         if total_sum_usd > 0:
             sums.append(f"{total_sum_usd}$")
         if total_sum_uzs > 0:
-            sums.append(f"{total_sum_uzs:,} so'm".replace(",", " "))
+            sums.append(f"{total_sum_uzs:,}$".replace(",", " "))
         if sums:
             summary += f"💰 Jami tushum: {' + '.join(sums)}"
         else:
@@ -2362,13 +2362,13 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
         await state.update_data(new_status=new_status, driver="O'zi olib ketdi")
         markup = types.ReplyKeyboardMarkup(
             keyboard=[
-                [types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
-                [types.KeyboardButton(text="10 so'm"), types.KeyboardButton(text="0")],
+                [types.KeyboardButton(text="6$"), types.KeyboardButton(text="8$")],
+                [types.KeyboardButton(text="10$"), types.KeyboardButton(text="0")],
                 [types.KeyboardButton(text="Bosh menyu")]
             ],
             resize_keyboard=True
         )
-        await message.answer("Chegirma summasini tanlang yoki kiriting:", reply_markup=markup)
+        await message.answer("Chegirma summasini tanlang yoki kiriting ($da):", reply_markup=markup)
         await state.set_state(DeliveryControlState.custom_price)
         return
 
@@ -2404,12 +2404,12 @@ async def delivery_driver(message: types.Message, state: FSMContext):
         
         markup = types.ReplyKeyboardMarkup(
             keyboard=[
-                [types.KeyboardButton(text="3,5 so'm"), types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
+                [types.KeyboardButton(text="3.5$"), types.KeyboardButton(text="6$"), types.KeyboardButton(text="8$")],
                 [types.KeyboardButton(text="Boshqa narx"), types.KeyboardButton(text="Bosh menyu")]
             ],
             resize_keyboard=True
         )
-        await message.answer("Yetkazib berish narxini belgilang:", reply_markup=markup)
+        await message.answer("Yetkazib berish narxini belgilang ($da):", reply_markup=markup)
         await state.set_state(DeliveryControlState.delivery_price)
     except Exception as e:
         import traceback
@@ -2426,7 +2426,7 @@ async def delivery_price_handler(message: types.Message, state: FSMContext):
         return
         
     if message.text == "Boshqa narx":
-        await message.answer("Iltimos, narxni kiriting (masalan: 10$ yoki 100000 so'm):", reply_markup=types.ReplyKeyboardRemove())
+        await message.answer("Iltimos, narxni kiriting (masalan: 10$):", reply_markup=types.ReplyKeyboardRemove())
         await state.set_state(DeliveryControlState.custom_price)
         return
         
@@ -2455,12 +2455,12 @@ async def delivery_custom_driver(message: types.Message, state: FSMContext):
         
         markup = types.ReplyKeyboardMarkup(
             keyboard=[
-                [types.KeyboardButton(text="3,5 so'm"), types.KeyboardButton(text="6 so'm"), types.KeyboardButton(text="8 so'm")],
+                [types.KeyboardButton(text="3.5$"), types.KeyboardButton(text="6$"), types.KeyboardButton(text="8$")],
                 [types.KeyboardButton(text="Boshqa narx"), types.KeyboardButton(text="Bosh menyu")]
             ],
             resize_keyboard=True
         )
-        await message.answer("Yetkazib berish narxini belgilang:", reply_markup=markup)
+        await message.answer("Yetkazib berish narxini belgilang ($da):", reply_markup=markup)
         await state.set_state(DeliveryControlState.delivery_price)
     except Exception as e:
         import traceback
@@ -2643,7 +2643,7 @@ async def driver_report_start(message: types.Message, state: FSMContext):
             if stats['sum_dollar'] > 0:
                 sums_arr.append(f"{stats['sum_dollar']}$")
             if stats['sum_som'] > 0:
-                sums_arr.append(f"{stats['sum_som']} so'm")
+                sums_arr.append(f"{stats['sum_som']}$")
             sum_text = " + ".join(sums_arr) if sums_arr else "0"
             
             report_text += f"💰 Narxlar: {', '.join(stats['total_price'])} (Jami: {sum_text})\n"
@@ -2686,7 +2686,7 @@ async def select_driver_finance(message: types.Message):
         )
         
         text = f"👨‍✈️ **Haydovchi:** {driver_name}\n"
-        text += f"💳 **Joriy balansi (sizning qarzingiz/haqqingiz):** {current_bal} so'm\n\n"
+        text += f"💳 **Joriy balansi (sizning qarzingiz/haqqingiz):** {current_bal}$\n\n"
         text += "*(Eslatma: Bu balansga qilingan yetkazib berishlar puli avtomatik qo'shilmaydi. Moliya bo'limi orqali hisob-kitobni o'zingiz yurgizasiz)*"
         await message.answer(text, parse_mode="Markdown", reply_markup=markup)
 
@@ -2715,7 +2715,7 @@ async def process_driver_chiqim(message: types.Message, state: FSMContext):
         record = {'type': 'Chiqim', 'amount': amount, 'timestamp': timestamp, 'note': "Pul berildi"}
         await asyncio.to_thread(db.reference(f'transactions/drivers/{driver_name}').push, record)
         
-        await message.answer(f"✅ {driver_name} ga {amount} so'm berildi.\n💳 Yangi balansi: {new_bal} so'm", reply_markup=main_menu('admin'))
+        await message.answer(f"✅ {driver_name} ga {amount}$ berildi.\n💳 Yangi balansi: {new_bal}$", reply_markup=main_menu('admin'))
         await state.clear()
     except ValueError:
         await message.answer("Iltimos, faqat raqam kiriting:")
@@ -2743,7 +2743,7 @@ async def process_driver_kirim(message: types.Message, state: FSMContext):
         record = {'type': 'Kirim', 'amount': amount, 'timestamp': timestamp, 'note': "Pul qaytardi / Haqqi yozildi"}
         await asyncio.to_thread(db.reference(f'transactions/drivers/{driver_name}').push, record)
         
-        await message.answer(f"✅ {driver_name} hisobiga {amount} so'm qo'shildi.\n💳 Yangi balansi: {new_bal} so'm", reply_markup=main_menu('admin'))
+        await message.answer(f"✅ {driver_name} hisobiga {amount}$ qo'shildi.\n💳 Yangi balansi: {new_bal}$", reply_markup=main_menu('admin'))
         await state.clear()
     except ValueError:
         await message.answer("Iltimos, faqat raqam kiriting:")
@@ -2761,7 +2761,7 @@ async def driver_history(message: types.Message):
         for t_id, t in trans_ref.items():
             if isinstance(t, dict):
                 icon = "🔴" if t.get('type') == 'Chiqim' else "🟢"
-                history += f"{icon} {t.get('type')}: {t.get('amount')} so'm\n"
+                history += f"{icon} {t.get('type')}: {t.get('amount')}$\n"
                 history += f"📅 Sana: {format_date(t.get('timestamp', ''))}\n\n"
             
         if len(history) > 4000:
