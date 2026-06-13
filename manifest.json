@@ -1,0 +1,21 @@
+{
+  "name": "MMebel Sklad Boshqaruv Tizimi",
+  "short_name": "MMebel",
+  "description": "Mebel ishlab chiqarish va sotuvini boshqarish uchun onlayn platforma",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "/logo-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
