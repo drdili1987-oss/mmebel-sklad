@@ -1,4 +1,4 @@
-import{s as t}from"./index-BE7OVh5U.js";import{r as g,c,f as n}from"./helpers-DZ8h-Pb2.js";const y=()=>{const i=document.getElementById("app");i.innerHTML="";const m=g(),s=c("main","main-content"),o={};t.buyurtmalar.forEach(e=>{o[e.mahsulot_nomi]=(o[e.mahsulot_nomi]||0)+e.miqdori});const a=Object.entries(o).sort((e,r)=>r[1]-e[1]),d=a.length>0?a[0][1]:0,l=t.buyurtmalar.reduce((e,r)=>e+(r.jami_narx-(r.chegirma||0)),0);s.innerHTML=`
+import{s as t}from"./index-BZTjdeiq.js";import{r as g,c,f as n}from"./helpers-aSlk4OZi.js";const y=()=>{const i=document.getElementById("app");i.innerHTML="";const m=g(),s=c("main","main-content"),o={};t.buyurtmalar.forEach(e=>{o[e.mahsulot_nomi]=(o[e.mahsulot_nomi]||0)+e.miqdori});const a=Object.entries(o).sort((e,r)=>r[1]-e[1]),d=a.length>0?a[0][1]:0,l=t.buyurtmalar.reduce((e,r)=>e+(r.jami_narx-(r.chegirma||0)),0);s.innerHTML=`
     <header style="margin-bottom: 2rem;">
       <h1 style="font-size: 1.8rem; margin-bottom: 0.5rem;">Statistika</h1>
       <p style="color: var(--text-muted);">Sotuvlar va sklad holati tahlili</p>

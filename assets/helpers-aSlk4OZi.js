@@ -1,4 +1,4 @@
-import{s as o,r as l}from"./index-BE7OVh5U.js";const s=()=>{var t;const a=document.createElement("aside");a.className="glass",a.style.cssText=`
+import{s as o,r as l}from"./index-BZTjdeiq.js";const s=()=>{var t;const a=document.createElement("aside");a.className="glass",a.style.cssText=`
     position: fixed;
     left: 0;
     top: 0;

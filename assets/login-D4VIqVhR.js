@@ -1,4 +1,4 @@
-import{s as a,r as d}from"./index-BE7OVh5U.js";const s=()=>{const e=document.getElementById("app");e.innerHTML=`
+import{s as a,r as d}from"./index-BZTjdeiq.js";const s=()=>{const e=document.getElementById("app");e.innerHTML=`
     <div class="login-container" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--background);">
       <div class="card glass" style="width: 100%; max-width: 400px; padding: 2.5rem;">
         <div style="text-align: center; margin-bottom: 2rem;">
