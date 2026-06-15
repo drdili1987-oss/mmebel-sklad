@@ -731,13 +731,18 @@ async def diller_cancel_start(message: types.Message, state: FSMContext):
             continue
         if o.get('client_tg_id') != user_id:
             continue
-        if o.get('status') == 'Tayyorlanmoqda':
-            cancellable.append((o_id, o))
+        if o.get('status') != 'Tayyorlanmoqda':
+            continue
+        # Faqat diller o'zi yaratgan zakazlarni bekor qila oladi
+        if o.get('source', 'diller') != 'diller':
+            continue
+        cancellable.append((o_id, o))
 
     if not cancellable:
         await message.answer(
             "❌ Bekor qilish mumkin bo'lgan zakaz yo'q.\n"
-            "_(Faqat 'Tayyorlanmoqda' statusidagi zakazlarni bekor qilish mumkin)_",
+            "_(Faqat siz tomonidan berilgan va 'Tayyorlanmoqda' statusidagi zakazlarni bekor qilish mumkin.\n"
+            "Admin tomonidan shakllangan zakazlarni bekor qilib bo'lmaydi.)_",
             parse_mode="Markdown",
             reply_markup=main_menu(role)
         )
@@ -994,6 +999,7 @@ async def process_comment(message: types.Message, state: FSMContext):
             'due_date': data['due_date'],
             'comment': comment,
             'status': 'Tayyorlanmoqda',
+            'source': 'admin',
             'created_at': datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S"),
             'month': datetime.now(TASHKENT_TZ).strftime("%Y-%m"),
             'price': price_val,
