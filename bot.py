@@ -1465,6 +1465,14 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
             raw_price = order_ref.get('price', None)
             raw_amount = order_ref.get('amount', 1)
             amount_int = int(float(str(raw_amount))) if raw_amount else 1
+            
+            # O'zi olib ketdi bo'lsa chegirmani hisobga olish
+            pickup_discount = 0
+            if order_ref.get('driver') == "O'zi olib ketdi":
+                try:
+                    pickup_discount = int(order_ref.get('pickup_discount', 0))
+                except:
+                    pickup_discount = 0
 
             if raw_total is not None and str(raw_total).strip() not in ('', '0', 'None'):
                 total_price = int(float(str(raw_total)))
@@ -1473,9 +1481,15 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
                 total_price = int(float(str(raw_price))) * amount_int
             else:
                 total_price = 0
+
+            # Net narx = mebel narxi - chegirma
+            net_price = max(0, total_price - pickup_discount)
+
         except Exception as _tp_err:
             logging.warning(f"total_price hisoblashda xatolik: {_tp_err}")
             total_price = 0
+            net_price = 0
+            pickup_discount = 0
 
         try:
             debt_raw = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
@@ -1483,14 +1497,14 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
         except Exception:
             current_debt_val = 0
 
-        new_debt = current_debt_val - total_price
+        new_debt = current_debt_val - net_price
         await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
 
         # Tranzaksiya tarixiga yozish (total_price > 0 bo'lsa)
-        if total_price > 0:
+        if net_price > 0:
             record = {
                 'type': 'Kirim',
-                'amount': total_price,
+                'amount': net_price,
                 'timestamp': timestamp,
                 'note': f"Hisob kitob qilindi: {order_id} ({order_ref.get('product_id', '')})"
             }
@@ -1505,7 +1519,11 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
         except Exception:
             new_debt_fmt = str(new_debt)
 
-        paid_info = f"\n💸 To'landi: *{total_price:,}*$".replace(",", " ") if total_price > 0 else ""
+        # Ko'rsatish uchun matn
+        if pickup_discount > 0:
+            paid_info = f"\n💰 Mebel narxi: *{total_price}*$\n💸 Chegirma (o'zi olib ketdi): *-{pickup_discount}*$\n✅ Hisoblangan: *{net_price}*$"
+        else:
+            paid_info = f"\n💸 To'landi: *{net_price:,}*$".replace(",", " ") if net_price > 0 else ""
         await message.answer(
             f"✅ *{safe_pid}* — {amount_str} ta buyurtma hisob kitob qilindi!\n"
             f"📋 Tarixga saqlandi.{paid_info}\n"
@@ -2680,10 +2698,17 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
     # Update order
     current_month = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
     timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+    # O'zi olib ketdi uchun chegirma summasini olish
+    import re as _re2
+    _disc_nums = _re2.findall(r'\d+', str(price).replace(" ", ""))
+    discount_val = int(_disc_nums[0]) if _disc_nums and driver == "O'zi olib ketdi" else 0
+
     await asyncio.to_thread(db.reference(f"orders/{order_id}").update, {
         'status': new_status,
         'driver': driver,
         'delivery_price': price,
+        'pickup_discount': discount_val,
         'month': current_month,
         'delivered_at': timestamp
     })
@@ -2735,52 +2760,62 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
                         pass
 
         if order_total_price > 0:
-            debt_ref = await asyncio.to_thread(db.reference(f'debts/{client}').get)
-            current_debt = int(debt_ref) if debt_ref else 0
-            new_debt = current_debt + order_total_price
-            await asyncio.to_thread(db.reference(f'debts/{client}').set, new_debt)
-            
-            # Tarixga yozish (Chiqim)
-            record = {
-                'type': 'Chiqim', 
-                'amount': order_total_price, 
-                'timestamp': timestamp, 
-                'note': f"Yetkazildi/Olib ketildi: {product_id} ({amount_int} ta) (Buyurtma: {order_id})"
-            }
-            await asyncio.to_thread(db.reference(f'transactions/clients/{client}').push, record)
+            # O'zi olib ketdi bo'lsa — NET narxni (chegirma ayirib) bir tranzaksiyada yoz
+            if driver == "O'zi olib ketdi" and discount_val > 0:
+                net_price = max(0, order_total_price - discount_val)
+                debt_ref = await asyncio.to_thread(db.reference(f'debts/{client}').get)
+                current_debt = int(debt_ref) if debt_ref else 0
+                new_debt = current_debt + net_price
+                await asyncio.to_thread(db.reference(f'debts/{client}').set, new_debt)
+                # Bitta tranzaksiya: chegirma ko'rsatilgan holda
+                record = {
+                    'type': 'Chiqim',
+                    'amount': net_price,
+                    'timestamp': timestamp,
+                    'note': f"Olib ketdi (chegirma: {discount_val}$): {product_id} ({amount_int} ta) → {order_total_price}$ - {discount_val}$ = {net_price}$ (Buyurtma: {order_id})"
+                }
+                await asyncio.to_thread(db.reference(f'transactions/clients/{client}').push, record)
+            else:
+                debt_ref = await asyncio.to_thread(db.reference(f'debts/{client}').get)
+                current_debt = int(debt_ref) if debt_ref else 0
+                new_debt = current_debt + order_total_price
+                await asyncio.to_thread(db.reference(f'debts/{client}').set, new_debt)
+                # Tarixga yozish (Chiqim)
+                record = {
+                    'type': 'Chiqim',
+                    'amount': order_total_price,
+                    'timestamp': timestamp,
+                    'note': f"Yetkazildi: {product_id} ({amount_int} ta) (Buyurtma: {order_id})"
+                }
+                await asyncio.to_thread(db.reference(f'transactions/clients/{client}').push, record)
     except Exception as _de:
         logging.warning(f"Qarz hisoblashda xatolik: {_de}")
-    
+
     try:
         import re as _re
         _nums = _re.findall(r'\d+', str(price).replace(" ", ""))
         price_val = int(_nums[0]) if _nums else 0
         if price_val > 0:
-            if driver == "O'zi olib ketdi":
-                # Mijoz qarzidan chegirish
-                debt_ref = await asyncio.to_thread(db.reference(f'debts/{client}').get)
-                current_debt = int(debt_ref) if debt_ref else 0
-                new_debt = current_debt - price_val
-                await asyncio.to_thread(db.reference(f'debts/{client}').set, new_debt)
-                
-                # Tarixga yozish
-                record = {'type': 'Kirim', 'amount': price_val, 'timestamp': timestamp, 'note': f"O'zi olib ketgani uchun chegirma (Buyurtma: {order_id})"}
-                await asyncio.to_thread(db.reference(f'transactions/clients/{client}').push, record)
-            else:
-                # Haydovchi balansini oshirish
+            if driver != "O'zi olib ketdi":
+                # Faqat haydovchi uchun — balansni oshirish
                 balance_ref = await asyncio.to_thread(db.reference(f"driver_balances/{driver}").get)
                 current_balance = int(balance_ref) if balance_ref else 0
                 new_balance = current_balance + price_val
                 await asyncio.to_thread(db.reference(f"driver_balances/{driver}").set, new_balance)
-                
                 # Tarixga yozish
                 record = {'type': 'Kirim', 'amount': price_val, 'timestamp': timestamp, 'note': f"Yetkazib berish haqi (Buyurtma: {order_id})"}
                 await asyncio.to_thread(db.reference(f"transactions/drivers/{driver}").push, record)
     except Exception as _pe:
         logging.warning(f"Narx parse yoki tranzaksiya xatoligi: {_pe}")
         
+    # Omborchiga va adminga xabar
+    pickup_info = f"\n💸 Chegirma: {price} → Net: {order_total_price - discount_val}$" if driver == "O'zi olib ketdi" and discount_val > 0 else f"\n💵 Narxi: {price}"
     _role = await get_user_role(message.from_user.id)
-    await message.answer(f"✅ Buyurtma holati yangilandi: {new_status}\n🚚 Haydovchi: {driver}\n💵 Narxi: {price}", reply_markup=main_menu(_role))
+    await message.answer(
+        f"✅ Buyurtma holati yangilandi: {new_status}\n"
+        f"🚚 Haydovchi: {driver}{pickup_info}",
+        reply_markup=main_menu(_role)
+    )
     
     # Notify admin
     admin_ref = await asyncio.to_thread(db.reference('users').get)
