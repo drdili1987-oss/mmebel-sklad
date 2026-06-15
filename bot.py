@@ -183,8 +183,10 @@ class DillerOrderState(StatesGroup):
     select_product = State()  # Mebel tanlash
     amount = State()          # Nechta
     due_date = State()        # Qachon kerak
-    comment = State()         # Izoh
-    phone = State()           # Telefon raqam
+
+class DillerCancelState(StatesGroup):
+    select_order = State()    # Bekor qilish uchun zakaz tanlash
+    confirm = State()         # Tasdiqlash
 
 # 4. Rollarni Tekshirish (RTDB dan)
 async def get_user_role(user_id):
@@ -227,7 +229,8 @@ def main_menu(role):
         ]
     elif role == 'diller':
         buttons = [
-            [types.KeyboardButton(text="🛍 Sotuvdagi mebellar"), types.KeyboardButton(text="📝 Zakaz berish")]
+            [types.KeyboardButton(text="🛍 Sotuvdagi mebellar"), types.KeyboardButton(text="📝 Zakaz berish")],
+            [types.KeyboardButton(text="📋 Buyurtmalar tarixi"), types.KeyboardButton(text="❌ Zakazni bekor qilish")]
         ]
     else:
         buttons = [
@@ -240,7 +243,8 @@ MAIN_MENU_BUTTONS = {
     "Bosh menyu", "➕ Yangi mebel", "📦 Mavjud mebellar", 
     "📝 Yangi buyurtma", "📋 Buyurtmalar nazorati", "📊 Hisob kitoblar", "🚚 Haydovchilar hisoboti", "🕰 Yetkazish tarixi", "📈 Sotuv statistikasi",
     "🔄 Omborni yangilash", "🚚 Yetkazishlar nazorati", "📊 Dostavka hisoboti", "🔨 Faol buyurtmalar", "🛍 Sotuvdagi mebellar",
-    "📦 Ombor sonini yangilash", "📝 Zakaz berish"
+    "📦 Ombor sonini yangilash", "📝 Zakaz berish",
+    "📋 Buyurtmalar tarixi", "❌ Zakazni bekor qilish"
 }
 
 class MainMenuMiddleware(BaseMiddleware):
@@ -514,59 +518,12 @@ async def diller_order_due_date(message: types.Message, state: FSMContext):
         await message.answer("Bosh menyu", reply_markup=main_menu(role))
         return
 
-    await state.update_data(due_date=message.text)
-    await message.answer(
-        "📝 Izoh kiriting (masalan: rang, o'lcham, yetkazib berish manzili).\n"
-        "Agar izoh bo'lmasa 'yoq' deb yozing:",
-        reply_markup=types.ReplyKeyboardRemove()
-    )
-    await state.set_state(DillerOrderState.comment)
-
-@dp.message(DillerOrderState.comment)
-async def diller_order_comment(message: types.Message, state: FSMContext):
-    if message.text == "Bosh menyu":
-        role = await get_user_role(message.from_user.id)
-        await state.clear()
-        await message.answer("Bosh menyu", reply_markup=main_menu(role))
-        return
-
-    await state.update_data(comment=message.text)
-    
-    markup = types.ReplyKeyboardMarkup(
-        keyboard=[
-            [types.KeyboardButton(text="📞 Raqamni yuborish", request_contact=True)],
-            [types.KeyboardButton(text="Bosh menyu")]
-        ],
-        resize_keyboard=True
-    )
-    await message.answer(
-        "📱 Iltimos, telefon raqamingizni yuboring (pastdagi tugmani bosing yoki yozing):",
-        reply_markup=markup
-    )
-    await state.set_state(DillerOrderState.phone)
-
-@dp.message(DillerOrderState.phone)
-async def diller_order_phone(message: types.Message, state: FSMContext):
-    if message.text == "Bosh menyu":
-        role = await get_user_role(message.from_user.id)
-        await state.clear()
-        await message.answer("Bosh menyu", reply_markup=main_menu(role))
-        return
-
-    phone = ""
-    if message.contact:
-        phone = message.contact.phone_number
-    else:
-        phone = message.text
-
+    due_date = message.text
     data = await state.get_data()
     product_id   = data['product_id']
     product_name = data.get('product_name', product_id)
     amount       = data['amount']
-    due_date     = data['due_date']
-    comment      = data['comment']
 
-    # Telegram user info
     user = message.from_user
     client_name = user.full_name or user.username or str(user.id)
 
@@ -574,14 +531,16 @@ async def diller_order_phone(message: types.Message, state: FSMContext):
     now_str  = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
     month    = datetime.now(TASHKENT_TZ).strftime("%Y-%m")
 
-    # Ombordan ayirish
+    # Mebel ma'lumotlari
     mebel_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+
+    # Ombordan ayirish
     if mebel_ref:
         current_qty = int(mebel_ref.get('soni', 0))
         new_qty = max(0, current_qty - amount)
         await asyncio.to_thread(db.reference(f'mebellar/{product_id}').update, {'soni': new_qty})
 
-    # Fetch price to store in order
+    # Narx hisoblash
     price_val = 0
     if mebel_ref and 'narxi' in mebel_ref:
         price_str = str(mebel_ref['narxi']).replace("so'm", "").replace("$", "").replace(" ", "")
@@ -591,53 +550,294 @@ async def diller_order_phone(message: types.Message, state: FSMContext):
             price_val = 0
     total_price = price_val * int(amount)
 
+    # Mebel to'liq ma'lumotlari (omborchiga)
+    mebel_nomi   = mebel_ref.get('nomi', product_name) if mebel_ref else product_name
+    mebel_modeli = mebel_ref.get('modeli', product_id) if mebel_ref else product_id
+    mebel_narxi  = mebel_ref.get('narxi', f'{price_val}$') if mebel_ref else f'{price_val}$'
+
     # Firebase'ga yozish
     await asyncio.to_thread(
         db.reference(f'orders/{order_id}').set,
         {
-            'order_id':    order_id,
-            'client_name': client_name,
+            'order_id':     order_id,
+            'client_name':  client_name,
             'client_tg_id': str(user.id),
-            'client_phone': phone,
-            'product_id':  product_id,
-            'amount':      str(amount),
-            'due_date':    due_date,
-            'comment':     comment,
-            'status':      'Tayyorlanmoqda',
-            'created_at':  now_str,
-            'month':       month,
-            'source':      'diller',
-            'price':       price_val,
-            'total_price': total_price
+            'product_id':   product_id,
+            'amount':       str(amount),
+            'due_date':     due_date,
+            'comment':      '',
+            'status':       'Tayyorlanmoqda',
+            'created_at':   now_str,
+            'month':        month,
+            'source':       'diller',
+            'price':        price_val,
+            'total_price':  total_price
         }
     )
 
     role = await get_user_role(message.from_user.id)
+    price_info = f"\n💰 Narxi: {price_val}$ × {amount} = {total_price}$" if price_val > 0 else ""
     await message.answer(
         f"✅ Zakaz qabul qilindi!\n"
         f"🆔 ID: `{order_id}`\n"
         f"📦 Mebel: {product_name} — {amount} ta\n"
-        f"📅 Muddat: {format_date(due_date)}\n"
-        f"📝 Izoh: {comment}\n"
-        f"📱 Telefon: {phone}",
+        f"📅 Muddat: {format_date(due_date)}"
+        f"{price_info}",
         parse_mode="Markdown",
         reply_markup=main_menu(role)
     )
     await state.clear()
 
-    # Admin va omborchiga xabar
+    # Admin va omborchiga to'liq komplekt xabari
+    price_line = f"💰 Narxi: {mebel_narxi} × {amount} = {total_price}$\n" if price_val > 0 else ""
     notify_text = (
         f"🔔 *Yangi zakaz (dillerdan)!*\n\n"
-        f"👤 Mijoz: {client_name} (TG: {user.id})\n"
-        f"📱 Telefon: {phone}\n"
-        f"📦 Mebel: {product_name} — {amount} ta\n"
+        f"👤 Diller: {client_name}\n"
+        f"📦 Mebel: {mebel_nomi}\n"
+        f"📐 Modeli: {mebel_modeli}\n"
+        f"🔢 Soni: {amount} ta\n"
+        f"{price_line}"
         f"📅 Muddat: {format_date(due_date)}\n"
-        f"📝 Izoh: {comment}\n"
-        f"🆔 ID: `{order_id}`"
+        f"🆔 Zakaz ID: `{order_id}`"
     )
     users_ref = await asyncio.to_thread(db.reference('users').get)
     for uid, udata in (users_ref or {}).items():
         if isinstance(udata, dict) and udata.get('role') in ['admin', 'omborchi', 'ishchi']:
+            try:
+                await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
+            except Exception:
+                pass
+    try:
+        await bot.send_message(883589794, notify_text, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+# --- DILLER: BUYURTMALAR TARIXI ---
+@dp.message(F.text == "📋 Buyurtmalar tarixi")
+async def diller_order_history(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    if role not in ['diller', 'xodim', 'ishchi']:
+        return
+
+    user_id = str(message.from_user.id)
+    orders_ref = await asyncio.to_thread(db.reference('orders').get)
+
+    if not orders_ref:
+        await message.answer("Hozircha buyurtma yo'q.", reply_markup=main_menu(role))
+        return
+
+    active    = []
+    completed = []
+
+    for o_id, o in orders_ref.items():
+        if not isinstance(o, dict):
+            continue
+        if o.get('client_tg_id') != user_id:
+            continue
+        status = o.get('status', '')
+        if status == 'Bekor qilindi':
+            continue
+        if status in ['Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi']:
+            active.append((o_id, o))
+        elif status in ["Dillerni o'zi olib ketdi", "Biz yetkazib berdik"]:
+            completed.append((o_id, o))
+
+    def get_order_date(item):
+        try:
+            return datetime.strptime(item[1].get('created_at', ''), "%Y-%m-%d %H:%M:%S")
+        except:
+            return datetime.min
+
+    active.sort(key=get_order_date, reverse=True)
+    completed.sort(key=get_order_date, reverse=True)
+
+    text = f"📋 *Sizning buyurtmalaringiz:*\n\n"
+
+    if active:
+        text += f"⏳ *Tayyorlanayotgan — {len(active)} ta:*\n"
+        for o_id, o in active:
+            st = o.get('status', '')
+            icon = "✅" if st == "Tayyor bo'ldi" else "🔧"
+            text += (
+                f"  {icon} {o.get('product_id')} — {o.get('amount')} ta\n"
+                f"     📅 Muddat: {format_date(o.get('due_date',''))} | {st}\n"
+            )
+        text += "\n"
+    
+    if completed:
+        text += f"✅ *Olib ketilgan — {len(completed)} ta:*\n"
+        for o_id, o in completed[:20]:
+            delivered = format_date(o.get('delivered_at', o.get('due_date', '')))
+            text += (
+                f"  📦 {o.get('product_id')} — {o.get('amount')} ta\n"
+                f"     📅 Sana: {delivered} | {o.get('status')}\n"
+            )
+
+    if not active and not completed:
+        text += "Hozircha buyurtma yo'q."
+
+    # Xabar uzun bo'lsa bo'laklash
+    if len(text) > 4000:
+        for i in range(0, len(text), 4000):
+            try:
+                await message.answer(text[i:i+4000], parse_mode="Markdown")
+            except Exception:
+                await message.answer(text[i:i+4000])
+    else:
+        try:
+            await message.answer(text, parse_mode="Markdown", reply_markup=main_menu(role))
+        except Exception:
+            await message.answer(text, reply_markup=main_menu(role))
+
+
+# --- DILLER: ZAKAZNI BEKOR QILISH ---
+@dp.message(F.text == "❌ Zakazni bekor qilish")
+async def diller_cancel_start(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    if role not in ['diller', 'xodim', 'ishchi']:
+        return
+
+    user_id = str(message.from_user.id)
+    orders_ref = await asyncio.to_thread(db.reference('orders').get)
+
+    if not orders_ref:
+        await message.answer("Sizda faol buyurtma yo'q.", reply_markup=main_menu(role))
+        return
+
+    cancellable = []
+    for o_id, o in orders_ref.items():
+        if not isinstance(o, dict):
+            continue
+        if o.get('client_tg_id') != user_id:
+            continue
+        if o.get('status') == 'Tayyorlanmoqda':
+            cancellable.append((o_id, o))
+
+    if not cancellable:
+        await message.answer(
+            "❌ Bekor qilish mumkin bo'lgan zakaz yo'q.\n"
+            "_(Faqat 'Tayyorlanmoqda' statusidagi zakazlarni bekor qilish mumkin)_",
+            parse_mode="Markdown",
+            reply_markup=main_menu(role)
+        )
+        return
+
+    order_info = {}
+    buttons = []
+    for o_id, o in cancellable:
+        btn_text = f"🚫 {o.get('product_id')} — {o.get('amount')} ta | {format_date(o.get('due_date',''))}"
+        buttons.append([types.KeyboardButton(text=btn_text)])
+        order_info[btn_text] = o_id
+    buttons.append([types.KeyboardButton(text="Bosh menyu")])
+
+    await state.update_data(order_info=order_info)
+    await state.set_state(DillerCancelState.select_order)
+    markup = types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    await message.answer("Qaysi zakazni bekor qilmoqchisiz?", reply_markup=markup)
+
+
+@dp.message(DillerCancelState.select_order)
+async def diller_cancel_select(message: types.Message, state: FSMContext):
+    if message.text == "Bosh menyu":
+        role = await get_user_role(message.from_user.id)
+        await state.clear()
+        await message.answer("Bosh menyu", reply_markup=main_menu(role))
+        return
+
+    data = await state.get_data()
+    order_info = data.get('order_info', {})
+
+    if message.text not in order_info:
+        await message.answer("Iltimos, tugmadan tanlang:")
+        return
+
+    order_id  = order_info[message.text]
+    order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
+    if not order_ref:
+        await message.answer("Buyurtma topilmadi.")
+        await state.clear()
+        return
+
+    await state.update_data(cancel_order_id=order_id)
+    markup = types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="✅ Ha, bekor qil")],
+            [types.KeyboardButton(text="🔙 Yo'q, qaytish")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer(
+        f"⚠️ *{order_ref.get('product_id')}* — {order_ref.get('amount')} ta zakazni bekor qilmoqchimisiz?\n"
+        f"📅 Muddat: {format_date(order_ref.get('due_date',''))}",
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+    await state.set_state(DillerCancelState.confirm)
+
+
+@dp.message(DillerCancelState.confirm)
+async def diller_cancel_confirm(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+
+    if message.text == "🔙 Yo'q, qaytish":
+        await state.clear()
+        await message.answer("Bekor qilish to'xtatildi.", reply_markup=main_menu(role))
+        return
+
+    if message.text != "✅ Ha, bekor qil":
+        await message.answer("Iltimos, tugmadan tanlang:")
+        return
+
+    data     = await state.get_data()
+    order_id = data.get('cancel_order_id')
+
+    order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
+    if not order_ref:
+        await message.answer("Buyurtma topilmadi.", reply_markup=main_menu(role))
+        await state.clear()
+        return
+
+    # Statusni yangilash
+    await asyncio.to_thread(
+        db.reference(f'orders/{order_id}').update,
+        {'status': 'Bekor qilindi'}
+    )
+
+    # Ombor sonini qaytarish
+    product_id = order_ref.get('product_id', '')
+    try:
+        amount = int(order_ref.get('amount', 1))
+    except:
+        amount = 1
+    if product_id:
+        mebel_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
+        if mebel_ref:
+            current_qty = int(mebel_ref.get('soni', 0))
+            await asyncio.to_thread(
+                db.reference(f'mebellar/{product_id}').update,
+                {'soni': current_qty + amount}
+            )
+
+    await message.answer(
+        f"✅ Zakaz bekor qilindi!\n"
+        f"📦 {product_id} — {amount} ta omborda qaytarildi.",
+        reply_markup=main_menu(role)
+    )
+    await state.clear()
+
+    # Admin va omborchiga xabar
+    user        = message.from_user
+    client_name = user.full_name or user.username or str(user.id)
+    notify_text = (
+        f"🚫 *Zakaz bekor qilindi (diller tomonidan)!*\n\n"
+        f"👤 Diller: {client_name}\n"
+        f"📦 Mebel: {product_id} — {amount} ta\n"
+        f"🆔 Zakaz ID: `{order_id}`"
+    )
+    users_ref = await asyncio.to_thread(db.reference('users').get)
+    for uid, udata in (users_ref or {}).items():
+        if isinstance(udata, dict) and udata.get('role') in ['admin', 'omborchi']:
             try:
                 await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
             except Exception:
