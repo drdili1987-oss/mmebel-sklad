@@ -230,7 +230,8 @@ def main_menu(role):
     elif role == 'diller':
         buttons = [
             [types.KeyboardButton(text="🛍 Sotuvdagi mebellar"), types.KeyboardButton(text="📝 Zakaz berish")],
-            [types.KeyboardButton(text="📋 Buyurtmalar tarixi"), types.KeyboardButton(text="❌ Zakazni bekor qilish")]
+            [types.KeyboardButton(text="📋 Buyurtmalar tarixi"), types.KeyboardButton(text="❌ Zakazni bekor qilish")],
+            [types.KeyboardButton(text="📸 Rasmlar va narxlar")]
         ]
     else:
         buttons = [
@@ -244,7 +245,7 @@ MAIN_MENU_BUTTONS = {
     "📝 Yangi buyurtma", "📋 Buyurtmalar nazorati", "📊 Hisob kitoblar", "🚚 Haydovchilar hisoboti", "🕰 Yetkazish tarixi", "📈 Sotuv statistikasi",
     "🔄 Omborni yangilash", "🚚 Yetkazishlar nazorati", "📊 Dostavka hisoboti", "🔨 Faol buyurtmalar", "🛍 Sotuvdagi mebellar",
     "📦 Ombor sonini yangilash", "📝 Zakaz berish",
-    "📋 Buyurtmalar tarixi", "❌ Zakazni bekor qilish"
+    "📋 Buyurtmalar tarixi", "❌ Zakazni bekor qilish", "📸 Rasmlar va narxlar"
 }
 
 class MainMenuMiddleware(BaseMiddleware):
@@ -391,6 +392,19 @@ async def view_stock(message: types.Message):
                     await message.answer(text + f"\n📷 Rasmi: {rasm}", parse_mode="Markdown")
             else:
                 await message.answer(text, parse_mode="Markdown")
+
+# --- DILLER: RASMLAR VA NARXLAR ---
+@dp.message(F.text == "📸 Rasmlar va narxlar")
+async def diller_photos_prices(message: types.Message):
+    role = await get_user_role(message.from_user.id)
+    if role not in ['diller', 'xodim', 'ishchi']:
+        await message.answer("Bu funksiya faqat dillerlar uchun.", reply_markup=main_menu(role))
+        return
+    await message.answer(
+        "📸 *Rasmlar va narxlar* bilan tanishish uchun quyidagi Telegram kanalga o'ting:\n\n"
+        "👉 [Rasmlar va narxlar kanaliga o'tish](https://t.me/+6yKALewduspiZDBi)",
+        parse_mode="Markdown"
+    )
 
 # --- DILLER: ZAKAZ BERISH ---
 @dp.message(F.text == "📝 Zakaz berish")
