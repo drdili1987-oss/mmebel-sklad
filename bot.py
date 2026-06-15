@@ -53,10 +53,10 @@ REGULAR_CLIENTS = [
     "Zoʻr mebel", "Umid", "Akmal aka", "Doʻkon 707", "Farxod Jomiy", "Munosib Mebel", "Islom aka", "Muxtor aka"
 ]
 
-# Diller nomi -> Telegram ID xaritasi
+# Diller nomi -> Telegram ID(lar) xaritasi (bir nechta diller bir kompaniyada bo'lishi mumkin)
 DILLER_TELEGRAM_MAP = {
-    "Munosib Mebel": 261261387,
-    "Zo\u02bbr mebel": 8043160151,
+    "Munosib Mebel": [261261387],
+    "Zo\u02bbr mebel": [8043160151, 8897559819, 15541688],
 }
 
 def get_clients_keyboard():
@@ -201,7 +201,7 @@ async def get_user_role(user_id):
         return 'omborchi'
     if user_id_str in ['6298036669', '1349256808', '7062569902', '7941658592', '1724350130', '698145797', '5063420475']:
         return 'xodim'
-    if user_id_str in ['261261387', '8043160151']:
+    if user_id_str in ['261261387', '8043160151', '8897559819', '15541688']:
         return 'diller'
     
     ref = db.reference(f'users/{user_id}')
@@ -1882,8 +1882,8 @@ async def notify_warehouse(order_data, order_id):
 async def notify_diller_new_order(order_data, order_id):
     """Admin yangi zakaz yaratganda dillerga xabar yuborish"""
     client_name = order_data.get('client', '')
-    diller_tg_id = DILLER_TELEGRAM_MAP.get(client_name)
-    if not diller_tg_id:
+    diller_ids = DILLER_TELEGRAM_MAP.get(client_name, [])
+    if not diller_ids:
         return
     # Narxni hisoblash
     price_val = order_data.get('price', 0)
@@ -1898,21 +1898,21 @@ async def notify_diller_new_order(order_data, order_id):
         total = 0
     total_str = f"{total:,} so'm".replace(',', ' ') if total else "Ko'rsatilmagan"
     price_str = f"{int(price_val):,} so'm".replace(',', ' ') if price_val else "Ko'rsatilmagan"
-    try:
-        await bot.send_message(
-            diller_tg_id,
-            f"🎉 *Sizga yangi buyurtma shakllantirildi!*\n\n"
-            f"📦 Mebel: *{order_data.get('product_id', '?')}*\n"
-            f"📊 Soni: *{amount} ta*\n"
-            f"💰 Narxi (1 dona): *{price_str}*\n"
-            f"💵 Jami narx: *{total_str}*\n"
-            f"📅 Tayyor bo'lish muddati: *{format_date(order_data.get('due_date', '?'))}*\n"
-            f"📝 Izoh: {order_data.get('comment', 'Yoq')}\n"
-            f"🆔 Buyurtma ID: `{order_id}`",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        print(f"Dillerga yangi zakaz xabari yuborishda xatolik: {e}")
+    text = (
+        f"🎉 *Sizga yangi buyurtma shakllantirildi!*\n\n"
+        f"📦 Mebel: *{order_data.get('product_id', '?')}*\n"
+        f"📊 Soni: *{amount} ta*\n"
+        f"💰 Narxi (1 dona): *{price_str}*\n"
+        f"💵 Jami narx: *{total_str}*\n"
+        f"📅 Tayyor bo'lish muddati: *{format_date(order_data.get('due_date', '?'))}*\n"
+        f"📝 Izoh: {order_data.get('comment', 'Yoq')}\n"
+        f"🆔 Buyurtma ID: `{order_id}`"
+    )
+    for tg_id in diller_ids:
+        try:
+            await bot.send_message(tg_id, text, parse_mode="Markdown")
+        except Exception as e:
+            print(f"Dillerga yangi zakaz xabari yuborishda xatolik ({tg_id}): {e}")
 
 # Kunlik eslatma yuborish funksiyasi
 def parse_order_date(date_str):
@@ -3516,8 +3516,8 @@ async def admin_order_new_value(message: types.Message, state: FSMContext):
 
     # Dillerga o'zgartirish haqida xabar va tasdiqlash tugmalari
     client_name = order_ref.get('client_name', '') if order_ref else ''
-    diller_tg_id = DILLER_TELEGRAM_MAP.get(client_name)
-    if diller_tg_id:
+    diller_ids = DILLER_TELEGRAM_MAP.get(client_name, [])
+    if diller_ids:
         field_name_uz = field_names.get(field, field)
         if field == 'due_date':
             new_val_display = format_date(new_value)
@@ -3539,22 +3539,21 @@ async def admin_order_new_value(message: types.Message, state: FSMContext):
                 types.InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"diller_reject:{order_id}")
             ]
         ])
-        try:
-            await bot.send_message(
-                diller_tg_id,
-                f"⚠️ *Buyurtmangizda o'zgartirish!*\n\n"
-                f"🆔 Buyurtma ID: `{order_id}`\n"
-                f"📦 Mebel: *{order_ref.get('product_id', '?') if order_ref else '?'}*\n"
-                f"🔄 O'zgartirilgan: *{field_name_uz}* → `{new_val_display}`\n"
-                f"💰 Narxi (1 dona): *{price_str}*\n"
-                f"💵 Jami narx: *{total_str}*\n"
-                f"📅 Muddat: *{format_date(order_ref.get('due_date', '?') if order_ref else '?')}*\n\n"
-                f"❓ Siz uchun qabulmi?",
-                reply_markup=inline_kb,
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            print(f"Dillerga o'zgartirish xabari yuborishda xatolik: {e}")
+        change_text = (
+            f"⚠️ *Buyurtmangizda o'zgartirish!*\n\n"
+            f"🆔 Buyurtma ID: `{order_id}`\n"
+            f"📦 Mebel: *{order_ref.get('product_id', '?') if order_ref else '?'}*\n"
+            f"🔄 O'zgartirilgan: *{field_name_uz}* → `{new_val_display}`\n"
+            f"💰 Narxi (1 dona): *{price_str}*\n"
+            f"💵 Jami narx: *{total_str}*\n"
+            f"📅 Muddat: *{format_date(order_ref.get('due_date', '?') if order_ref else '?')}*\n\n"
+            f"❓ Siz uchun qabulmi?"
+        )
+        for tg_id in diller_ids:
+            try:
+                await bot.send_message(tg_id, change_text, reply_markup=inline_kb, parse_mode="Markdown")
+            except Exception as e:
+                print(f"Dillerga o'zgartirish xabari yuborishda xatolik ({tg_id}): {e}")
 
     await state.clear()
 
