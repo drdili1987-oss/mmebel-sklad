@@ -59,6 +59,13 @@ DILLER_TELEGRAM_MAP = {
     "Zo\u02bbr mebel": [8043160151, 8897559819, 15541688],
 }
 
+# Telegram ID -> Diller nomi (teskari xarita)
+DILLER_ID_TO_CLIENT = {
+    tg_id: client_name
+    for client_name, id_list in DILLER_TELEGRAM_MAP.items()
+    for tg_id in id_list
+}
+
 def get_clients_keyboard():
     buttons = []
     for i in range(0, len(REGULAR_CLIENTS), 2):
@@ -194,6 +201,9 @@ class DillerCancelState(StatesGroup):
     select_order = State()    # Bekor qilish uchun zakaz tanlash
     confirm = State()         # Tasdiqlash
 
+class DillerPaymentState(StatesGroup):
+    amount = State()          # To'lov summasi
+
 # 4. Rollarni Tekshirish (RTDB dan)
 async def get_user_role(user_id):
     user_id_str = str(user_id)
@@ -237,6 +247,7 @@ def main_menu(role):
         buttons = [
             [types.KeyboardButton(text="🛍 Sotuvdagi mebellar"), types.KeyboardButton(text="📝 Zakaz berish")],
             [types.KeyboardButton(text="📋 Buyurtmalar tarixi"), types.KeyboardButton(text="❌ Zakazni bekor qilish")],
+            [types.KeyboardButton(text="📊 Buyurtmalar holati"), types.KeyboardButton(text="📥 Kirim-Chiqim")],
             [types.KeyboardButton(text="📸 Rasmlar va narxlar")]
         ]
     else:
@@ -252,6 +263,7 @@ MAIN_MENU_BUTTONS = {
     "🔄 Omborni yangilash", "🚚 Yetkazishlar nazorati", "📊 Dostavka hisoboti", "🔨 Faol buyurtmalar", "🛍 Sotuvdagi mebellar",
     "📦 Ombor sonini yangilash", "📝 Zakaz berish",
     "📋 Buyurtmalar tarixi", "❌ Zakazni bekor qilish", "📸 Rasmlar va narxlar",
+    "📊 Buyurtmalar holati", "📥 Kirim-Chiqim",
     "💳 Barchasini hisob kitob qilish", "✅ Ha, barchasini hisob kitob qilish", "❌ Yo'q, bekor qilish"
 }
 
@@ -873,7 +885,338 @@ async def diller_cancel_confirm(message: types.Message, state: FSMContext):
     except Exception:
         pass
 
+
+# --- DILLER: BUYURTMALAR HOLATI (faqat ko'rish) ---
+@dp.message(F.text == "📊 Buyurtmalar holati")
+async def diller_order_status(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    if role not in ['diller', 'xodim', 'ishchi']:
+        return
+
+    user_tg_id = str(message.from_user.id)
+    # Diller client nomini topish (DILLER_ID_TO_CLIENT xaritasidan)
+    client_name_for_diller = DILLER_ID_TO_CLIENT.get(message.from_user.id, '')
+
+    orders_ref = await asyncio.to_thread(db.reference('orders').get)
+    if not orders_ref:
+        await message.answer("Hozircha buyurtma yo'q.", reply_markup=main_menu(role))
+        return
+
+    pending   = []  # Tayyorlanmoqda / Tayyor bo'ldi
+    delivered = []  # Yetkazilgan / Olib ketilgan
+    cancelled = []  # Bekor qilingan
+
+    STATUS_ICONS = {
+        'Tayyorlanmoqda': '🔧',
+        "Tayyor bo'ldi":  '✅',
+        'Yuborildi':       '🚚',
+        "Biz yetkazib berdik":       '📦',
+        "Dillerni o'zi olib ketdi":  '🏠',
+        'Bekor qilindi':             '❌',
+    }
+
+    for o_id, o in orders_ref.items():
+        if not isinstance(o, dict):
+            continue
+        o_tg = o.get('client_tg_id', '')
+        o_client = str(o.get('client_name') or o.get('client') or '').strip().lower()
+        # O'zi bergan yoki admin uning nomidan bergan zakazlar
+        is_own   = (o_tg == user_tg_id)
+        is_admin = (client_name_for_diller and
+                    o_client == client_name_for_diller.strip().lower())
+        if not (is_own or is_admin):
+            continue
+
+        status = o.get('status', '')
+        source = '👤' if is_own else '🏷'  # 👤 = o'zi, 🏷 = admin yaratgan
+        entry = {
+            'o_id': o_id,
+            'product_id': o.get('product_id', '?'),
+            'amount': o.get('amount', '1'),
+            'due_date': format_date(o.get('due_date', '')),
+            'status': status,
+            'price': o.get('price', 0),
+            'total_price': o.get('total_price', 0),
+            'driver': o.get('driver', ''),
+            'delivery_price': o.get('delivery_price', ''),
+            'delivered_at': format_date(o.get('delivered_at', '')),
+            'source': source,
+            'created_at': o.get('created_at', ''),
+        }
+        if status in ['Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi']:
+            pending.append(entry)
+        elif status in ["Biz yetkazib berdik", "Dillerni o'zi olib ketdi"]:
+            delivered.append(entry)
+        elif status == 'Bekor qilindi':
+            cancelled.append(entry)
+
+    # Saralash — yangirog'i birinchi
+    def sort_by_date(e):
+        try:
+            return datetime.strptime(e['created_at'], "%Y-%m-%d %H:%M:%S")
+        except:
+            return datetime.min
+
+    pending.sort(key=sort_by_date, reverse=True)
+    delivered.sort(key=sort_by_date, reverse=True)
+
+    text = "📊 *Sizning barcha buyurtmalaringiz:*\n"
+    text += "_(👤 = siz bergansiz | 🏷 = admin yaratgan)_\n\n"
+
+    if pending:
+        text += f"⏳ *Tayyorlanmoqda — {len(pending)} ta:*\n"
+        for e in pending:
+            icon = STATUS_ICONS.get(e['status'], '🔧')
+            try:
+                price_val = int(e['price'])
+                amount_val = int(e['amount'])
+                total = price_val * amount_val
+                price_str = f"💰 {total:,}$".replace(',', ' ')
+            except:
+                price_str = ""
+            text += (
+                f"  {e['source']} {icon} *{e['product_id']}* — {e['amount']} ta\n"
+                f"     📅 Muddat: {e['due_date']} | _{e['status']}_\n"
+            )
+            if price_str:
+                text += f"     {price_str}\n"
+        text += "\n"
+
+    if delivered:
+        text += f"✅ *Yetkazilgan — {len(delivered)} ta:*\n"
+        for e in delivered[:30]:
+            try:
+                price_val = int(e['price'])
+                amount_val = int(e['amount'])
+                total = price_val * amount_val
+                price_str = f"{total:,}$".replace(',', ' ')
+            except:
+                price_str = "—"
+            driver_info = ""
+            if e['driver']:
+                driver_info = f" | 🚚 {e['driver']}"
+                if e['delivery_price']:
+                    driver_info += f" ({e['delivery_price']})"
+            text += (
+                f"  {e['source']} 📦 *{e['product_id']}* — {e['amount']} ta | 💵 {price_str}\n"
+                f"     📅 {e['delivered_at']}{driver_info}\n"
+            )
+        if len(delivered) > 30:
+            text += f"  _...va yana {len(delivered) - 30} ta_\n"
+        text += "\n"
+
+    if cancelled:
+        text += f"❌ *Bekor qilingan — {len(cancelled)} ta:*\n"
+        for e in cancelled[:10]:
+            text += f"  ✖️ {e['product_id']} — {e['amount']} ta\n"
+
+    if not pending and not delivered and not cancelled:
+        text += "Hozircha buyurtma yo'q."
+
+    if len(text) > 4000:
+        for i in range(0, len(text), 4000):
+            try:
+                await message.answer(text[i:i+4000], parse_mode="Markdown")
+            except:
+                await message.answer(text[i:i+4000])
+    else:
+        try:
+            await message.answer(text, parse_mode="Markdown", reply_markup=main_menu(role))
+        except:
+            await message.answer(text, reply_markup=main_menu(role))
+
+
+# --- DILLER: KIRIM-CHIQIM ---
+@dp.message(F.text == "📥 Kirim-Chiqim")
+async def diller_payment_start(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    if role not in ['diller', 'xodim', 'ishchi']:
+        return
+    await message.answer(
+        "💵 *To'lov summasini kiriting*\n\n"
+        "Masalan: `450` yoki `450$`\n"
+        "_(Bu xabar adminga yuboriladi va u tasdiqlashidan keyin qarzingizdan ayiriladi)_",
+        parse_mode="Markdown",
+        reply_markup=types.ReplyKeyboardMarkup(
+            keyboard=[[types.KeyboardButton(text="Bosh menyu")]],
+            resize_keyboard=True
+        )
+    )
+    await state.set_state(DillerPaymentState.amount)
+
+
+@dp.message(DillerPaymentState.amount)
+async def diller_payment_amount(message: types.Message, state: FSMContext):
+    role = await get_user_role(message.from_user.id)
+    if message.text == "Bosh menyu":
+        await state.clear()
+        await message.answer("Bekor qilindi.", reply_markup=main_menu(role))
+        return
+
+    import re as _re_pay
+    nums = _re_pay.findall(r'\d+(?:\.\d+)?', message.text.replace(',', '.'))
+    if not nums:
+        await message.answer("❌ Iltimos, raqam kiriting (masalan: 450):")
+        return
+
+    amount_val = float(nums[0])
+    diller_name = message.from_user.full_name or message.from_user.username or str(message.from_user.id)
+    client_name = DILLER_ID_TO_CLIENT.get(message.from_user.id, diller_name)
+    diller_tg_id = message.from_user.id
+    timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Firebase ga pending_payment saqlash
+    pay_id = str(uuid.uuid4())[:8].upper()
+    payment_record = {
+        'pay_id': pay_id,
+        'diller_tg_id': diller_tg_id,
+        'diller_name': diller_name,
+        'client_name': client_name,
+        'amount': amount_val,
+        'timestamp': timestamp,
+        'status': 'pending'
+    }
+    await asyncio.to_thread(db.reference(f'pending_payments/{pay_id}').set, payment_record)
+
+    # Adminga inline xabar yuborish
+    inline_kb = types.InlineKeyboardMarkup(inline_keyboard=[[
+        types.InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"pay_confirm:{pay_id}"),
+        types.InlineKeyboardButton(text="❌ Rad etish",  callback_data=f"pay_reject:{pay_id}")
+    ]])
+    admin_text = (
+        f"💵 *Diller to'lov bildirdi!*\n\n"
+        f"🧑 Diller: *{diller_name}* ({client_name})\n"
+        f"💰 Summa: *{amount_val:g}$*\n"
+        f"📅 Vaqt: {timestamp}\n\n"
+        f"Tasdiqlaysizmi?"
+    )
+    users_ref = await asyncio.to_thread(db.reference('users').get)
+    for uid, udata in (users_ref or {}).items():
+        if isinstance(udata, dict) and udata.get('role') == 'admin':
+            try:
+                await bot.send_message(int(uid), admin_text, reply_markup=inline_kb, parse_mode="Markdown")
+            except Exception as e:
+                print(f"Adminga to'lov xabari yuborishda xatolik: {e}")
+
+    await state.clear()
+    await message.answer(
+        f"✅ To'lov bildirganingiz adminga yuborildi!\n💵 Summa: *{amount_val:g}$*\n\nAdmin tasdiqlagach qarzingizdan ayiriladi.",
+        parse_mode="Markdown",
+        reply_markup=main_menu(role)
+    )
+
+
+# --- ADMIN: KIRIM-CHIQIM TASDIQLASH CALLBACKLAR ---
+@dp.callback_query(F.data.startswith("pay_confirm:"))
+async def admin_confirm_payment(callback: types.CallbackQuery):
+    if await get_user_role(callback.from_user.id) != 'admin':
+        await callback.answer("Sizda bu huquq yo'q.", show_alert=True)
+        return
+    pay_id = callback.data.split(":", 1)[1]
+    pay_ref = await asyncio.to_thread(db.reference(f'pending_payments/{pay_id}').get)
+    if not pay_ref or not isinstance(pay_ref, dict):
+        await callback.answer("To'lov ma'lumoti topilmadi.", show_alert=True)
+        return
+    if pay_ref.get('status') == 'confirmed':
+        await callback.answer("Bu to'lov allaqachon tasdiqlangan.", show_alert=True)
+        return
+
+    client_name = pay_ref.get('client_name', '')
+    amount_val  = float(pay_ref.get('amount', 0))
+    diller_tg_id = int(pay_ref.get('diller_tg_id', 0))
+    diller_name  = pay_ref.get('diller_name', '')
+    timestamp    = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Qarzdan ayirish
+    debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
+    current_debt = int(float(debt_ref)) if debt_ref else 0
+    new_debt = max(0, current_debt - int(amount_val))
+    await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
+
+    # accounting_history ga yozish
+    history_record = {
+        'client_name': client_name,
+        'accounting_type': 'qisman',
+        'partial_payment': int(amount_val),
+        'accounting_date': timestamp,
+        'status': "To'lov qabul qilindi",
+        'note': f"Diller to'lov bildirdi: {diller_name} — {amount_val:g}$ (ID: {pay_id})"
+    }
+    await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').push, history_record)
+
+    # Tranzaksiya
+    record = {
+        'type': 'Kirim',
+        'amount': int(amount_val),
+        'timestamp': timestamp,
+        'note': f"Diller to'lov: {diller_name} — {amount_val:g}$ (ID: {pay_id})"
+    }
+    await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
+
+    # Pending ni tugatish
+    await asyncio.to_thread(db.reference(f'pending_payments/{pay_id}').update, {'status': 'confirmed'})
+
+    # Tugmalarni o'chirish
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except:
+        pass
+    await callback.message.answer(
+        f"✅ To'lov tasdiqlandi!\n🧑 {diller_name} ({client_name})\n💵 {amount_val:g}$\n💳 Yangi qarz: *{new_debt:,}$*".replace(',', ' '),
+        parse_mode="Markdown"
+    )
+
+    # Dillerga xabar
+    if diller_tg_id:
+        try:
+            await bot.send_message(
+                diller_tg_id,
+                f"✅ *To'lovingiz tasdiqlandi!*\n\n💵 Summa: *{amount_val:g}$*\n💳 Yangi qarz: *{new_debt:,}$*".replace(',', ' '),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"Dillerga to'lov tasdiqlandi xabari: {e}")
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("pay_reject:"))
+async def admin_reject_payment(callback: types.CallbackQuery):
+    if await get_user_role(callback.from_user.id) != 'admin':
+        await callback.answer("Sizda bu huquq yo'q.", show_alert=True)
+        return
+    pay_id = callback.data.split(":", 1)[1]
+    pay_ref = await asyncio.to_thread(db.reference(f'pending_payments/{pay_id}').get)
+    if not pay_ref or not isinstance(pay_ref, dict):
+        await callback.answer("To'lov ma'lumoti topilmadi.", show_alert=True)
+        return
+
+    diller_tg_id = int(pay_ref.get('diller_tg_id', 0))
+    diller_name  = pay_ref.get('diller_name', '')
+    amount_val   = float(pay_ref.get('amount', 0))
+
+    # Pending ni bekor qilish
+    await asyncio.to_thread(db.reference(f'pending_payments/{pay_id}').update, {'status': 'rejected'})
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except:
+        pass
+    await callback.message.answer(f"❌ To'lov rad etildi.\n🧑 {diller_name} — {amount_val:g}$")
+
+    if diller_tg_id:
+        try:
+            await bot.send_message(
+                diller_tg_id,
+                f"❌ *To'lovingiz rad etildi.*\n\n💵 Summa: *{amount_val:g}$*\n\nIltimos, admin bilan bog'laning.",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"Dillerga rad etildi xabari: {e}")
+    await callback.answer()
+
+
 # --- ADMIN: YANGI BUYURTMA YOZISH ---
+
 @dp.message(F.text == "📝 Yangi buyurtma")
 async def new_order_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'admin':
@@ -2999,8 +3342,38 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
                 )
             except Exception:
                 pass
-                
+
+    # Dillerga yetkazib berilganligi haqida xabar
+    diller_ids_for_delivery = DILLER_TELEGRAM_MAP.get(client, [])
+    if diller_ids_for_delivery:
+        try:
+            amount_for_notify = order_ref.get('amount', 1) if order_ref else 1
+            price_for_notify  = order_ref.get('price', 0) if order_ref else 0
+            total_for_notify  = 0
+            try:
+                total_for_notify = int(float(str(price_for_notify))) * int(float(str(amount_for_notify)))
+            except:
+                pass
+            total_str_notify = f"{total_for_notify:,}$".replace(',', ' ') if total_for_notify else "—"
+            delivery_notify_text = (
+                f"🚚 *Mebelingiz yetkazib berildi!*\n\n"
+                f"📦 Mebel: *{product_id}*\n"
+                f"📊 Soni: *{amount_for_notify} ta*\n"
+                f"💵 Mebel narxi: *{total_str_notify}*\n"
+                f"🧑 Haydovchi: *{driver}*\n"
+                f"💰 Dostavka narxi: *{price}*\n"
+                f"🆔 Buyurtma ID: `{order_id}`"
+            )
+            for d_tg_id in diller_ids_for_delivery:
+                try:
+                    await bot.send_message(d_tg_id, delivery_notify_text, parse_mode="Markdown")
+                except Exception as _de_err:
+                    print(f"Dillerga yetkazib berildi xabari ({d_tg_id}): {_de_err}")
+        except Exception as _de2:
+            print(f"Delivery notify error: {_de2}")
+
     await state.clear()
+
 
 class DriverReportState(StatesGroup):
     select_month = State()
