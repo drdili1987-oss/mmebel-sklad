@@ -53,6 +53,12 @@ REGULAR_CLIENTS = [
     "Zoʻr mebel", "Umid", "Akmal aka", "Doʻkon 707", "Farxod Jomiy", "Munosib Mebel", "Islom aka", "Muxtor aka"
 ]
 
+# Diller nomi -> Telegram ID xaritasi
+DILLER_TELEGRAM_MAP = {
+    "Munosib Mebel": 261261387,
+    "Zo\u02bbr mebel": 8043160151,
+}
+
 def get_clients_keyboard():
     buttons = []
     for i in range(0, len(REGULAR_CLIENTS), 2):
@@ -1001,6 +1007,7 @@ async def process_comment(message: types.Message, state: FSMContext):
     
     # Omborchiga xabar yuborish
     await notify_warehouse(data, order_id)
+    await notify_diller_new_order(data, order_id)
 
 # --- ADMIN: MIJOZLAR HISOBOTI VA QARZ ---
 class ReportState(StatesGroup):
@@ -1871,6 +1878,41 @@ async def notify_warehouse(order_data, order_id):
                 )
             except Exception as e:
                 print(f"Xodimga xabar yuborishda xatolik: {e}")
+
+async def notify_diller_new_order(order_data, order_id):
+    """Admin yangi zakaz yaratganda dillerga xabar yuborish"""
+    client_name = order_data.get('client', '')
+    diller_tg_id = DILLER_TELEGRAM_MAP.get(client_name)
+    if not diller_tg_id:
+        return
+    # Narxni hisoblash
+    price_val = order_data.get('price', 0)
+    try:
+        amount = int(order_data.get('amount', 1))
+    except:
+        amount = 1
+    total = 0
+    try:
+        total = int(price_val) * amount
+    except:
+        total = 0
+    total_str = f"{total:,} so'm".replace(',', ' ') if total else "Ko'rsatilmagan"
+    price_str = f"{int(price_val):,} so'm".replace(',', ' ') if price_val else "Ko'rsatilmagan"
+    try:
+        await bot.send_message(
+            diller_tg_id,
+            f"🎉 *Sizga yangi buyurtma shakllantirildi!*\n\n"
+            f"📦 Mebel: *{order_data.get('product_id', '?')}*\n"
+            f"📊 Soni: *{amount} ta*\n"
+            f"💰 Narxi (1 dona): *{price_str}*\n"
+            f"💵 Jami narx: *{total_str}*\n"
+            f"📅 Tayyor bo'lish muddati: *{format_date(order_data.get('due_date', '?'))}*\n"
+            f"📝 Izoh: {order_data.get('comment', 'Yoq')}\n"
+            f"🆔 Buyurtma ID: `{order_id}`",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        print(f"Dillerga yangi zakaz xabari yuborishda xatolik: {e}")
 
 # Kunlik eslatma yuborish funksiyasi
 def parse_order_date(date_str):
@@ -3471,8 +3513,106 @@ async def admin_order_new_value(message: types.Message, state: FSMContext):
         await bot.send_message(883589794, f"✏️ Buyurtma o'zgartirildi!\n🆔 ID: {order_id}\n📦 {order_ref.get('product_id')}\n🧑 Diller: {order_ref.get('client_name')}\n🔄 {field_names.get(field, field)}: {new_value}")
     except:
         pass
-    
+
+    # Dillerga o'zgartirish haqida xabar va tasdiqlash tugmalari
+    client_name = order_ref.get('client_name', '') if order_ref else ''
+    diller_tg_id = DILLER_TELEGRAM_MAP.get(client_name)
+    if diller_tg_id:
+        field_name_uz = field_names.get(field, field)
+        if field == 'due_date':
+            new_val_display = format_date(new_value)
+        else:
+            new_val_display = new_value
+        # Narxni hisoblash
+        price_val = order_ref.get('price', 0) if order_ref else 0
+        amount_val = order_ref.get('amount', 1) if order_ref else 1
+        try:
+            total = int(price_val) * int(amount_val)
+            total_str = f"{total:,} so'm".replace(',', ' ')
+            price_str = f"{int(price_val):,} so'm".replace(',', ' ')
+        except:
+            total_str = "Ko'rsatilmagan"
+            price_str = "Ko'rsatilmagan"
+        inline_kb = types.InlineKeyboardMarkup(inline_keyboard=[
+            [
+                types.InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"diller_confirm:{order_id}"),
+                types.InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"diller_reject:{order_id}")
+            ]
+        ])
+        try:
+            await bot.send_message(
+                diller_tg_id,
+                f"⚠️ *Buyurtmangizda o'zgartirish!*\n\n"
+                f"🆔 Buyurtma ID: `{order_id}`\n"
+                f"📦 Mebel: *{order_ref.get('product_id', '?') if order_ref else '?'}*\n"
+                f"🔄 O'zgartirilgan: *{field_name_uz}* → `{new_val_display}`\n"
+                f"💰 Narxi (1 dona): *{price_str}*\n"
+                f"💵 Jami narx: *{total_str}*\n"
+                f"📅 Muddat: *{format_date(order_ref.get('due_date', '?') if order_ref else '?')}*\n\n"
+                f"❓ Siz uchun qabulmi?",
+                reply_markup=inline_kb,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print(f"Dillerga o'zgartirish xabari yuborishda xatolik: {e}")
+
     await state.clear()
+
+
+# --- DILLER: O'ZGARTISHNI TASDIQLASH / BEKOR QILISH ---
+@dp.callback_query(F.data.startswith("diller_confirm:"))
+async def diller_confirm_change(callback: types.CallbackQuery):
+    order_id = callback.data.split(":", 1)[1]
+    role = await get_user_role(callback.from_user.id)
+    if role not in ['diller', 'xodim', 'ishchi']:
+        await callback.answer("Sizda bu amalni bajarish huquqi yo'q.", show_alert=True)
+        return
+    # Tugmalarni o'chirish
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except:
+        pass
+    await callback.message.answer(
+        f"✅ *O'zgarish tasdiqlandi!*\n🆔 Buyurtma ID: `{order_id}`\n\nRahmat! Admin xabardor qilindi.",
+        parse_mode="Markdown"
+    )
+    # Adminga xabar
+    users_ref = await asyncio.to_thread(db.reference('users').get)
+    notify_text = f"✅ Diller o'zgarishni *TASDIQLADI*\n🆔 Buyurtma ID: `{order_id}`"
+    for uid, udata in (users_ref or {}).items():
+        if isinstance(udata, dict) and udata.get('role') == 'admin':
+            try:
+                await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
+            except:
+                pass
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("diller_reject:"))
+async def diller_reject_change(callback: types.CallbackQuery):
+    order_id = callback.data.split(":", 1)[1]
+    role = await get_user_role(callback.from_user.id)
+    if role not in ['diller', 'xodim', 'ishchi']:
+        await callback.answer("Sizda bu amalni bajarish huquqi yo'q.", show_alert=True)
+        return
+    # Tugmalarni o'chirish
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except:
+        pass
+    await callback.message.answer(
+        f"❌ *O'zgarish rad etildi!*\n🆔 Buyurtma ID: `{order_id}`\n\nAdmin xabardor qilindi.",
+        parse_mode="Markdown"
+    )
+    # Adminga xabar
+    users_ref = await asyncio.to_thread(db.reference('users').get)
+    notify_text = f"❌ Diller o'zgarishni *RAD ETDI*\n🆔 Buyurtma ID: `{order_id}`\nIltimos, diller bilan bog'laning!"
+    for uid, udata in (users_ref or {}).items():
+        if isinstance(udata, dict) and udata.get('role') == 'admin':
+            try:
+                await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
+            except:
+                pass
+    await callback.answer()
 
 @dp.message(StateFilter(None))
 async def fallback_handler(message: types.Message, state: FSMContext):
