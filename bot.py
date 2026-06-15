@@ -251,7 +251,8 @@ MAIN_MENU_BUTTONS = {
     "📝 Yangi buyurtma", "📋 Buyurtmalar nazorati", "📊 Hisob kitoblar", "🚚 Haydovchilar hisoboti", "🕰 Yetkazish tarixi", "📈 Sotuv statistikasi",
     "🔄 Omborni yangilash", "🚚 Yetkazishlar nazorati", "📊 Dostavka hisoboti", "🔨 Faol buyurtmalar", "🛍 Sotuvdagi mebellar",
     "📦 Ombor sonini yangilash", "📝 Zakaz berish",
-    "📋 Buyurtmalar tarixi", "❌ Zakazni bekor qilish", "📸 Rasmlar va narxlar"
+    "📋 Buyurtmalar tarixi", "❌ Zakazni bekor qilish", "📸 Rasmlar va narxlar",
+    "💳 Barchasini hisob kitob qilish", "✅ Ha, barchasini hisob kitob qilish", "❌ Yo'q, bekor qilish"
 }
 
 class MainMenuMiddleware(BaseMiddleware):
@@ -1020,9 +1021,10 @@ class ReportState(StatesGroup):
     select_client = State()
 
 class ClientAccountingState(StatesGroup):
-    select_order = State()      # Buyurtma tanlash
-    select_action = State()     # Hisob kitob qilindi / Qisman to'ladi
-    partial_amount = State()    # Qisman to'lov summasi
+    select_order = State()         # Buyurtma tanlash
+    select_action = State()        # Hisob kitob qilindi / Qisman to'ladi
+    partial_amount = State()       # Qisman to'lov summasi
+    confirm_all_settle = State()   # Barchasini hisob kitob qilishni tasdiqlash
 
 @dp.message(F.text == "📊 Hisob kitoblar")
 async def report_start(message: types.Message, state: FSMContext):
@@ -1299,7 +1301,9 @@ async def show_client_report(message: types.Message, state: FSMContext):
             btn_text = f"🚛 {safe_pid} — {do['amount']} ta | {d_date}"
             order_buttons.append([types.KeyboardButton(text=btn_text)])
 
-        # Tarix va Bosh menyu tugmalari
+        # Tarix, barchasini hisob kitob va Bosh menyu tugmalari
+        if delivered_orders:
+            order_buttons.append([types.KeyboardButton(text=f"💳 Barchasini hisob kitob qilish")])
         order_buttons.append([types.KeyboardButton(text=f"📜 {client_name} Hisob Tarix")])
         order_buttons.append([types.KeyboardButton(text="Bosh menyu")])
 
@@ -1378,6 +1382,35 @@ async def client_order_selected(message: types.Message, state: FSMContext):
     # Tarix tugmasi bosilsa
     if message.text == f"📜 {client_name} Hisob Tarix":
         await show_client_accounting_history(message, client_name)
+        return
+
+    # Barchasini hisob kitob qilish tugmasi bosilsa
+    if message.text == "💳 Barchasini hisob kitob qilish":
+        current_debt = data.get('current_debt', 0)
+        try:
+            debt_fmt = f"{int(current_debt):,}".replace(',', ' ')
+        except:
+            debt_fmt = str(current_debt)
+        delivered_count = len(data.get('delivered_orders', []))
+        markup = types.ReplyKeyboardMarkup(
+            keyboard=[
+                [types.KeyboardButton(text="✅ Ha, barchasini hisob kitob qilish")],
+                [types.KeyboardButton(text="❌ Yo'q, bekor qilish")],
+                [types.KeyboardButton(text="Bosh menyu")]
+            ],
+            resize_keyboard=True
+        )
+        await message.answer(
+            f"⚠️ *Diqqat!*\n\n"
+            f"🧑 Mijoz: *{client_name}*\n"
+            f"📦 Hisob kitob qilinadigan buyurtmalar: *{delivered_count} ta*\n"
+            f"💳 Joriy qarz: *{debt_fmt}$*\n\n"
+            f"Barcha qarz nolga tushiriladi, lekin olingan mebellar tarixi saqlanib qoladi.\n\n"
+            f"Davom etasizmi?",
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+        await state.set_state(ClientAccountingState.confirm_all_settle)
         return
     
     # Qaysi yetkazilgan buyurtma tanlanganini aniqlash
@@ -1699,6 +1732,8 @@ async def show_client_report_inner(message, state, client_name, pending_orders, 
         btn_text = f"🚛 {safe_pid} — {do['amount']} ta | {d_date}"
         order_buttons.append([types.KeyboardButton(text=btn_text)])
     
+    if delivered_orders:
+        order_buttons.append([types.KeyboardButton(text=f"💳 Barchasini hisob kitob qilish")])
     order_buttons.append([types.KeyboardButton(text=f"📜 {client_name} Hisob Tarix")])
     order_buttons.append([types.KeyboardButton(text="Bosh menyu")])
     
@@ -1710,6 +1745,79 @@ async def show_client_report_inner(message, state, client_name, pending_orders, 
         await message.answer(header_text, reply_markup=markup)
     
     await state.set_state(ClientAccountingState.select_order)
+
+
+@dp.message(ClientAccountingState.confirm_all_settle)
+async def confirm_all_settle_handler(message: types.Message, state: FSMContext):
+    """Barchasini hisob kitob qilishni tasdiqlash"""
+    if message.text == "Bosh menyu" or message.text == "❌ Yo'q, bekor qilish":
+        role = await get_user_role(message.from_user.id)
+        await message.answer("Bekor qilindi.", reply_markup=main_menu(role))
+        await state.clear()
+        return
+
+    if message.text != "✅ Ha, barchasini hisob kitob qilish":
+        await message.answer("Iltimos, tugmalardan foydalaning.")
+        return
+
+    data = await state.get_data()
+    client_name = data.get('client_name', '')
+    delivered_orders = data.get('delivered_orders', [])
+
+    if not delivered_orders:
+        await message.answer("✅ Hisob kitob qilinadigan buyurtma topilmadi.", reply_markup=main_menu('admin'))
+        await state.clear()
+        return
+
+    # Mavjud accounting_history ni olish (duplikat oldini olish)
+    existing_acc = await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').get)
+    accounted_ids = set()
+    if existing_acc and isinstance(existing_acc, dict):
+        for h_id, h in existing_acc.items():
+            if isinstance(h, dict) and h.get('accounting_type') == 'toliq':
+                oid = str(h.get('order_id', ''))
+                if oid:
+                    accounted_ids.add(oid)
+
+    timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    settled_count = 0
+
+    for do in delivered_orders:
+        o_id = str(do.get('o_id', ''))
+        if not o_id or o_id in accounted_ids:
+            continue  # Duplikat oldini olish
+
+        # Firebase dan to'liq ma'lumot olish
+        order_ref = await asyncio.to_thread(db.reference(f'orders/{o_id}').get)
+        if not order_ref:
+            continue
+
+        history_record = {
+            'order_id': o_id,
+            'client_name': client_name,
+            'product_id': order_ref.get('product_id', do.get('product_id', '')),
+            'amount': order_ref.get('amount', do.get('amount', '1')),
+            'due_date': order_ref.get('due_date', do.get('due_date', '')),
+            'price': order_ref.get('price', 0),
+            'total_price': order_ref.get('total_price', 0),
+            'comment': order_ref.get('comment', ''),
+            'accounting_type': 'toliq',
+            'accounting_date': timestamp,
+            'status': 'Hisob kitob qilindi',
+            'note': f"Barchasini hisob kitob qilish — admin tomonidan"
+        }
+        await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').push, history_record)
+        settled_count += 1
+
+    await message.answer(
+        f"✅ *{client_name}* — barcha qarz hisob kitob qilindi!\n\n"
+        f"📦 Jami *{settled_count} ta* buyurtma hisob kitob qilindi.\n"
+        f"💳 Qarz: *0$*\n"
+        f"📜 Olingan mebellar tarixi Firebase da saqlanib qoldi.",
+        parse_mode="Markdown",
+        reply_markup=main_menu('admin')
+    )
+    await state.clear()
 
 
 async def show_client_accounting_history(message, client_name):
