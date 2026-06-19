@@ -573,11 +573,14 @@ async def diller_order_due_date(message: types.Message, state: FSMContext):
     # Mebel ma'lumotlari
     mebel_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
 
-    # Ombordan ayirish
+    # Ombordan ayirish (faqat mavjud miqdor qadar)
+    deducted_qty = 0
     if mebel_ref:
         current_qty = int(mebel_ref.get('soni', 0))
-        new_qty = max(0, current_qty - amount)
-        await asyncio.to_thread(db.reference(f'mebellar/{product_id}').update, {'soni': new_qty})
+        deducted_qty = min(current_qty, amount)  # Haqiqatda ayirilgan miqdor
+        new_qty = current_qty - deducted_qty
+        if deducted_qty > 0:
+            await asyncio.to_thread(db.reference(f'mebellar/{product_id}').update, {'soni': new_qty})
 
     # Narx hisoblash
     price_val = 0
@@ -610,7 +613,8 @@ async def diller_order_due_date(message: types.Message, state: FSMContext):
             'month':        month,
             'source':       'diller',
             'price':        price_val,
-            'total_price':  total_price
+            'total_price':  total_price,
+            'deducted_qty': deducted_qty  # Ombordan haqiqatda ayirilgan miqdor
         }
     )
 
@@ -848,19 +852,26 @@ async def diller_cancel_confirm(message: types.Message, state: FSMContext):
         {'status': 'Bekor qilindi'}
     )
 
-    # Ombor sonini qaytarish
+    # Ombor sonini qaytarish (faqat haqiqatda ayirilgan miqdorni qaytarish)
     product_id = order_ref.get('product_id', '')
     try:
         amount = int(order_ref.get('amount', 1))
     except:
         amount = 1
-    if product_id:
+    # deducted_qty — zakaz vaqtida ombordan haqiqatda ayirilgan miqdor
+    try:
+        deducted_qty = int(order_ref.get('deducted_qty', -1))
+    except:
+        deducted_qty = -1
+    # Eski zakazlarda deducted_qty yo'q bo'lishi mumkin — xavfsiz fallback
+    qty_to_return = deducted_qty if deducted_qty >= 0 else amount
+    if product_id and qty_to_return > 0:
         mebel_ref = await asyncio.to_thread(db.reference(f'mebellar/{product_id}').get)
         if mebel_ref:
             current_qty = int(mebel_ref.get('soni', 0))
             await asyncio.to_thread(
                 db.reference(f'mebellar/{product_id}').update,
-                {'soni': current_qty + amount}
+                {'soni': current_qty + qty_to_return}
             )
 
     await message.answer(
