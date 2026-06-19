@@ -564,7 +564,7 @@ async def diller_order_due_date(message: types.Message, state: FSMContext):
     amount       = data['amount']
 
     user = message.from_user
-    client_name = user.full_name or user.username or str(user.id)
+    client_name = DILLER_ID_TO_CLIENT.get(user.id) or user.full_name or user.username or str(user.id)
 
     order_id = f"{product_id}-{str(uuid.uuid4())[:4].upper()}"
     now_str  = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
