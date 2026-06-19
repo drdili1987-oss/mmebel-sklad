@@ -50,13 +50,19 @@ from firebase_admin import credentials, db
 REGULAR_CLIENTS = [
     "Comfort", "Iskandar", "Grand plaza", "Baxrom Uchtepa", 
     "Baxrom 9703", "Bahodir aka🚛", "Bahodir aka Andijon", "Akrom aka", 
-    "Zoʻr mebel", "Umid", "Akmal aka", "Doʻkon 707", "Farxod Jomiy", "Munosib Mebel", "Islom aka", "Muxtor aka"
+    "Zoʻr mebel", "Umid", "Akmal aka", "Doʻkon 707", "Farxod Jomiy", "Munosib Mebel", "Ideal Max", "Muxtor aka",
+    "Elyor", "Anor Mebel"
 ]
 
 # Diller nomi -> Telegram ID(lar) xaritasi (bir nechta diller bir kompaniyada bo'lishi mumkin)
 DILLER_TELEGRAM_MAP = {
     "Munosib Mebel": [261261387],
     "Zo\u02bbr mebel": [8043160151, 8897559819, 15541688],
+    "Ideal Max": [953905880],
+    "Iskandar": [1052843333],
+    "Umid": [1270440064],
+    "Elyor": [1268839562],
+    "Anor Mebel": [1062031662, 531650486],
 }
 
 # Telegram ID -> Diller nomi (teskari xarita)
