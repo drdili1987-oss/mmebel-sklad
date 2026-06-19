@@ -217,7 +217,7 @@ async def get_user_role(user_id):
         return 'omborchi'
     if user_id_str in ['6298036669', '1349256808', '7062569902', '7941658592', '1724350130', '698145797', '5063420475']:
         return 'xodim'
-    if user_id_str in ['261261387', '8043160151', '8897559819', '15541688']:
+    if user_id in DILLER_ID_TO_CLIENT:
         return 'diller'
     
     ref = db.reference(f'users/{user_id}')
