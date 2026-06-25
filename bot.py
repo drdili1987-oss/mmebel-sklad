@@ -3102,7 +3102,26 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
                     )
                 except Exception:
                     pass
-                    
+
+        # Dillerlarga xabar yuborish (faqat "Tayyor bo'ldi" holatida)
+        if new_status == "Tayyor bo'ldi":
+            client_name = order_ref.get('client_name', '') if order_ref else data.get('client', '')
+            diller_tg_ids = DILLER_TELEGRAM_MAP.get(client_name, [])
+            due_date = order_ref.get('due_date', '?') if order_ref else '?'
+            for diller_tg_id in diller_tg_ids:
+                try:
+                    await bot.send_message(
+                        int(diller_tg_id),
+                        f"🎉 *Sizning buyurtmangiz tayyor bo'ldi!*\n\n"
+                        f"📦 Mebel: *{product_id}*\n"
+                        f"📊 Soni: *{amount} ta*\n"
+                        f"📅 Muddati: *{format_date(due_date)}*\n\n"
+                        f"Yetkazib berish haqida tez orada xabar beramiz. ✅",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
+
         await state.clear()
         return
 
