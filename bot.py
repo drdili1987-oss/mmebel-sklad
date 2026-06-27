@@ -1629,15 +1629,32 @@ async def show_client_report(message: types.Message, state: FSMContext):
         header_text = f"🧑 *{client_name}* — Hisob kitob bo'limi\n"
         header_text += f"💳 Joriy qarzi: *{debt_formatted}*$\n\n"
 
-        # 1. Tayyorlanmoqda — qisqa ro'yxat (har biri 1 qator)
+        # 1. Tayyorlanmoqda — qisqa ro'yxat + guruhlab umumiy narx
         if pending_orders:
             header_text += f"⏳ *Tayyorlanmoqda (qarzga qo'shilmagan) — {len(pending_orders)} ta:*\n"
-            for po in pending_orders[:30]:  # Max 30 ta ko'rsatish
-                safe_pid = str(po['product_id']).replace('`', '').replace('*', '')
-                status_icon = "✅" if po['status'] == "Tayyor bo'ldi" else "🔧"
-                header_text += f"  {status_icon} {safe_pid} — {po['amount']} ta | {po['due_date']}\n"
-            if len(pending_orders) > 30:
-                header_text += f"  _...va yana {len(pending_orders) - 30} ta_\n"
+            # Mahsulot bo'yicha guruhlash
+            from collections import defaultdict
+            grouped_pending = defaultdict(lambda: {'amount': 0, 'price': '', 'status': '', 'due_date': ''})
+            for po in pending_orders:
+                pid_key = str(po['product_id']).replace('`', '').replace('*', '')
+                grouped_pending[pid_key]['amount'] += int(po['amount']) if str(po['amount']).isdigit() else 0
+                grouped_pending[pid_key]['price'] = po.get('price', '')
+                grouped_pending[pid_key]['status'] = po.get('status', '')
+                grouped_pending[pid_key]['due_date'] = po.get('due_date', '')
+            for safe_pid, gdata in list(grouped_pending.items())[:30]:
+                status_icon = "✅" if gdata['status'] == "Tayyor bo'ldi" else "🔧"
+                price_str = gdata['price']
+                total_price_str = ''
+                if price_str:
+                    try:
+                        pval = float(str(price_str).replace('$', '').replace(',', '').replace(' ', ''))
+                        total = pval * gdata['amount']
+                        total_price_str = f" | 💰 {int(total):,}$".replace(',', ' ')
+                    except:
+                        total_price_str = f" | 💰 {price_str}"
+                header_text += f"  {status_icon} {safe_pid} — {gdata['amount']} ta{total_price_str}\n"
+            if len(grouped_pending) > 30:
+                header_text += f"  _...va yana {len(grouped_pending) - 30} ta_\n"
             header_text += "\n"
 
         # 2. Yetkazilgan — tugmalar shaklida (max 30 ta, eng yangi birinchi)
@@ -3080,24 +3097,27 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
         # Notify admin and workers
         users_ref = await asyncio.to_thread(db.reference('users').get)
         order_ref = await asyncio.to_thread(db.reference(f"orders/{data['order_id']}").get)
-        product_id = order_ref.get('product_id', 'Noma\'lum') if order_ref else 'Noma\'lum'
+        product_id = order_ref.get('product_id', "Noma'lum") if order_ref else "Noma'lum"
         amount = order_ref.get('amount', 1) if order_ref else 1
+        client_name_notify = order_ref.get('client_name', data.get('client', '')) if order_ref else data.get('client', '')
         
         for user_id, user_data in (users_ref or {}).items():
+            if not isinstance(user_data, dict):
+                continue
             if user_data.get('role') == 'admin':
                 try:
                     await bot.send_message(
                         int(user_id),
-                        f"📦 **Buyurtma holati o'zgardi!**\n\n🆔 ID: `{data['order_id']}`\n🧑 Mijoz: {data['client']}\n📌 Yangi holat: {new_status}",
+                        f"📦 *Buyurtma holati o'zgardi!*\n\n🆔 ID: `{data['order_id']}`\n🧑 Mijoz: {client_name_notify}\n📦 Mebel: {product_id}\n📊 Soni: {amount} ta\n📌 Yangi holat: *{new_status}*",
                         parse_mode="Markdown"
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"Adminga xabar yuborishda xatolik: {e}")
             elif user_data.get('role') in ['ishchi', 'xodim'] and new_status == "Tayyor bo'ldi":
                 try:
                     await bot.send_message(
                         int(user_id),
-                        f"✅ **Mahsulot tayyor bo'ldi!**\n\n🆔 Buyurtma ID: `{data['order_id']}`\n🧑 Mijoz: {data['client']}\n📦 Mebel: {product_id}\n📊 Soni: {amount} ta",
+                        f"✅ *Mahsulot tayyor bo'ldi!*\n\n🆔 Buyurtma ID: `{data['order_id']}`\n🧑 Mijoz: {client_name_notify}\n📦 Mebel: {product_id}\n📊 Soni: {amount} ta",
                         parse_mode="Markdown"
                     )
                 except Exception:
@@ -3105,8 +3125,7 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
 
         # Dillerlarga xabar yuborish (faqat "Tayyor bo'ldi" holatida)
         if new_status == "Tayyor bo'ldi":
-            client_name = order_ref.get('client_name', '') if order_ref else data.get('client', '')
-            diller_tg_ids = DILLER_TELEGRAM_MAP.get(client_name, [])
+            diller_tg_ids = DILLER_TELEGRAM_MAP.get(client_name_notify, [])
             due_date = order_ref.get('due_date', '?') if order_ref else '?'
             for diller_tg_id in diller_tg_ids:
                 try:
@@ -3908,22 +3927,46 @@ async def admin_order_action(message: types.Message, state: FSMContext):
         
         await message.answer(f"✅ Buyurtma `{order_id}` bekor qilindi!\n📦 Omborga qaytarildi.", reply_markup=main_menu('admin'), parse_mode="Markdown")
         
-        # Omborchi va xodimlarga xabar
+        # Omborchi, xodimlar va dillerga xabar
+        cancel_client_name = order_ref.get('client_name', '') if order_ref else ''
+        cancel_product = order_ref.get('product_id', '') if order_ref else ''
+        cancel_amount = order_ref.get('amount', '') if order_ref else ''
+        cancel_msg = (
+            f"❌ *Buyurtma admin tomonidan bekor qilindi!*\n"
+            f"🆔 ID: `{order_id}`\n"
+            f"📦 Mebel: *{cancel_product}*\n"
+            f"📊 Soni: *{cancel_amount} ta*\n"
+            f"🧑 Diller: {cancel_client_name}"
+        )
         users_ref = await asyncio.to_thread(db.reference('users').get)
         for user_id, user_data in (users_ref or {}).items():
+            if not isinstance(user_data, dict):
+                continue
             if user_data.get('role') in ['omborchi', 'ishchi', 'xodim']:
                 try:
-                    await bot.send_message(
-                        int(user_id),
-                        f"⚠️ Buyurtma bekor qilindi!\n🆔 ID: {order_id}\n📦 Mebel: {order_ref.get('product_id')}\n🧑 Diller: {order_ref.get('client_name')}"
-                    )
+                    await bot.send_message(int(user_id), cancel_msg, parse_mode="Markdown")
                 except:
                     pass
         # Hardcoded omborchi
         try:
-            await bot.send_message(883589794, f"⚠️ Buyurtma bekor qilindi!\n🆔 ID: {order_id}\n📦 Mebel: {order_ref.get('product_id')}\n🧑 Diller: {order_ref.get('client_name')}")
+            await bot.send_message(883589794, cancel_msg, parse_mode="Markdown")
         except:
             pass
+        # Dillerga xabar yuborish
+        diller_tg_ids = DILLER_TELEGRAM_MAP.get(cancel_client_name, [])
+        for diller_tg_id in diller_tg_ids:
+            try:
+                await bot.send_message(
+                    int(diller_tg_id),
+                    f"❌ *Sizning buyurtmangiz bekor qilindi!*\n\n"
+                    f"🆔 Buyurtma ID: `{order_id}`\n"
+                    f"📦 Mebel: *{cancel_product}*\n"
+                    f"📊 Soni: *{cancel_amount} ta*\n\n"
+                    f"Batafsil ma'lumot uchun admin bilan bog'laning.",
+                    parse_mode="Markdown"
+                )
+            except:
+                pass
         
         await state.clear()
         return
