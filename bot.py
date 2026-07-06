@@ -236,7 +236,7 @@ def main_menu(role):
         buttons = [
             [types.KeyboardButton(text="📦 Mavjud mebellar"), types.KeyboardButton(text="📝 Yangi buyurtma")],
             [types.KeyboardButton(text="📋 Buyurtmalar nazorati"), types.KeyboardButton(text="📊 Hisob kitoblar")],
-            [types.KeyboardButton(text="🚚 Haydovchilar hisoboti")],
+            [types.KeyboardButton(text="🚚 Haydovchilar hisoboti"), types.KeyboardButton(text="💰 Dillerlar qarzi")],
             [types.KeyboardButton(text="🕰 Yetkazish tarixi"), types.KeyboardButton(text="📈 Sotuv statistikasi")]
         ]
     elif role == 'omborchi':
@@ -270,7 +270,8 @@ MAIN_MENU_BUTTONS = {
     "📦 Ombor sonini yangilash", "📝 Zakaz berish",
     "📋 Buyurtmalar tarixi", "❌ Zakazni bekor qilish", "📸 Rasmlar va narxlar",
     "📊 Buyurtmalar holati", "📥 Kirim-Chiqim",
-    "💳 Barchasini hisob kitob qilish", "✅ Ha, barchasini hisob kitob qilish", "❌ Yo'q, bekor qilish"
+    "💳 Barchasini hisob kitob qilish", "✅ Ha, barchasini hisob kitob qilish", "❌ Yo'q, bekor qilish",
+    "💰 Dillerlar qarzi"
 }
 
 class MainMenuMiddleware(BaseMiddleware):
@@ -1386,6 +1387,53 @@ class ClientAccountingState(StatesGroup):
     partial_amount = State()       # Qisman to'lov summasi
     confirm_all_settle = State()   # Barchasini hisob kitob qilishni tasdiqlash
 
+
+# --- ADMIN: DILLERLAR QARZI ---
+@dp.message(F.text == "💰 Dillerlar qarzi")
+async def show_all_debts(message: types.Message):
+    if await get_user_role(message.from_user.id) != 'admin':
+        return
+
+    try:
+        debts_data = await asyncio.to_thread(db.reference('debts').get)
+    except Exception as e:
+        await message.answer(f"❌ Ma'lumot olishda xatolik: {e}")
+        return
+
+    if not debts_data or not isinstance(debts_data, dict):
+        await message.answer("✅ Hech bir dillerda qarz yo'q!", reply_markup=main_menu('admin'))
+        return
+
+    # Faqat qarzi > 0 bo'lganlarni filtrlaymiz va kamayish tartibida saraymiz
+    indebted = []
+    for client_name, debt_val in debts_data.items():
+        try:
+            debt_num = float(debt_val)
+        except (TypeError, ValueError):
+            debt_num = 0
+        if debt_num > 0:
+            indebted.append((client_name, debt_num))
+
+    if not indebted:
+        await message.answer("✅ Hech bir dillerda qarz yo'q!", reply_markup=main_menu('admin'))
+        return
+
+    # Qarz miqdori bo'yicha kamayish tartibida saraymiz
+    indebted.sort(key=lambda x: x[1], reverse=True)
+
+    total_debt = sum(d for _, d in indebted)
+    total_fmt = f"{int(total_debt):,}".replace(",", " ")
+
+    lines = [f"💰 *Qarzdor dillerlar ro'yxati* ({len(indebted)} ta)\n"]
+    for i, (client_name, debt_num) in enumerate(indebted, 1):
+        debt_fmt = f"{int(debt_num):,}".replace(",", " ")
+        lines.append(f"{i}. 🧑 *{client_name}* — `{debt_fmt}$`")
+
+    lines.append(f"\n📊 *Jami qarz: {total_fmt}$*")
+
+    text = "\n".join(lines)
+    await message.answer(text, parse_mode="Markdown", reply_markup=main_menu('admin'))
+
 @dp.message(F.text == "📊 Hisob kitoblar")
 async def report_start(message: types.Message, state: FSMContext):
     if await get_user_role(message.from_user.id) == 'admin':
@@ -1485,6 +1533,14 @@ async def show_client_report(message: types.Message, state: FSMContext):
                                 except Exception:
                                     pass
 
+                    # O'zi olib ketdi bo'lsa — pickup_discount ni qarzdan ayirish
+                    if o.get('driver') == "O'zi olib ketdi":
+                        try:
+                            pd = o.get('pickup_discount', 0)
+                            order_price = max(0, order_price - int(float(str(pd))) if pd else order_price)
+                        except Exception:
+                            pass
+
                     correct_debt += order_price
                 except Exception:
                     pass
@@ -1583,6 +1639,22 @@ async def show_client_report(message: types.Message, state: FSMContext):
                             if str(o_id) in accounted_order_ids:
                                 continue
                             
+                            # Narxni to'g'ri aniqlash: avval orderdagi total_price/price, keyin mebellar jadvalidan
+                            order_total_price = o.get('total_price', None)
+                            order_price_unit = o.get('price', None)
+                            order_pickup_discount = o.get('pickup_discount', 0)
+                            try:
+                                raw_amt = int(float(str(amount))) if amount else 1
+                            except:
+                                raw_amt = 1
+
+                            if order_total_price is not None and str(order_total_price).strip() not in ('', '0', 'None'):
+                                display_price = int(float(str(order_total_price)))
+                            elif order_price_unit is not None and str(order_price_unit).strip() not in ('', '0', 'None'):
+                                display_price = int(float(str(order_price_unit))) * raw_amt
+                            else:
+                                display_price = None  # mebellar jadvalidan olinadi (price_text)
+
                             delivered_orders.append({
                                 'o_id': o_id,
                                 'product_id': product_id,
@@ -1590,6 +1662,9 @@ async def show_client_report(message: types.Message, state: FSMContext):
                                 'status_text': status_text,
                                 'delivered_at': d_date,
                                 'price': price_text,
+                                'order_total_price': display_price,
+                                'pickup_discount': order_pickup_discount,
+                                'driver': driver,
                                 'delivery_price': delivery_price,
                                 'created_at': o.get('created_at', ''),
                                 'comment': o.get('comment', '')
@@ -1810,8 +1885,24 @@ async def client_order_selected(message: types.Message, state: FSMContext):
     safe_pid = str(selected_order['product_id']).replace('`', '').replace('*', '')
     order_info = f"🚛 *{safe_pid}* — {selected_order['amount']} ta\n"
     order_info += f"📅 Yetkazilgan: {selected_order.get('delivered_at', '')}\n"
-    if selected_order.get('price'):
+
+    # Narxni ko'rsatish: admin yozgan narxni ustun ko'rsatamiz, yo'q bo'lsa mebellar jadvalidagini
+    display_price = selected_order.get('order_total_price')
+    pickup_discount = selected_order.get('pickup_discount', 0)
+    try:
+        pickup_discount = int(float(str(pickup_discount))) if pickup_discount else 0
+    except:
+        pickup_discount = 0
+
+    if display_price is not None:
+        if selected_order.get('driver') == "O'zi olib ketdi" and pickup_discount > 0:
+            net = max(0, display_price - pickup_discount)
+            order_info += f"💰 Mebel narxi: *{display_price}*$\n💸 Chegirma (o'zi olib ketdi): *-{pickup_discount}*$\n✅ Hisoblangan: *{net}*$\n"
+        else:
+            order_info += f"💰 Narxi: *{display_price}*$\n"
+    elif selected_order.get('price'):
         order_info += f"💰 Narxi: {selected_order['price']}\n"
+
     if selected_order.get('comment') and str(selected_order.get('comment')).lower() != 'yoq':
         order_info += f"📝 Izoh: {selected_order['comment']}\n"
     order_info += f"📌 Holati: {selected_order.get('status_text', '')}\n\n"
