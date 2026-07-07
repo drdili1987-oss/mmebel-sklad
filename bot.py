@@ -2277,6 +2277,9 @@ async def confirm_all_settle_handler(message: types.Message, state: FSMContext):
         await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').push, history_record)
         settled_count += 1
 
+    # debts jadvalida qarzni 0 ga o'rnatish
+    await asyncio.to_thread(db.reference(f'debts/{client_name}').set, 0)
+
     await message.answer(
         f"✅ *{client_name}* — barcha qarz hisob kitob qilindi!\n\n"
         f"📦 Jami *{settled_count} ta* buyurtma hisob kitob qilindi.\n"
@@ -2286,6 +2289,7 @@ async def confirm_all_settle_handler(message: types.Message, state: FSMContext):
         reply_markup=main_menu('admin')
     )
     await state.clear()
+
 
 
 async def show_client_accounting_history(message, client_name):
