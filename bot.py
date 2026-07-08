@@ -1388,6 +1388,96 @@ class ClientAccountingState(StatesGroup):
     confirm_all_settle = State()   # Barchasini hisob kitob qilishni tasdiqlash
 
 
+async def recalculate_and_save_debt(client_name: str) -> int:
+    """
+    Berilgan client_name uchun qarzni qayta to'g'ri hisoblaydi va Firebase debts ga saqlaydi.
+    Barcha hisob kitob joylarida (individual, qisman, barchasini) chaqiriladi.
+    Qaytaradi: yangi to'g'ri qarz qiymati.
+    """
+    EXCLUDED_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi", 'Bekor qilindi'}
+    search_name = client_name.strip().lower()
+
+    orders_ref = await asyncio.to_thread(db.reference('orders').get)
+    mebellar_ref = await asyncio.to_thread(db.reference('mebellar').get)
+    acc_history = await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').get)
+
+    # To'liq hisob kitob qilingan order IDlar
+    accounted_ids = set()
+    total_partial = 0
+    if acc_history and isinstance(acc_history, dict):
+        for h_id, h in acc_history.items():
+            if not isinstance(h, dict):
+                continue
+            if h.get('accounting_type') == 'toliq':
+                oid = str(h.get('order_id', ''))
+                if oid:
+                    accounted_ids.add(oid)
+            elif h.get('accounting_type') == 'qisman':
+                try:
+                    pp = h.get('partial_payment', 0)
+                    total_partial += int(float(str(pp))) if pp else 0
+                except Exception:
+                    pass
+
+    # Yetkazilgan, hisob kitob qilinmagan buyurtmalar narxlari
+    correct_debt = 0
+    if orders_ref and isinstance(orders_ref, dict):
+        for o_id, o in orders_ref.items():
+            if not isinstance(o, dict):
+                continue
+            o_client = str(o.get('client_name') or o.get('client') or '').strip().lower()
+            if o_client != search_name:
+                continue
+            if o.get('status', '') in EXCLUDED_STATUSES:
+                continue
+            if str(o_id) in accounted_ids:
+                continue
+
+            # Narxni aniqlash
+            try:
+                raw_total = o.get('total_price', None)
+                raw_price = o.get('price', None)
+                raw_amount = o.get('amount', 1)
+                a_int = int(float(str(raw_amount))) if raw_amount else 1
+
+                order_price = 0
+                if raw_total is not None and str(raw_total).strip() not in ('', '0', 'None'):
+                    order_price = int(float(str(raw_total)))
+                elif raw_price is not None and str(raw_price).strip() not in ('', '0', 'None'):
+                    order_price = int(float(str(raw_price))) * a_int
+                else:
+                    p_id = str(o.get('product_id', '')).replace(' ', '').replace('-', '').upper()
+                    if mebellar_ref and isinstance(mebellar_ref, dict) and p_id in mebellar_ref:
+                        mebel = mebellar_ref[p_id]
+                        if isinstance(mebel, dict) and mebel.get('narxi'):
+                            price_str = str(mebel['narxi']).replace("so'm", '').replace('$', '').replace(' ', '').replace(',', '')
+                            try:
+                                order_price = int(float(price_str)) * a_int
+                            except Exception:
+                                pass
+
+                if o.get('driver') == "O'zi olib ketdi":
+                    try:
+                        pd = o.get('pickup_discount', 0)
+                        order_price = max(0, order_price - int(float(str(pd))) if pd else order_price)
+                    except Exception:
+                        pass
+
+                correct_debt += order_price
+            except Exception:
+                pass
+
+    correct_debt -= total_partial
+
+    # Firebase ga saqlash
+    try:
+        await asyncio.to_thread(db.reference(f'debts/{client_name}').set, correct_debt)
+    except Exception:
+        pass
+
+    return correct_debt
+
+
 # --- ADMIN: DILLERLAR QARZI ---
 @dp.message(F.text == "💰 Dillerlar qarzi")
 async def show_all_debts(message: types.Message):
@@ -2025,10 +2115,10 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
         except Exception:
             current_debt_val = 0
 
-        new_debt = current_debt_val - net_price
-        await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
+        # accounting_history ga yozilgandan so'ng qarzni qayta to'g'ri hisoblash
+        new_debt = await recalculate_and_save_debt(client_name)
 
-        # Tranzaksiya tarixiga yozish (total_price > 0 bo'lsa)
+        # Tranzaksiya tarixiga yozish (net_price > 0 bo'lsa)
         if net_price > 0:
             record = {
                 'type': 'Kirim',
@@ -2063,6 +2153,7 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
         await state.update_data(delivered_orders=updated_delivered, current_debt=new_debt)
         await show_client_report_inner(message, state, client_name, data.get('pending_orders', []), updated_delivered, new_debt)
         return
+
     
     if message.text == "💰 Qisman to'ladi":
         order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
@@ -2126,39 +2217,37 @@ async def client_partial_payment(message: types.Message, state: FSMContext):
     }
     await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').push, history_record)
     
-    # Qarzni kamaytirish
-    debt_ref = await asyncio.to_thread(db.reference(f'debts/{client_name}').get)
-    current_debt_val = int(debt_ref) if debt_ref else 0
-    new_debt = current_debt_val - amount
-    await asyncio.to_thread(db.reference(f'debts/{client_name}').set, new_debt)
-    
+    # Qarzni qayta to'g'ri hisoblash va saqlash
+    new_debt = await recalculate_and_save_debt(client_name)
+
     # Tranzaksiya tarixiga yozish
     record = {
-        'type': 'Kirim', 
-        'amount': amount, 
-        'timestamp': timestamp, 
+        'type': 'Kirim',
+        'amount': amount,
+        'timestamp': timestamp,
         'note': f"Qisman to'lov: {order_id} ({order_ref.get('product_id', '')})"
     }
     await asyncio.to_thread(db.reference(f'transactions/clients/{client_name}').push, record)
-    
+
     product_id = order_ref.get('product_id', '')
     safe_pid = str(product_id).replace('`', '').replace('*', '')
-    
+
     try:
         new_debt_fmt = f"{new_debt:,}".replace(",", " ")
-    except:
+    except Exception:
         new_debt_fmt = str(new_debt)
-    
+
     await message.answer(
         f"💰 *{safe_pid}* uchun {amount:,}$ qisman to'lov qabul qilindi!\n"
         f"📋 Tarixga saqlandi.\n"
         f"💳 Yangi qarz: *{new_debt_fmt}*$",
         parse_mode="Markdown"
     )
-    # Sahifani qayta ko'rsatish — diller ro'yxatida qolish
+    # Sahifani qayta ko'rsatish
     await state.update_data(current_debt=new_debt)
     updated_data = await state.get_data()
     await show_client_report_inner(message, state, client_name, updated_data.get('pending_orders', []), updated_data.get('delivered_orders', []), new_debt)
+
 
 
 async def show_client_report_inner(message, state, client_name, pending_orders, delivered_orders, current_debt):
@@ -2278,7 +2367,8 @@ async def confirm_all_settle_handler(message: types.Message, state: FSMContext):
         settled_count += 1
 
     # debts jadvalida qarzni 0 ga o'rnatish
-    await asyncio.to_thread(db.reference(f'debts/{client_name}').set, 0)
+    # debts jadvalida qarzni qayta to'g'ri hisoblash (accounting_history yangilangandan keyin)
+    await recalculate_and_save_debt(client_name)
 
     await message.answer(
         f"✅ *{client_name}* — barcha qarz hisob kitob qilindi!\n\n"
@@ -2289,6 +2379,7 @@ async def confirm_all_settle_handler(message: types.Message, state: FSMContext):
         reply_markup=main_menu('admin')
     )
     await state.clear()
+
 
 
 
