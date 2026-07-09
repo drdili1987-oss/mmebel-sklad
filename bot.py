@@ -1484,45 +1484,123 @@ async def show_all_debts(message: types.Message):
     if await get_user_role(message.from_user.id) != 'admin':
         return
 
+    wait_msg = await message.answer("⏳ Hisob yangilanmoqda...")
+
     try:
-        debts_data = await asyncio.to_thread(db.reference('debts').get)
+        orders_ref      = await asyncio.to_thread(db.reference('orders').get)
+        mebellar_ref    = await asyncio.to_thread(db.reference('mebellar').get)
+        acc_history_all = await asyncio.to_thread(db.reference('accounting_history').get)
     except Exception as e:
-        await message.answer(f"❌ Ma'lumot olishda xatolik: {e}")
+        await wait_msg.delete()
+        await message.answer(f"❌ Ma'lumot olishda xatolik: {e}", reply_markup=main_menu('admin'))
         return
 
-    if not debts_data or not isinstance(debts_data, dict):
-        await message.answer("✅ Hech bir dillerda qarz yo'q!", reply_markup=main_menu('admin'))
-        return
+    EXCLUDED_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi", 'Bekor qilindi'}
+    acc_history_all = acc_history_all or {}
 
-    # Faqat qarzi > 0 bo'lganlarni filtrlaymiz va kamayish tartibida saraymiz
     indebted = []
-    for client_name, debt_val in debts_data.items():
+
+    for client_name in REGULAR_CLIENTS:
+        search_name = client_name.strip().lower()
+
+        # Shu diller uchun accounting_history
+        acc_history = acc_history_all.get(client_name, {}) or {}
+
+        accounted_ids  = set()
+        total_partial  = 0
+        if isinstance(acc_history, dict):
+            for h_id, h in acc_history.items():
+                if not isinstance(h, dict):
+                    continue
+                if h.get('accounting_type') == 'toliq':
+                    oid = str(h.get('order_id', ''))
+                    if oid:
+                        accounted_ids.add(oid)
+                elif h.get('accounting_type') == 'qisman':
+                    try:
+                        pp = h.get('partial_payment', 0)
+                        total_partial += int(float(str(pp))) if pp else 0
+                    except Exception:
+                        pass
+
+        # Yetkazilgan, hali hisob kitob qilinmagan buyurtmalar
+        correct_debt = 0
+        if orders_ref and isinstance(orders_ref, dict):
+            for o_id, o in orders_ref.items():
+                if not isinstance(o, dict):
+                    continue
+                o_client = str(o.get('client_name') or o.get('client') or '').strip().lower()
+                if o_client != search_name:
+                    continue
+                if o.get('status', '') in EXCLUDED_STATUSES:
+                    continue
+                if str(o_id) in accounted_ids:
+                    continue
+
+                try:
+                    raw_total  = o.get('total_price', None)
+                    raw_price  = o.get('price', None)
+                    raw_amount = o.get('amount', 1)
+                    a_int = int(float(str(raw_amount))) if raw_amount else 1
+
+                    order_price = 0
+                    if raw_total is not None and str(raw_total).strip() not in ('', '0', 'None'):
+                        order_price = int(float(str(raw_total)))
+                    elif raw_price is not None and str(raw_price).strip() not in ('', '0', 'None'):
+                        order_price = int(float(str(raw_price))) * a_int
+                    else:
+                        p_id = str(o.get('product_id', '')).replace(' ', '').replace('-', '').upper()
+                        if mebellar_ref and isinstance(mebellar_ref, dict) and p_id in mebellar_ref:
+                            mebel = mebellar_ref[p_id]
+                            if isinstance(mebel, dict) and mebel.get('narxi'):
+                                price_str = str(mebel['narxi']).replace("so'm", '').replace('$', '').replace(' ', '').replace(',', '')
+                                try:
+                                    order_price = int(float(price_str)) * a_int
+                                except Exception:
+                                    pass
+
+                    if o.get('driver') == "O'zi olib ketdi":
+                        try:
+                            pd = o.get('pickup_discount', 0)
+                            order_price = max(0, order_price - int(float(str(pd))) if pd else order_price)
+                        except Exception:
+                            pass
+
+                    correct_debt += order_price
+                except Exception:
+                    pass
+
+        correct_debt -= total_partial
+
+        # Firebase debts ni ham yangilash (sinxronlash uchun)
         try:
-            debt_num = float(debt_val)
-        except (TypeError, ValueError):
-            debt_num = 0
-        if debt_num > 0:
-            indebted.append((client_name, debt_num))
+            await asyncio.to_thread(db.reference(f'debts/{client_name}').set, max(0, correct_debt))
+        except Exception:
+            pass
+
+        if correct_debt > 0:
+            indebted.append((client_name, correct_debt))
+
+    await wait_msg.delete()
 
     if not indebted:
         await message.answer("✅ Hech bir dillerda qarz yo'q!", reply_markup=main_menu('admin'))
         return
 
-    # Qarz miqdori bo'yicha kamayish tartibida saraymiz
+    # Qarz miqdori bo'yicha kamayish tartibida saralash
     indebted.sort(key=lambda x: x[1], reverse=True)
 
     total_debt = sum(d for _, d in indebted)
-    total_fmt = f"{int(total_debt):,}".replace(",", " ")
+    total_fmt  = f"{int(total_debt):,}".replace(",", " ")
 
     lines = [f"💰 *Qarzdor dillerlar ro'yxati* ({len(indebted)} ta)\n"]
-    for i, (client_name, debt_num) in enumerate(indebted, 1):
+    for i, (cn, debt_num) in enumerate(indebted, 1):
         debt_fmt = f"{int(debt_num):,}".replace(",", " ")
-        lines.append(f"{i}. 🧑 *{client_name}* — `{debt_fmt}$`")
+        lines.append(f"{i}. 🧑 *{cn}* — `{debt_fmt}$`")
 
     lines.append(f"\n📊 *Jami qarz: {total_fmt}$*")
+    await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=main_menu('admin'))
 
-    text = "\n".join(lines)
-    await message.answer(text, parse_mode="Markdown", reply_markup=main_menu('admin'))
 
 @dp.message(F.text == "📊 Hisob kitoblar")
 async def report_start(message: types.Message, state: FSMContext):
