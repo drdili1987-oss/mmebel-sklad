@@ -1394,7 +1394,7 @@ async def recalculate_and_save_debt(client_name: str) -> int:
     Barcha hisob kitob joylarida (individual, qisman, barchasini) chaqiriladi.
     Qaytaradi: yangi to'g'ri qarz qiymati.
     """
-    EXCLUDED_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi", 'Bekor qilindi'}
+    EXCLUDED_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi", 'Bekor qilindi', 'Hisob kitob qilindi'}
     search_name = client_name.strip().lower()
 
     orders_ref = await asyncio.to_thread(db.reference('orders').get)
@@ -1495,7 +1495,7 @@ async def show_all_debts(message: types.Message):
         await message.answer(f"❌ Ma'lumot olishda xatolik: {e}", reply_markup=main_menu('admin'))
         return
 
-    EXCLUDED_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi", 'Bekor qilindi'}
+    EXCLUDED_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi", 'Bekor qilindi', 'Hisob kitob qilindi'}
     acc_history_all = acc_history_all or {}
 
     indebted = []
@@ -1638,7 +1638,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
 
         # ===== QARZNI TO'G'RI HISOBLASH =====
         # Yetkazilmagan yoki bekor qilingan statuslar (blacklist) — qolganlar qarzga kiradi
-        EXCLUDED_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi", 'Bekor qilindi'}
+        EXCLUDED_STATUSES = {'Tayyorlanmoqda', "Tayyor bo'ldi", 'Bekor qilindi', 'Hisob kitob qilindi'}
         search_name_for_debt = client_name.strip().lower()
 
         # 1-qadam: Hisob kitob tarixidan to'liq to'langan order_id lar va qisman to'lovlarni olish
@@ -1775,8 +1775,8 @@ async def show_client_report(message: types.Message, state: FSMContext):
                                 'comment': o.get('comment', ''),
                                 'created_at': o.get('created_at', '')
                             })
-                        elif status == 'Bekor qilindi':
-                            continue  # Bekor qilingan — na pending, na delivered
+                        elif status in ['Bekor qilindi', 'Hisob kitob qilindi']:
+                            continue  # Bekor qilingan yoki hisob qilingan — na pending, na delivered
                         else:
                             # Yetkazilgan buyurtma
                             delivered_at = o.get('delivered_at', '')
@@ -2155,6 +2155,9 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
         }
         await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').push, history_record)
         
+        # Buyurtma holatini bazada 'Hisob kitob qilindi' deb belgilash
+        await asyncio.to_thread(db.reference(f'orders/{order_id}').update, {'status': 'Hisob kitob qilindi'})
+        
         # Qarzni yangilash
         try:
             raw_total = order_ref.get('total_price', None)
@@ -2442,6 +2445,9 @@ async def confirm_all_settle_handler(message: types.Message, state: FSMContext):
             'note': f"Barchasini hisob kitob qilish — admin tomonidan"
         }
         await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').push, history_record)
+        
+        # Buyurtma holatini bazada 'Hisob kitob qilindi' deb belgilash
+        await asyncio.to_thread(db.reference(f'orders/{o_id}').update, {'status': 'Hisob kitob qilindi'})
         settled_count += 1
 
     # debts jadvalida qarzni 0 ga o'rnatish
