@@ -2441,19 +2441,35 @@ async def confirm_all_settle_handler(message: types.Message, state: FSMContext):
                 if oid:
                     accounted_ids.add(oid)
 
+    # Barcha buyurtmalarni bir marta olish (tejamkorlik uchun)
+    orders_ref = await asyncio.to_thread(db.reference('orders').get) or {}
+    if not isinstance(orders_ref, dict):
+        orders_ref = {}
+
     timestamp = datetime.now(TASHKENT_TZ).strftime("%Y-%m-%d %H:%M:%S")
     settled_count = 0
+    updates = {}
+    history_ref = db.reference(f'accounting_history/{client_name}')
 
     for do in delivered_orders:
         o_id = str(do.get('o_id', ''))
-        if not o_id or o_id in accounted_ids:
-            continue  # Duplikat oldini olish
-
-        # Firebase dan to'liq ma'lumot olish
-        order_ref = await asyncio.to_thread(db.reference(f'orders/{o_id}').get)
-        if not order_ref:
+        if not o_id:
             continue
 
+        order_ref = orders_ref.get(o_id)
+        if not order_ref or not isinstance(order_ref, dict):
+            continue
+
+        current_status = order_ref.get('status', '')
+
+        # Agar allaqachon tarixda bo'lsa, lekin statusi hali bazada yangilanmagan bo'lsa (mismatch tuzatish)
+        if o_id in accounted_ids:
+            if current_status != 'Hisob kitob qilindi':
+                updates[f'orders/{o_id}/status'] = 'Hisob kitob qilindi'
+                settled_count += 1
+            continue
+
+        # Tarix yozuvini tayyorlash
         history_record = {
             'order_id': o_id,
             'client_name': client_name,
@@ -2466,16 +2482,20 @@ async def confirm_all_settle_handler(message: types.Message, state: FSMContext):
             'accounting_type': 'toliq',
             'accounting_date': timestamp,
             'status': 'Hisob kitob qilindi',
-            'note': f"Barchasini hisob kitob qilish — admin tomonidan"
+            'note': "Barchasini hisob kitob qilish — admin tomonidan"
         }
-        await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').push, history_record)
         
-        # Buyurtma holatini bazada 'Hisob kitob qilindi' deb belgilash
-        await asyncio.to_thread(db.reference(f'orders/{o_id}').update, {'status': 'Hisob kitob qilindi'})
+        # Mahalliy ravishda push key yaratish (tarmok so'rovisiz)
+        push_key = history_ref.push().key
+        updates[f'accounting_history/{client_name}/{push_key}'] = history_record
+        updates[f'orders/{o_id}/status'] = 'Hisob kitob qilindi'
         settled_count += 1
 
-    # debts jadvalida qarzni 0 ga o'rnatish
-    # debts jadvalida qarzni qayta to'g'ri hisoblash (accounting_history yangilangandan keyin)
+    # Barcha o'zgarishlarni bitta so'rovda yangilash (juda tez va xavfsiz)
+    if updates:
+        await asyncio.to_thread(db.reference().update, updates)
+
+    # debts jadvalida qarzni qayta to'g'ri hisoblash
     await recalculate_and_save_debt(client_name)
 
     await message.answer(
