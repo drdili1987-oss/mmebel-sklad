@@ -963,7 +963,7 @@ async def diller_order_status(message: types.Message, state: FSMContext):
         }
         if status in ['Tayyorlanmoqda', "Tayyor bo'ldi", 'Yuborildi']:
             pending.append(entry)
-        elif status in ["Biz yetkazib berdik", "Dillerni o'zi olib ketdi"]:
+        elif status in ["Biz yetkazib berdik", "Dillerni o'zi olib ketdi", "Mijozni o'zi olib ketdi"]:
             delivered.append(entry)
         elif status == 'Bekor qilindi':
             cancelled.append(entry)
@@ -1405,6 +1405,7 @@ async def recalculate_and_save_debt(client_name: str) -> int:
     accounted_ids = set()
     total_partial = 0
     if acc_history and isinstance(acc_history, dict):
+        # 1-pass: to'liq to'langanlarni yig'ish
         for h_id, h in acc_history.items():
             if not isinstance(h, dict):
                 continue
@@ -1412,7 +1413,14 @@ async def recalculate_and_save_debt(client_name: str) -> int:
                 oid = str(h.get('order_id', ''))
                 if oid:
                     accounted_ids.add(oid)
-            elif h.get('accounting_type') == 'qisman':
+        # 2-pass: faqat hali to'liq yopilmagan buyurtmalarning qisman to'lovlarini hisoblash
+        for h_id, h in acc_history.items():
+            if not isinstance(h, dict):
+                continue
+            if h.get('accounting_type') == 'qisman':
+                oid = str(h.get('order_id', ''))
+                if oid in accounted_ids:
+                    continue
                 try:
                     pp = h.get('partial_payment', 0)
                     total_partial += int(float(str(pp))) if pp else 0
@@ -1509,6 +1517,7 @@ async def show_all_debts(message: types.Message):
         accounted_ids  = set()
         total_partial  = 0
         if isinstance(acc_history, dict):
+            # 1-pass: to'liq to'langanlarni yig'ish
             for h_id, h in acc_history.items():
                 if not isinstance(h, dict):
                     continue
@@ -1516,7 +1525,14 @@ async def show_all_debts(message: types.Message):
                     oid = str(h.get('order_id', ''))
                     if oid:
                         accounted_ids.add(oid)
-                elif h.get('accounting_type') == 'qisman':
+            # 2-pass: faqat hali to'liq yopilmagan buyurtmalarning qisman to'lovlarini hisoblash
+            for h_id, h in acc_history.items():
+                if not isinstance(h, dict):
+                    continue
+                if h.get('accounting_type') == 'qisman':
+                    oid = str(h.get('order_id', ''))
+                    if oid in accounted_ids:
+                        continue
                     try:
                         pp = h.get('partial_payment', 0)
                         total_partial += int(float(str(pp))) if pp else 0
@@ -1649,6 +1665,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
         total_partial_paid = 0            # jami qisman to'lovlar summasi
 
         if acc_history_ref_for_debt and isinstance(acc_history_ref_for_debt, dict):
+            # 1-pass: to'liq to'langanlarni yig'ish
             for h_id, h in acc_history_ref_for_debt.items():
                 if not isinstance(h, dict):
                     continue
@@ -1656,7 +1673,14 @@ async def show_client_report(message: types.Message, state: FSMContext):
                     oid = str(h.get('order_id', ''))
                     if oid:
                         accounted_order_ids_set.add(oid)
-                elif h.get('accounting_type') == 'qisman':
+            # 2-pass: faqat hali to'liq yopilmagan buyurtmalarning qisman to'lovlarini hisoblash
+            for h_id, h in acc_history_ref_for_debt.items():
+                if not isinstance(h, dict):
+                    continue
+                if h.get('accounting_type') == 'qisman':
+                    oid = str(h.get('order_id', ''))
+                    if oid in accounted_order_ids_set:
+                        continue
                     try:
                         pp = h.get('partial_payment', 0)
                         total_partial_paid += int(float(str(pp))) if pp else 0
