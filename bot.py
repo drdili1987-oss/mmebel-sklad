@@ -3308,6 +3308,11 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
 
     sorted_dates = sorted(grouped.keys(), key=parse_date, reverse=True)
 
+    def escape_md(text):
+        if not text:
+            return ""
+        return str(text).replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace('`', '\\`')
+
     order_report_items = []
     buttons = []
     row = []
@@ -3318,15 +3323,20 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
             dt = datetime.strptime(d_str, "%d.%m.%Y")
             header = f"✅ **{dt.day} {UZ_MONTHS[dt.month]} {UZ_WEEKDAYS[dt.weekday()]}**"
         except:
-            header = f"✅ **{d_str}**"
+            header = f"✅ **{escape_md(d_str)}**"
         
         day_text = f"{header}\n\n"
         for o_id, o in grouped[d_str]:
-            day_text += f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n"
-            day_text += f"📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n"
-            if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
-                day_text += f"📝 Izoh: {o.get('comment')}\n"
-            day_text += f"📌 Holati: {o.get('status')}\n"
+            c_name = escape_md(o.get('client_name', ''))
+            p_id = escape_md(o.get('product_id', ''))
+            comment_val = o.get('comment', '')
+            status_val = escape_md(o.get('status', ''))
+            
+            day_text += f"🆔 `{escape_md(o_id)}` - 🧑 {c_name}\n"
+            day_text += f"📦 Mebel: {p_id} ({o.get('amount')} ta)\n"
+            if comment_val and str(comment_val).lower() != 'yoq':
+                day_text += f"📝 Izoh: {escape_md(comment_val)}\n"
+            day_text += f"📌 Holati: {status_val}\n"
             day_text += "------------------------\n"
             
             # Tugma qo'shish
@@ -3348,21 +3358,28 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
         
     markup = types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
     
+    async def send_safe_message(text, reply_markup=None):
+        try:
+            await message.answer(text, parse_mode="Markdown", reply_markup=reply_markup)
+        except Exception:
+            clean_text = text.replace("**", "").replace("`", "").replace("\\_", "_").replace("\\*", "*").replace("\\[", "[").replace("\\`", "`")
+            await message.answer(clean_text, reply_markup=reply_markup)
+
     # Xabarlarni yuborish
     current_msg = "🚚 **Faol buyurtmalar:**\n\n"
     for i, part in enumerate(order_report_items):
         if len(current_msg) + len(part) > 3800:
-            await message.answer(current_msg, parse_mode="Markdown")
+            await send_safe_message(current_msg)
             current_msg = part + "\n"
         else:
             current_msg += part + "\n"
             
     prompt = "Qaysi buyurtmaning holatini o'zgartirmoqchisiz? Buyurtma ID-sini tanlang:"
     if len(current_msg) + len(prompt) > 4000:
-        await message.answer(current_msg, parse_mode="Markdown")
-        await message.answer(prompt, reply_markup=markup, parse_mode="Markdown")
+        await send_safe_message(current_msg)
+        await send_safe_message(prompt, reply_markup=markup)
     else:
-        await message.answer(current_msg + prompt, reply_markup=markup, parse_mode="Markdown")
+        await send_safe_message(current_msg + prompt, reply_markup=markup)
 
     await state.set_state(DeliveryControlState.order_id)
 
@@ -3971,18 +3988,23 @@ async def show_delivery_history(message: types.Message, state: FSMContext):
             
         # Xronologik tartib: eskisi tepada (reverse qilmaymiz)
 
-        history_header = f"🕰 **{month} oyi yetkazib berish tarixi:**\n\n"
+        def escape_md(text):
+            if not text:
+                return ""
+            return str(text).replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace('`', '\\`')
+
+        history_header = f"🕰 **{escape_md(month)} oyi yetkazib berish tarixi:**\n\n"
         history_items = []
         
         for d_id, d in items:
             if isinstance(d, dict):
                 t_str = format_date(d.get('timestamp', "Noma'lum"))
-                c_str = d.get('client', "Noma'lum")
-                p_str = d.get('product_id', "Noma'lum")
-                a_str = d.get('amount', '1')
-                dr_str = d.get('driver', "Noma'lum")
-                pr_str = d.get('price', '0')
-                comment_str = d.get('comment', '')
+                c_str = escape_md(d.get('client', "Noma'lum"))
+                p_str = escape_md(d.get('product_id', "Noma'lum"))
+                a_str = escape_md(d.get('amount', '1'))
+                dr_str = escape_md(d.get('driver', "Noma'lum"))
+                pr_str = escape_md(d.get('price', '0'))
+                comment_str = escape_md(d.get('comment', ''))
                 
                 item_text = f"📅 Vaqt: {t_str}\n"
                 item_text += f"🧑 Diller: {c_str}\n"
@@ -3996,15 +4018,23 @@ async def show_delivery_history(message: types.Message, state: FSMContext):
         # Send in chunks
         full_history = [history_header] + history_items
         current_msg = ""
+        
+        async def send_safe_message(text):
+            try:
+                await message.answer(text, parse_mode="Markdown")
+            except Exception:
+                clean_text = text.replace("**", "").replace("`", "").replace("\\_", "_").replace("\\*", "*").replace("\\[", "[").replace("\\`", "`")
+                await message.answer(clean_text)
+
         for part in full_history:
             if len(current_msg) + len(part) > 3900:
-                await message.answer(current_msg, parse_mode="Markdown")
+                await send_safe_message(current_msg)
                 current_msg = part + "\n\n"
             else:
                 current_msg += part + "\n\n"
         
         if current_msg:
-            await message.answer(current_msg, parse_mode="Markdown")
+            await send_safe_message(current_msg)
             
     except Exception as e:
         logging.error(f"Tarix ko'rsatishda xatolik: {e}")
