@@ -294,8 +294,7 @@ async def cancel_handler(message: types.Message, state: FSMContext):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     role = await get_user_role(message.from_user.id)
-    await message.answer(f"Assalomu alaykum! Rolingiz: **{role.upper()}**", 
-                         reply_markup=main_menu(role), parse_mode="Markdown")
+    await send_safe_message(message, f"Assalomu alaykum! Rolingiz: **{role.upper()}**", reply_markup=main_menu(role))
 
 # --- TEST REMINDER ---
 @dp.message(Command("test_reminder"))
@@ -387,9 +386,9 @@ async def add_final(message: types.Message, state: FSMContext):
         try:
             await message.answer_photo(photo=rasm_url, caption=result_text, parse_mode="Markdown")
         except Exception:
-            await message.answer(result_text, parse_mode="Markdown", reply_markup=main_menu(role))
+            await send_safe_message(message, result_text, reply_markup=main_menu(role))
     else:
-        await message.answer(result_text, parse_mode="Markdown", reply_markup=main_menu(role))
+        await send_safe_message(message, result_text, reply_markup=main_menu(role))
     
     await state.clear()
 
@@ -415,9 +414,9 @@ async def view_stock(message: types.Message):
                 try:
                     await message.answer_photo(photo=rasm, caption=text, parse_mode="Markdown")
                 except:
-                    await message.answer(text + f"\n📷 Rasmi: {rasm}", parse_mode="Markdown")
+                    await send_safe_message(message, text + f"\n📷 Rasmi: {rasm}")
             else:
-                await message.answer(text, parse_mode="Markdown")
+                await send_safe_message(message, text)
 
 # --- DILLER: RASMLAR VA NARXLAR ---
 @dp.message(F.text == "📸 Rasmlar va narxlar")
@@ -426,11 +425,8 @@ async def diller_photos_prices(message: types.Message):
     if role not in ['diller', 'xodim', 'ishchi']:
         await message.answer("Bu funksiya faqat dillerlar uchun.", reply_markup=main_menu(role))
         return
-    await message.answer(
-        "📸 *Rasmlar va narxlar* bilan tanishish uchun quyidagi Telegram kanalga o'ting:\n\n"
-        "👉 [Rasmlar va narxlar kanaliga o'tish](https://t.me/+6yKALewduspiZDBi)",
-        parse_mode="Markdown"
-    )
+    await send_safe_message(message, "📸 *Rasmlar va narxlar* bilan tanishish uchun quyidagi Telegram kanalga o'ting:\n\n"
+        "👉 [Rasmlar va narxlar kanaliga o'tish](https://t.me/+6yKALewduspiZDBi)")
 
 # --- DILLER: ZAKAZ BERISH ---
 @dp.message(F.text == "📝 Zakaz berish")
@@ -509,13 +505,9 @@ async def diller_select_product(message: types.Message, state: FSMContext):
         product_name=model_name,
         stock_soni=soni
     )
-    await message.answer(
-        f"✅ *{model_name}* tanlandi.\n"
+    await send_safe_message(message, f"✅ *{model_name}* tanlandi.\n"
         f"{stock_info}\n"
-        "Nechta olmoqchisiz? (faqat raqam kiriting):",
-        reply_markup=types.ReplyKeyboardRemove(),
-        parse_mode="Markdown"
-    )
+        "Nechta olmoqchisiz? (faqat raqam kiriting):", reply_markup=types.ReplyKeyboardRemove())
     await state.set_state(DillerOrderState.amount)
 
 @dp.message(DillerOrderState.amount)
@@ -621,14 +613,11 @@ async def diller_order_due_date(message: types.Message, state: FSMContext):
 
     role = await get_user_role(message.from_user.id)
     price_info = f"\n💰 Narxi: {price_val}$ × {amount} = {total_price}$" if price_val > 0 else ""
-    await message.answer(
-        f"✅ Zakaz qabul qilindi!\n"
+    await send_safe_message(message, f"✅ Zakaz qabul qilindi!\n"
         f"🆔 ID: `{order_id}`\n"
         f"📦 Mebel: {product_name} — {amount} ta\n"
         f"📅 Muddat: {format_date(due_date)}"
-        f"{price_info}",
-        parse_mode="Markdown",
-        reply_markup=main_menu(role)
+        f"{price_info}", reply_markup=main_menu(role)
     )
     await state.clear()
 
@@ -648,11 +637,17 @@ async def diller_order_due_date(message: types.Message, state: FSMContext):
     for uid, udata in (users_ref or {}).items():
         if isinstance(udata, dict) and udata.get('role') in ['admin', 'omborchi', 'ishchi']:
             try:
-                await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
+                try:
+                    await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
+                except Exception:
+                    pass
             except Exception:
                 pass
     try:
-        await bot.send_message(883589794, notify_text, parse_mode="Markdown")
+        try:
+            await bot.send_message(883589794, notify_text, parse_mode="Markdown")
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -725,12 +720,12 @@ async def diller_order_history(message: types.Message, state: FSMContext):
     if len(text) > 4000:
         for i in range(0, len(text), 4000):
             try:
-                await message.answer(text[i:i+4000], parse_mode="Markdown")
+                await send_safe_message(message, text[i:i+4000])
             except Exception:
-                await message.answer(text[i:i+4000])
+                await send_safe_message(message, text[i:i+4000])
     else:
         try:
-            await message.answer(text, parse_mode="Markdown", reply_markup=main_menu(role))
+            await message.answer(text, reply_markup=main_menu(role))
         except Exception:
             await message.answer(text, reply_markup=main_menu(role))
 
@@ -763,12 +758,9 @@ async def diller_cancel_start(message: types.Message, state: FSMContext):
         cancellable.append((o_id, o))
 
     if not cancellable:
-        await message.answer(
-            "❌ Bekor qilish mumkin bo'lgan zakaz yo'q.\n"
+        await send_safe_message(message, "❌ Bekor qilish mumkin bo'lgan zakaz yo'q.\n"
             "_(Faqat siz tomonidan berilgan va 'Tayyorlanmoqda' statusidagi zakazlarni bekor qilish mumkin.\n"
-            "Admin tomonidan shakllangan zakazlarni bekor qilib bo'lmaydi.)_",
-            parse_mode="Markdown",
-            reply_markup=main_menu(role)
+            "Admin tomonidan shakllangan zakazlarni bekor qilib bo'lmaydi.)_", reply_markup=main_menu(role)
         )
         return
 
@@ -816,10 +808,9 @@ async def diller_cancel_select(message: types.Message, state: FSMContext):
         ],
         resize_keyboard=True
     )
-    await message.answer(
+    await send_safe_message(message, 
         f"⚠️ *{order_ref.get('product_id')}* — {order_ref.get('amount')} ta zakazni bekor qilmoqchimisiz?\n"
         f"📅 Muddat: {format_date(order_ref.get('due_date',''))}",
-        parse_mode="Markdown",
         reply_markup=markup
     )
     await state.set_state(DillerCancelState.confirm)
@@ -895,11 +886,17 @@ async def diller_cancel_confirm(message: types.Message, state: FSMContext):
     for uid, udata in (users_ref or {}).items():
         if isinstance(udata, dict) and udata.get('role') in ['admin', 'omborchi']:
             try:
-                await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
+                try:
+                    await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
+                except Exception:
+                    pass
             except Exception:
                 pass
     try:
-        await bot.send_message(883589794, notify_text, parse_mode="Markdown")
+        try:
+            await bot.send_message(883589794, notify_text, parse_mode="Markdown")
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -1034,12 +1031,12 @@ async def diller_order_status(message: types.Message, state: FSMContext):
     if len(text) > 4000:
         for i in range(0, len(text), 4000):
             try:
-                await message.answer(text[i:i+4000], parse_mode="Markdown")
+                await send_safe_message(message, text[i:i+4000])
             except:
-                await message.answer(text[i:i+4000])
+                await send_safe_message(message, text[i:i+4000])
     else:
         try:
-            await message.answer(text, parse_mode="Markdown", reply_markup=main_menu(role))
+            await message.answer(text, reply_markup=main_menu(role))
         except:
             await message.answer(text, reply_markup=main_menu(role))
 
@@ -1050,12 +1047,9 @@ async def diller_payment_start(message: types.Message, state: FSMContext):
     role = await get_user_role(message.from_user.id)
     if role not in ['diller', 'xodim', 'ishchi']:
         return
-    await message.answer(
-        "💵 *To'lov summasini kiriting*\n\n"
+    await send_safe_message(message, "💵 *To'lov summasini kiriting*\n\n"
         "Masalan: `450` yoki `450$`\n"
-        "_(Bu xabar adminga yuboriladi va u tasdiqlashidan keyin qarzingizdan ayiriladi)_",
-        parse_mode="Markdown",
-        reply_markup=types.ReplyKeyboardMarkup(
+        "_(Bu xabar adminga yuboriladi va u tasdiqlashidan keyin qarzingizdan ayiriladi)_", reply_markup=types.ReplyKeyboardMarkup(
             keyboard=[[types.KeyboardButton(text="Bosh menyu")]],
             resize_keyboard=True
         )
@@ -1112,15 +1106,15 @@ async def diller_payment_amount(message: types.Message, state: FSMContext):
     for uid, udata in (users_ref or {}).items():
         if isinstance(udata, dict) and udata.get('role') == 'admin':
             try:
-                await bot.send_message(int(uid), admin_text, reply_markup=inline_kb, parse_mode="Markdown")
+                try:
+                    await bot.send_message(int(uid), admin_text, reply_markup=inline_kb, parse_mode="Markdown")
+                except Exception:
+                    pass
             except Exception as e:
                 print(f"Adminga to'lov xabari yuborishda xatolik: {e}")
 
     await state.clear()
-    await message.answer(
-        f"✅ To'lov bildirganingiz adminga yuborildi!\n💵 Summa: *{amount_val:g}$*\n\nAdmin tasdiqlagach qarzingizdan ayiriladi.",
-        parse_mode="Markdown",
-        reply_markup=main_menu(role)
+    await send_safe_message(message, f"✅ To'lov bildirganingiz adminga yuborildi!\n💵 Summa: *{amount_val:g}$*\n\nAdmin tasdiqlagach qarzingizdan ayiriladi.", reply_markup=main_menu(role)
     )
 
 
@@ -1179,9 +1173,8 @@ async def admin_confirm_payment(callback: types.CallbackQuery):
         await callback.message.edit_reply_markup(reply_markup=None)
     except:
         pass
-    await callback.message.answer(
-        f"✅ To'lov tasdiqlandi!\n🧑 {diller_name} ({client_name})\n💵 {amount_val:g}$\n💳 Yangi qarz: *{new_debt:,}$*".replace(',', ' '),
-        parse_mode="Markdown"
+    await send_safe_message(callback.message,
+        f"✅ To'lov tasdiqlandi!\n🧑 {escape_md(diller_name)} ({escape_md(client_name)})\n💵 {amount_val:g}$\n💳 Yangi qarz: *{new_debt:,}$*".replace(',', ' ')
     )
 
     # Dillerga xabar
@@ -1615,7 +1608,7 @@ async def show_all_debts(message: types.Message):
         lines.append(f"{i}. 🧑 *{cn}* — `{debt_fmt}$`")
 
     lines.append(f"\n📊 *Jami qarz: {total_fmt}$*")
-    await message.answer("\n".join(lines), parse_mode="Markdown", reply_markup=main_menu('admin'))
+    await send_safe_message(message, "\n".join(lines), reply_markup=main_menu('admin'))
 
 
 @dp.message(F.text == "📊 Hisob kitoblar")
@@ -1957,7 +1950,7 @@ async def show_client_report(message: types.Message, state: FSMContext):
         MAX_MSG = 3800
         if len(header_text) <= MAX_MSG:
             try:
-                await message.answer(header_text, parse_mode="Markdown", reply_markup=markup)
+                await send_safe_message(message, header_text, reply_markup=markup)
             except Exception:
                 await message.answer(header_text, reply_markup=markup)
         else:
@@ -1977,9 +1970,9 @@ async def show_client_report(message: types.Message, state: FSMContext):
             for i, ch in enumerate(chunks):
                 try:
                     if i == len(chunks) - 1:
-                        await message.answer(ch, parse_mode="Markdown", reply_markup=markup)
+                        await send_safe_message(message, ch, reply_markup=markup)
                     else:
-                        await message.answer(ch, parse_mode="Markdown")
+                        await send_safe_message(message, ch)
                 except Exception:
                     if i == len(chunks) - 1:
                         await message.answer(ch, reply_markup=markup)
@@ -2044,14 +2037,14 @@ async def client_order_selected(message: types.Message, state: FSMContext):
             ],
             resize_keyboard=True
         )
-        await message.answer(
+        await send_safe_message(message, 
             f"⚠️ *Diqqat!*\n\n"
             f"🧑 Mijoz: *{client_name}*\n"
             f"📦 Hisob kitob qilinadigan buyurtmalar: *{delivered_count} ta*\n"
             f"💳 Joriy qarz: *{debt_fmt}$*\n\n"
             f"Barcha qarz nolga tushiriladi, lekin olingan mebellar tarixi saqlanib qoladi.\n\n"
             f"Davom etasizmi?",
-            parse_mode="Markdown",
+            
             reply_markup=markup
         )
         await state.set_state(ClientAccountingState.confirm_all_settle)
@@ -2111,7 +2104,7 @@ async def client_order_selected(message: types.Message, state: FSMContext):
     )
     
     try:
-        await message.answer(order_info, parse_mode="Markdown", reply_markup=markup)
+        await send_safe_message(message, order_info, reply_markup=markup)
     except Exception:
         await message.answer(order_info, reply_markup=markup)
     
@@ -2154,11 +2147,8 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
                 if isinstance(h, dict) and h.get('order_id') == str(order_id) and h.get('accounting_type') == 'toliq':
                     product_id = order_ref.get('product_id', '')
                     safe_pid = str(product_id).replace('`', '').replace('*', '')
-                    await message.answer(
-                        f"⚠️ *{safe_pid}* uchun hisob kitob allaqachon qilingan!\n"
-                        f"📋 Tarixda mavjud. Qayta yozilmadi.",
-                        parse_mode="Markdown",
-                        reply_markup=main_menu('admin')
+                    await send_safe_message(message, f"⚠️ *{safe_pid}* uchun hisob kitob allaqachon qilingan!\n"
+                        f"📋 Tarixda mavjud. Qayta yozilmadi.", reply_markup=main_menu('admin')
                     )
                     await state.clear()
                     return
@@ -2247,12 +2237,9 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
             paid_info = f"\n💰 Mebel narxi: *{total_price}*$\n💸 Chegirma (o'zi olib ketdi): *-{pickup_discount}*$\n✅ Hisoblangan: *{net_price}*$"
         else:
             paid_info = f"\n💸 To'landi: *{net_price:,}*$".replace(",", " ") if net_price > 0 else ""
-        await message.answer(
-            f"✅ *{safe_pid}* — {amount_str} ta buyurtma hisob kitob qilindi!\n"
+        await send_safe_message(message, f"✅ *{safe_pid}* — {amount_str} ta buyurtma hisob kitob qilindi!\n"
             f"📋 Tarixga saqlandi.{paid_info}\n"
-            f"💳 Yangi qarz: *{new_debt_fmt}*$",
-            parse_mode="Markdown"
-        )
+            f"💳 Yangi qarz: *{new_debt_fmt}*$")
         # Hisob kitob qilingan order ni delivered_orders dan olib tashlash va sahifani qayta ko'rsatish
         updated_delivered = [d for d in data.get('delivered_orders', []) if str(d['o_id']) != str(order_id)]
         await state.update_data(delivered_orders=updated_delivered, current_debt=new_debt)
@@ -2266,10 +2253,10 @@ async def client_accounting_action(message: types.Message, state: FSMContext):
         safe_pid = str(product_id).replace('`', '').replace('*', '')
         
         await state.update_data(order_id=order_id)
-        await message.answer(
+        await send_safe_message(message, 
             f"💰 *{safe_pid}* uchun qancha pul to'ladi?\n"
             f"(Faqat raqam kiriting, $da):",
-            parse_mode="Markdown",
+            
             reply_markup=types.ReplyKeyboardRemove()
         )
         await state.set_state(ClientAccountingState.partial_amount)
@@ -2342,11 +2329,10 @@ async def client_partial_payment(message: types.Message, state: FSMContext):
     except Exception:
         new_debt_fmt = str(new_debt)
 
-    await message.answer(
+    await send_safe_message(message, 
         f"💰 *{safe_pid}* uchun {amount:,}$ qisman to'lov qabul qilindi!\n"
         f"📋 Tarixga saqlandi.\n"
-        f"💳 Yangi qarz: *{new_debt_fmt}*$",
-        parse_mode="Markdown"
+        f"💳 Yangi qarz: *{new_debt_fmt}*$"
     )
     # Sahifani qayta ko'rsatish
     await state.update_data(current_debt=new_debt)
@@ -2402,7 +2388,7 @@ async def show_client_report_inner(message, state, client_name, pending_orders, 
     markup = types.ReplyKeyboardMarkup(keyboard=order_buttons, resize_keyboard=True)
     
     try:
-        await message.answer(header_text, parse_mode="Markdown", reply_markup=markup)
+        await send_safe_message(message, header_text, reply_markup=markup)
     except Exception:
         await message.answer(header_text, reply_markup=markup)
     
@@ -2498,13 +2484,10 @@ async def confirm_all_settle_handler(message: types.Message, state: FSMContext):
     # debts jadvalida qarzni qayta to'g'ri hisoblash
     await recalculate_and_save_debt(client_name)
 
-    await message.answer(
-        f"✅ *{client_name}* — barcha qarz hisob kitob qilindi!\n\n"
+    await send_safe_message(message, f"✅ *{client_name}* — barcha qarz hisob kitob qilindi!\n\n"
         f"📦 Jami *{settled_count} ta* buyurtma hisob kitob qilindi.\n"
         f"💳 Qarz: *0$*\n"
-        f"📜 Olingan mebellar tarixi Firebase da saqlanib qoldi.",
-        parse_mode="Markdown",
-        reply_markup=main_menu('admin')
+        f"📜 Olingan mebellar tarixi Firebase da saqlanib qoldi.", reply_markup=main_menu('admin')
     )
     await state.clear()
 
@@ -2516,11 +2499,8 @@ async def show_client_accounting_history(message, client_name):
     history_ref = await asyncio.to_thread(db.reference(f'accounting_history/{client_name}').get)
     
     if not history_ref:
-        await message.answer(
-            f"📜 *{client_name}* — Hisob kitob tarixi bo'sh.\n"
-            "Hali hech qanday hisob kitob qilinmagan.",
-            parse_mode="Markdown"
-        )
+        await send_safe_message(message, f"📜 *{client_name}* — Hisob kitob tarixi bo'sh.\n"
+            "Hali hech qanday hisob kitob qilinmagan.")
         return
     
     # Narx fallback uchun orders va mebellar jadvallarini yuklab olish
@@ -2645,7 +2625,7 @@ async def show_client_accounting_history(message, client_name):
     
     for chunk in chunks:
         try:
-            await message.answer(chunk, parse_mode="Markdown")
+            await send_safe_message(message, chunk)
         except Exception:
             await message.answer(chunk)
 
@@ -2715,7 +2695,10 @@ async def notify_diller_new_order(order_data, order_id):
     )
     for tg_id in diller_ids:
         try:
-            await bot.send_message(tg_id, text, parse_mode="Markdown")
+            try:
+                await bot.send_message(tg_id, text, parse_mode="Markdown")
+            except Exception:
+                pass
         except Exception as e:
             print(f"Dillerga yangi zakaz xabari yuborishda xatolik ({tg_id}): {e}")
 
@@ -2767,7 +2750,10 @@ async def send_notification(msg):
     for user_id in users_to_notify:
         for chunk in chunks:
             try:
-                await bot.send_message(chat_id=int(user_id), text=chunk, parse_mode="Markdown")
+                try:
+                    await bot.send_message(chat_id=int(user_id), text=chunk, parse_mode="Markdown")
+                except Exception:
+                    pass
             except Exception as e:
                 logging.error(f"Error sending reminder to {user_id}: {e}")
 
@@ -2921,7 +2907,7 @@ async def view_active_orders(message: types.Message):
 
         async def send_safe(text, reply_markup=None):
             try:
-                await message.answer(text, parse_mode="Markdown", reply_markup=reply_markup)
+                await send_safe_message(message, text, reply_markup=reply_markup)
             except Exception:
                 clean = text.replace("**", "").replace("`", "").replace("\\_", "_").replace("\\*", "*").replace("\\[", "[").replace("\\`", "`")
                 await message.answer(clean, reply_markup=reply_markup)
@@ -3142,13 +3128,13 @@ async def delivery_report(message: types.Message, state: FSMContext):
         current_msg = ""
         for part in full_report:
             if len(current_msg) + len(part) > 3900:
-                await message.answer(current_msg, parse_mode="Markdown")
+                await send_safe_message(message, current_msg)
                 current_msg = part + "\n\n"
             else:
                 current_msg += part + "\n\n"
 
         if current_msg:
-            await message.answer(current_msg, parse_mode="Markdown")
+            await send_safe_message(message, current_msg)
 
         role = await get_user_role(message.from_user.id)
         await message.answer("Bosh menyuga qaytish uchun tugmani bosing.", reply_markup=main_menu(role))
@@ -3175,13 +3161,9 @@ async def update_stock_start(message: types.Message, state: FSMContext):
         ],
         resize_keyboard=True
     )
-    await message.answer(
-        "Nima qilmoqchisiz?\n\n"
+    await send_safe_message(message, "Nima qilmoqchisiz?\n\n"
         "📦 *Ombor sonini yangilash* — mavjud mebelning sonini o'zgartirish\n"
-        "➕ *Yangi mebel* — omborga yangi mebel qo'shish",
-        reply_markup=markup,
-        parse_mode="Markdown"
-    )
+        "➕ *Yangi mebel* — omborga yangi mebel qo'shish", reply_markup=markup)
     await state.clear()
 
 @dp.message(F.text == "📦 Ombor sonini yangilash")
@@ -3251,14 +3233,13 @@ async def update_stock_product_id(message: types.Message, state: FSMContext):
         return
 
     await state.update_data(product_id=product_id)
-    await message.answer(
+    await send_safe_message(message, 
         f"✅ Mebel topildi!\n\n"
         f"🪑 Nomi: *{product_ref.get('nomi', 'Noma\'lum')}*\n"
         f"📐 Modeli: {product_ref.get('modeli', '-')}\n"
         f"📦 Hozirgi qoldiq: *{product_ref.get('soni', 0)} ta*\n\n"
         f"Yangi sonini kiriting:",
-        reply_markup=types.ReplyKeyboardRemove(),
-        parse_mode="Markdown"
+        reply_markup=types.ReplyKeyboardRemove()
     )
     await state.set_state(UpdateStockState.new_quantity)
 
@@ -3275,13 +3256,9 @@ async def update_stock_new_quantity(message: types.Message, state: FSMContext):
             {'soni': new_quantity}
         )
         role = await get_user_role(message.from_user.id)
-        await message.answer(
-            f"✅ Ombor muvaffaqiyatli yangilandi!\n"
+        await send_safe_message(message, f"✅ Ombor muvaffaqiyatli yangilandi!\n"
             f"🆔 ID: `{data['product_id']}`\n"
-            f"📦 Yangi qoldiq: *{new_quantity} ta*",
-            reply_markup=main_menu(role),
-            parse_mode="Markdown"
-        )
+            f"📦 Yangi qoldiq: *{new_quantity} ta*", reply_markup=main_menu(role))
         await state.clear()
     except ValueError:
         await message.answer("❌ Iltimos, faqat raqam kiriting (masalan: 9):")
@@ -3371,7 +3348,7 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
     
     async def send_safe_message(text, reply_markup=None):
         try:
-            await message.answer(text, parse_mode="Markdown", reply_markup=reply_markup)
+            await send_safe_message(message, text, reply_markup=reply_markup)
         except Exception:
             clean_text = text.replace("**", "").replace("`", "").replace("\\_", "_").replace("\\*", "*").replace("\\[", "[").replace("\\`", "`")
             await message.answer(clean_text, reply_markup=reply_markup)
@@ -3448,20 +3425,18 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
                 continue
             if user_data.get('role') == 'admin':
                 try:
-                    await bot.send_message(
-                        int(user_id),
-                        f"📦 *Buyurtma holati o'zgardi!*\n\n🆔 ID: `{data['order_id']}`\n🧑 Mijoz: {client_name_notify}\n📦 Mebel: {product_id}\n📊 Soni: {amount} ta\n📌 Yangi holat: *{new_status}*",
-                        parse_mode="Markdown"
-                    )
+                    try:
+                        await bot.send_message(int(user_id), f"📦 *Buyurtma holati o'zgardi!*\n\n🆔 ID: `{data['order_id']}`\n🧑 Mijoz: {client_name_notify}\n📦 Mebel: {product_id}\n📊 Soni: {amount} ta\n📌 Yangi holat: *{new_status}*", parse_mode="Markdown")
+                    except Exception:
+                        pass
                 except Exception as e:
                     print(f"Adminga xabar yuborishda xatolik: {e}")
             elif user_data.get('role') in ['ishchi', 'xodim'] and new_status == "Tayyor bo'ldi":
                 try:
-                    await bot.send_message(
-                        int(user_id),
-                        f"✅ *Mahsulot tayyor bo'ldi!*\n\n🆔 Buyurtma ID: `{data['order_id']}`\n🧑 Mijoz: {client_name_notify}\n📦 Mebel: {product_id}\n📊 Soni: {amount} ta",
-                        parse_mode="Markdown"
-                    )
+                    try:
+                        await bot.send_message(int(user_id), f"✅ *Mahsulot tayyor bo'ldi!*\n\n🆔 Buyurtma ID: `{data['order_id']}`\n🧑 Mijoz: {client_name_notify}\n📦 Mebel: {product_id}\n📊 Soni: {amount} ta", parse_mode="Markdown")
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
@@ -3471,15 +3446,14 @@ async def delivery_new_status(message: types.Message, state: FSMContext):
             due_date = order_ref.get('due_date', '?') if order_ref else '?'
             for diller_tg_id in diller_tg_ids:
                 try:
-                    await bot.send_message(
-                        int(diller_tg_id),
-                        f"🎉 *Sizning buyurtmangiz tayyor bo'ldi!*\n\n"
+                    try:
+                        await bot.send_message(int(diller_tg_id), f"🎉 *Sizning buyurtmangiz tayyor bo'ldi!*\n\n"
                         f"📦 Mebel: *{product_id}*\n"
                         f"📊 Soni: *{amount} ta*\n"
                         f"📅 Muddati: *{format_date(due_date)}*\n\n"
-                        f"Yetkazib berish haqida tez orada xabar beramiz. ✅",
-                        parse_mode="Markdown"
-                    )
+                        f"Yetkazib berish haqida tez orada xabar beramiz. ✅", parse_mode="Markdown")
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
@@ -3732,11 +3706,10 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
     for user_id, user_data in (admin_ref or {}).items():
         if user_data.get('role') == 'admin':
             try:
-                await bot.send_message(
-                    int(user_id),
-                    f"📦 **Buyurtma holati o'zgardi!**\n\n🆔 ID: `{order_id}`\n🧑 Diller: {client}\n📌 Yangi holat: {new_status}\n🚚 Haydovchi: {driver}\n💵 Narxi: {price}",
-                    parse_mode="Markdown"
-                )
+                try:
+                    await bot.send_message(int(user_id), f"📦 **Buyurtma holati o'zgardi!**\n\n🆔 ID: `{order_id}`\n🧑 Diller: {client}\n📌 Yangi holat: {new_status}\n🚚 Haydovchi: {driver}\n💵 Narxi: {price}", parse_mode="Markdown")
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -3763,7 +3736,10 @@ async def process_delivery_final(price, message: types.Message, state: FSMContex
             )
             for d_tg_id in diller_ids_for_delivery:
                 try:
-                    await bot.send_message(d_tg_id, delivery_notify_text, parse_mode="Markdown")
+                    try:
+                        await bot.send_message(d_tg_id, delivery_notify_text, parse_mode="Markdown")
+                    except Exception:
+                        pass
                 except Exception as _de_err:
                     print(f"Dillerga yetkazib berildi xabari ({d_tg_id}): {_de_err}")
         except Exception as _de2:
@@ -3839,7 +3815,7 @@ async def driver_report_start(message: types.Message, state: FSMContext):
         buttons.append([types.KeyboardButton(text="Bosh menyu")])
         markup = types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
             
-        await message.answer(report_text, parse_mode="Markdown", reply_markup=markup)
+        await send_safe_message(message, report_text, reply_markup=markup)
 
 @dp.message(F.text.startswith("👨‍✈️ "))
 async def select_driver_finance(message: types.Message):
@@ -3863,7 +3839,7 @@ async def select_driver_finance(message: types.Message):
         text = f"👨‍✈️ **Haydovchi:** {driver_name}\n"
         text += f"💳 **Joriy balansi (sizning qarzingiz/haqqingiz):** {current_bal}$\n\n"
         text += "*(Eslatma: Bu balansga qilingan yetkazib berishlar puli avtomatik qo'shilmaydi. Moliya bo'limi orqali hisob-kitobni o'zingiz yurgizasiz)*"
-        await message.answer(text, parse_mode="Markdown", reply_markup=markup)
+        await send_safe_message(message, text, reply_markup=markup)
 
 @dp.message(F.text.contains("ga Pul Berish (D. Chiqim)"))
 async def driver_chiqim_start(message: types.Message, state: FSMContext):
@@ -3941,9 +3917,9 @@ async def driver_history(message: types.Message):
             
         if len(history) > 4000:
             for x in range(0, len(history), 4000):
-                await message.answer(history[x:x+4000], parse_mode="Markdown")
+                await send_safe_message(message, history[x:x+4000])
         else:
-            await message.answer(history, parse_mode="Markdown")
+            await send_safe_message(message, history)
 
 class HistoryState(StatesGroup):
     select_month = State()
@@ -4032,7 +4008,7 @@ async def show_delivery_history(message: types.Message, state: FSMContext):
         
         async def send_safe_message(text):
             try:
-                await message.answer(text, parse_mode="Markdown")
+                await send_safe_message(message, text)
             except Exception:
                 clean_text = text.replace("**", "").replace("`", "").replace("\\_", "_").replace("\\*", "*").replace("\\[", "[").replace("\\`", "`")
                 await message.answer(clean_text)
@@ -4087,9 +4063,9 @@ async def sales_statistics(message: types.Message):
             
         if len(text) > 4000:
             for x in range(0, len(text), 4000):
-                await message.answer(text[x:x+4000], parse_mode="Markdown")
+                await send_safe_message(message, text[x:x+4000])
         else:
-            await message.answer(text, parse_mode="Markdown")
+            await send_safe_message(message, text)
 
 @dp.message(F.text.contains(" yetkazib berish tarixi"))
 async def driver_deliveries_history(message: types.Message):
@@ -4130,9 +4106,9 @@ async def driver_deliveries_history(message: types.Message):
             
         if len(report_text) > 4000:
             for x in range(0, len(report_text), 4000):
-                await message.answer(report_text[x:x+4000], parse_mode="Markdown")
+                await send_safe_message(message, report_text[x:x+4000])
         else:
-            await message.answer(report_text, parse_mode="Markdown")
+            await send_safe_message(message, report_text)
 
 # --- ADMIN: BUYURTMALAR NAZORATI ---
 @dp.message(F.text == "📋 Buyurtmalar nazorati")
@@ -4169,7 +4145,7 @@ async def admin_order_control_start(message: types.Message, state: FSMContext):
 
     async def send_safe(text, reply_markup=None):
         try:
-            await message.answer(text, parse_mode="Markdown", reply_markup=reply_markup)
+            await send_safe_message(message, text, reply_markup=reply_markup)
         except Exception:
             clean = text.replace("**", "").replace("`", "").replace("\\_", "_").replace("\\*", "*").replace("\\[", "[").replace("\\`", "`")
             await message.answer(clean, reply_markup=reply_markup)
@@ -4256,7 +4232,7 @@ async def admin_order_selected(message: types.Message, state: FSMContext):
         resize_keyboard=True
     )
     
-    await message.answer(f"{info}\nNima qilmoqchisiz?", reply_markup=markup, parse_mode="Markdown")
+    await send_safe_message(message, f"{info}\nNima qilmoqchisiz?", reply_markup=markup)
     await state.set_state(AdminOrderControlState.action)
 
 @dp.message(AdminOrderControlState.action)
@@ -4291,7 +4267,7 @@ async def admin_order_action(message: types.Message, state: FSMContext):
             # Buyurtmani bekor qilish
             await asyncio.to_thread(db.reference(f'orders/{order_id}').update, {'status': 'Bekor qilindi'})
         
-        await message.answer(f"✅ Buyurtma `{order_id}` bekor qilindi!\n📦 Omborga qaytarildi.", reply_markup=main_menu('admin'), parse_mode="Markdown")
+        await send_safe_message(message, f"✅ Buyurtma `{order_id}` bekor qilindi!\n📦 Omborga qaytarildi.", reply_markup=main_menu('admin'))
         
         # Omborchi, xodimlar va dillerga xabar
         cancel_client_name = order_ref.get('client_name', '') if order_ref else ''
@@ -4310,27 +4286,32 @@ async def admin_order_action(message: types.Message, state: FSMContext):
                 continue
             if user_data.get('role') in ['omborchi', 'ishchi', 'xodim']:
                 try:
-                    await bot.send_message(int(user_id), cancel_msg, parse_mode="Markdown")
+                    try:
+                        await bot.send_message(int(user_id), cancel_msg, parse_mode="Markdown")
+                    except Exception:
+                        pass
                 except:
                     pass
         # Hardcoded omborchi
         try:
-            await bot.send_message(883589794, cancel_msg, parse_mode="Markdown")
+            try:
+                await bot.send_message(883589794, cancel_msg, parse_mode="Markdown")
+            except Exception:
+                pass
         except:
             pass
         # Dillerga xabar yuborish
         diller_tg_ids = DILLER_TELEGRAM_MAP.get(cancel_client_name, [])
         for diller_tg_id in diller_tg_ids:
             try:
-                await bot.send_message(
-                    int(diller_tg_id),
-                    f"❌ *Sizning buyurtmangiz bekor qilindi!*\n\n"
+                try:
+                    await bot.send_message(int(diller_tg_id), f"❌ *Sizning buyurtmangiz bekor qilindi!*\n\n"
                     f"🆔 Buyurtma ID: `{order_id}`\n"
                     f"📦 Mebel: *{cancel_product}*\n"
                     f"📊 Soni: *{cancel_amount} ta*\n\n"
-                    f"Batafsil ma'lumot uchun admin bilan bog'laning.",
-                    parse_mode="Markdown"
-                )
+                    f"Batafsil ma'lumot uchun admin bilan bog'laning.", parse_mode="Markdown")
+                except Exception:
+                    pass
             except:
                 pass
         
@@ -4418,15 +4399,15 @@ async def admin_order_new_value(message: types.Message, state: FSMContext):
             # shuning uchun qarzga hech qachon qo'shilmagan. Yetkazilganda qarz qo'shiladi.
         
         await asyncio.to_thread(db.reference(f'orders/{order_id}').update, {'amount': str(new_amount)})
-        await message.answer(f"✅ Buyurtma `{order_id}` soni {new_amount} taga o'zgartirildi!", reply_markup=main_menu('admin'), parse_mode="Markdown")
+        await send_safe_message(message, f"✅ Buyurtma `{order_id}` soni {new_amount} taga o'zgartirildi!", reply_markup=main_menu('admin'))
     
     elif field == "due_date":
         await asyncio.to_thread(db.reference(f'orders/{order_id}').update, {'due_date': new_value})
-        await message.answer(f"✅ Buyurtma `{order_id}` muddati {new_value} ga o'zgartirildi!", reply_markup=main_menu('admin'), parse_mode="Markdown")
+        await send_safe_message(message, f"✅ Buyurtma `{order_id}` muddati {new_value} ga o'zgartirildi!", reply_markup=main_menu('admin'))
     
     elif field == "comment":
         await asyncio.to_thread(db.reference(f'orders/{order_id}').update, {'comment': new_value})
-        await message.answer(f"✅ Buyurtma `{order_id}` izohi o'zgartirildi!", reply_markup=main_menu('admin'), parse_mode="Markdown")
+        await send_safe_message(message, f"✅ Buyurtma `{order_id}` izohi o'zgartirildi!", reply_markup=main_menu('admin'))
     
     # Omborchi va xodimlarga xabar
     order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
@@ -4483,7 +4464,10 @@ async def admin_order_new_value(message: types.Message, state: FSMContext):
         )
         for tg_id in diller_ids:
             try:
-                await bot.send_message(tg_id, change_text, reply_markup=inline_kb, parse_mode="Markdown")
+                try:
+                    await bot.send_message(tg_id, change_text, reply_markup=inline_kb, parse_mode="Markdown")
+                except Exception:
+                    pass
             except Exception as e:
                 print(f"Dillerga o'zgartirish xabari yuborishda xatolik ({tg_id}): {e}")
 
@@ -4513,7 +4497,10 @@ async def diller_confirm_change(callback: types.CallbackQuery):
     for uid, udata in (users_ref or {}).items():
         if isinstance(udata, dict) and udata.get('role') == 'admin':
             try:
-                await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
+                try:
+                    await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
+                except Exception:
+                    pass
             except:
                 pass
     await callback.answer()
@@ -4540,7 +4527,10 @@ async def diller_reject_change(callback: types.CallbackQuery):
     for uid, udata in (users_ref or {}).items():
         if isinstance(udata, dict) and udata.get('role') == 'admin':
             try:
-                await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
+                try:
+                    await bot.send_message(int(uid), notify_text, parse_mode="Markdown")
+                except Exception:
+                    pass
             except:
                 pass
     await callback.answer()
