@@ -2914,22 +2914,33 @@ async def view_active_orders(message: types.Message):
 
         sorted_dates = sorted(grouped.keys(), key=parse_date, reverse=True)
 
+        def escape_md(text):
+            if not text:
+                return ""
+            return str(text).replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace('`', '\\`')
+
+        async def send_safe(text, reply_markup=None):
+            try:
+                await message.answer(text, parse_mode="Markdown", reply_markup=reply_markup)
+            except Exception:
+                clean = text.replace("**", "").replace("`", "").replace("\\_", "_").replace("\\*", "*").replace("\\[", "[").replace("\\`", "`")
+                await message.answer(clean, reply_markup=reply_markup)
+
         order_chunks = []
         for d_str in sorted_dates:
-            # Sarlavha tayyorlash
             try:
                 dt = datetime.strptime(d_str, "%d.%m.%Y")
                 header = f"✅ **{dt.day} {UZ_MONTHS[dt.month]} {UZ_WEEKDAYS[dt.weekday()]}**"
             except:
-                header = f"✅ **{d_str}**"
+                header = f"✅ **{escape_md(d_str)}**"
             
             day_text = f"{header}\n\n"
             for o_id, o in grouped[d_str]:
-                day_text += f"🆔 `{o_id}` - 🧑 Mijoz: {o.get('client_name')}\n"
-                day_text += f"📦 Mebel: {o.get('product_id')}\n"
+                day_text += f"🆔 `{escape_md(o_id)}` - 🧑 Mijoz: {escape_md(o.get('client_name', ''))}\n"
+                day_text += f"📦 Mebel: {escape_md(o.get('product_id', ''))}\n"
                 day_text += f"📊 Soni: {o.get('amount')} ta\n"
                 if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
-                    day_text += f"📝 Izoh: {o.get('comment')}\n"
+                    day_text += f"📝 Izoh: {escape_md(o.get('comment', ''))}\n"
                 day_text += "------------------------\n"
             order_chunks.append(day_text)
         
@@ -2940,12 +2951,12 @@ async def view_active_orders(message: types.Message):
         current_msg = "🔨 **Faol buyurtmalar ro'yxati:**\n\n"
         for part in order_chunks:
             if len(current_msg) + len(part) > 3900:
-                await message.answer(current_msg, parse_mode="Markdown")
+                await send_safe(current_msg)
                 current_msg = part + "\n"
             else:
                 current_msg += part + "\n"
         if current_msg:
-            await message.answer(current_msg, parse_mode="Markdown")
+            await send_safe(current_msg)
 
 class DeliveryReportState(StatesGroup):
     select_month = State()
@@ -4151,16 +4162,28 @@ async def admin_order_control_start(message: types.Message, state: FSMContext):
         await message.answer("Hozircha faol buyurtmalar yo'q.")
         return
     
+    def escape_md(text):
+        if not text:
+            return ""
+        return str(text).replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace('`', '\\`')
+
+    async def send_safe(text, reply_markup=None):
+        try:
+            await message.answer(text, parse_mode="Markdown", reply_markup=reply_markup)
+        except Exception:
+            clean = text.replace("**", "").replace("`", "").replace("\\_", "_").replace("\\*", "*").replace("\\[", "[").replace("\\`", "`")
+            await message.answer(clean, reply_markup=reply_markup)
+
     order_report_items = []
     buttons = []
     row = []
     for o_id, o in active_orders_list:
-        item_text = f"🆔 `{o_id}` - 🧑 {o.get('client_name')}\n"
-        item_text += f"📦 Mebel: {o.get('product_id')} ({o.get('amount')} ta)\n"
+        item_text = f"🆔 `{escape_md(o_id)}` - 🧑 {escape_md(o.get('client_name', ''))}\n"
+        item_text += f"📦 Mebel: {escape_md(o.get('product_id', ''))} ({o.get('amount')} ta)\n"
         item_text += f"📅 Muddat: {format_date(o.get('due_date', ''))}\n"
         if o.get('comment') and str(o.get('comment')).lower() != 'yoq':
-            item_text += f"📝 Izoh: {o.get('comment')}\n"
-        item_text += f"📌 Holati: {o.get('status')}\n"
+            item_text += f"📝 Izoh: {escape_md(o.get('comment', ''))}\n"
+        item_text += f"📌 Holati: {escape_md(o.get('status', ''))}\n"
         item_text += "------------------------"
         order_report_items.append(item_text)
         
@@ -4176,21 +4199,20 @@ async def admin_order_control_start(message: types.Message, state: FSMContext):
     
     markup = types.ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
     
-    # Send items in chunks to avoid Telegram 4096 length limit
     current_msg = "📋 **Faol buyurtmalar:**\n\n"
     for part in order_report_items:
         if len(current_msg) + len(part) > 3800:
-            await message.answer(current_msg, parse_mode="Markdown")
+            await send_safe(current_msg)
             current_msg = part + "\n\n"
         else:
             current_msg += part + "\n\n"
             
     prompt = "Qaysi buyurtmani boshqarmoqchisiz? Tanlang:"
     if len(current_msg) + len(prompt) > 4000:
-        await message.answer(current_msg, parse_mode="Markdown")
-        await message.answer(prompt, reply_markup=markup, parse_mode="Markdown")
+        await send_safe(current_msg)
+        await send_safe(prompt, reply_markup=markup)
     else:
-        await message.answer(current_msg + prompt, reply_markup=markup, parse_mode="Markdown")
+        await send_safe(current_msg + prompt, reply_markup=markup)
 
     await state.set_state(AdminOrderControlState.select_order)
 
