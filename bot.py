@@ -35,6 +35,24 @@ def format_date(date_str):
         return dt.strftime("%d.%m.%Y")
     except:
         return str(date_str)
+
+def escape_md(text):
+    if not text:
+        return ""
+    return str(text).replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace('`', '\\`')
+
+async def send_safe_message(message_obj, text, reply_markup=None):
+    try:
+        if reply_markup:
+            await message_obj.answer(text, parse_mode="Markdown", reply_markup=reply_markup)
+        else:
+            await message_obj.answer(text, parse_mode="Markdown")
+    except Exception:
+        clean = text.replace("**", "").replace("`", "").replace("\\_", "_").replace("\\*", "*").replace("\\[", "[").replace("\\`", "`")
+        if reply_markup:
+            await message_obj.answer(clean, reply_markup=reply_markup)
+        else:
+            await message_obj.answer(clean)
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
