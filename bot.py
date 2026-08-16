@@ -69,7 +69,7 @@ REGULAR_CLIENTS = [
     "Comfort", "Iskandar", "Grand plaza", "Baxrom Uchtepa", 
     "Baxrom 9703", "Bahodir aka🚛", "Bahodir aka Andijon", "Akrom aka", 
     "Zoʻr mebel", "Umid", "Akmal aka", "Doʻkon 707", "Farxod Jomiy", "Munosib Mebel", "Ideal Max", "Muxtor aka",
-    "Elyor", "Anor Mebel"
+    "Elyor", "Anor Mebel", "Best Decor"
 ]
 
 # Diller nomi -> Telegram ID(lar) xaritasi (bir nechta diller bir kompaniyada bo'lishi mumkin)

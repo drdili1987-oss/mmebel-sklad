@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>MMebel вЂ” Admin</title>
+<link rel="manifest" href="manifest.json">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<style>
+:root{--bg:#f0f2f5;--surface:#fff;--surface2:#f5f5f5;--border:rgba(0,0,0,0.09);--text:#1a1a1a;--text2:#666;--text3:#999;--green:#1D9E75;--green-l:#e8f5ee;--green-d:#0f6e56;--amber:#BA7517;--amber-l:#faeeda;--red:#c0392b;--red-l:#fdeaea;--blue:#185FA5;--blue-l:#e6f1fb;--nav-h:64px;--hdr-h:56px}
+@media(prefers-color-scheme:dark){:root{--bg:#0f0f0f;--surface:#1a1a1a;--surface2:#242424;--border:rgba(255,255,255,0.08);--text:#f0f0f0;--text2:#999;--text3:#666;--green-l:#0d2e1f;--amber-l:#2e1f05;--red-l:#2e0a0a;--blue-l:#071e38}}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);padding-bottom:calc(var(--nav-h) + 16px)}
+/* Header */
+.hdr{position:sticky;top:0;z-index:100;background:var(--surface);border-bottom:1px solid var(--border);height:var(--hdr-h);display:flex;align-items:center;padding:0 16px;gap:12px}
+.hdr-logo{width:34px;height:34px;background:linear-gradient(135deg,#1D9E75,#0f6e56);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px;flex-shrink:0}
+.hdr-info{flex:1}
+.hdr-title{font-size:16px;font-weight:700;letter-spacing:-.3px}
+.hdr-sub{font-size:12px;color:var(--text2)}
+.hdr-btn{padding:8px 14px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600}
+.hdr-logout{background:var(--red-l);color:var(--red)}
+/* Nav */
+nav{position:fixed;bottom:0;left:0;right:0;height:var(--nav-h);background:var(--surface);border-top:1px solid var(--border);display:flex;z-index:100}
+.nav-btn{flex:1;background:none;border:none;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:10px;color:var(--text2);padding:8px 4px;transition:color .2s;position:relative}
+.nav-btn.active{color:var(--green)}
+.nav-btn.active::before{content:'';position:absolute;top:0;left:20%;right:20%;height:2.5px;background:var(--green);border-radius:0 0 3px 3px}
+.nav-icon{font-size:22px}
+/* Main content */
+.page{display:none;padding:16px;min-height:calc(100vh - var(--hdr-h) - var(--nav-h) - 16px)}
+.page.active{display:block;animation:fadeIn .25s}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+/* Stats grid */
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;position:relative;overflow:hidden}
+.stat-icon{font-size:24px;margin-bottom:6px}
+.stat-val{font-size:26px;font-weight:800;letter-spacing:-1px}
+.stat-lbl{font-size:11px;color:var(--text2);margin-top:2px;text-transform:uppercase;letter-spacing:.4px}
+.stat-green .stat-val{color:var(--green)}
+.stat-amber .stat-val{color:var(--amber)}
+.stat-red .stat-val{color:var(--red)}
+.stat-blue .stat-val{color:var(--blue)}
+/* Filter bar */
+.fbar{display:flex;gap:8px;margin-bottom:14px;overflow-x:auto;padding-bottom:2px;-ms-overflow-style:none;scrollbar-width:none}
+.fbar::-webkit-scrollbar{display:none}
+.fbtn{flex-shrink:0;padding:8px 16px;border-radius:20px;border:1.5px solid var(--border);background:var(--surface);color:var(--text2);font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;white-space:nowrap}
+.fbtn.active{background:var(--green);border-color:var(--green);color:#fff;font-weight:600}
+/* Search */
+.search{display:flex;align-items:center;gap:8px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:10px 14px;margin-bottom:14px;transition:border-color .2s}
+.search:focus-within{border-color:var(--green)}
+.search input{flex:1;border:none;outline:none;background:none;font-size:15px;color:var(--text)}
+.search input::placeholder{color:var(--text3)}
+/* Cards */
+.order-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;cursor:pointer;transition:all .2s;position:relative}
+.order-card:active{transform:scale(.98)}
+.order-card-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px}
+.order-client{font-size:15px;font-weight:700}
+.order-product{font-size:13px;color:var(--text2);margin-top:2px}
+.order-meta{display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--text3)}
+.badge{display:inline-flex;align-items:center;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;white-space:nowrap}
+.badge-amber{background:var(--amber-l);color:var(--amber)}
+.badge-green{background:var(--green-l);color:var(--green-d)}
+.badge-blue{background:var(--blue-l);color:var(--blue)}
+.badge-red{background:var(--red-l);color:var(--red)}
+.badge-gray{background:var(--surface2);color:var(--text2)}
+/* FAB */
+.fab{position:fixed;right:16px;bottom:calc(var(--nav-h) + 16px);width:56px;height:56px;border-radius:28px;background:linear-gradient(135deg,#1D9E75,#0f6e56);color:#fff;border:none;font-size:26px;box-shadow:0 4px 16px rgba(29,158,117,.4);cursor:pointer;z-index:90;display:flex;align-items:center;justify-content:center;transition:transform .2s,box-shadow .2s}
+.fab:active{transform:scale(.93);box-shadow:0 2px 8px rgba(29,158,117,.3)}
+/* Modal */
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;align-items:flex-end;backdrop-filter:blur(2px)}
+.modal.open{display:flex;animation:mIn .25s}
+@keyframes mIn{from{opacity:0}to{opacity:1}}
+.modal-box{background:var(--surface);width:100%;border-radius:20px 20px 0 0;padding:0;max-height:92vh;overflow-y:auto;animation:mBoxIn .25s ease}
+@keyframes mBoxIn{from{transform:translateY(60px)}to{transform:none}}
+.modal-hdr{display:flex;justify-content:space-between;align-items:center;padding:18px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:1}
+.modal-title{font-size:17px;font-weight:700}
+.modal-close{background:var(--surface2);border:none;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:18px;color:var(--text2);display:flex;align-items:center;justify-content:center}
+.modal-body{padding:20px}
+/* Form */
+.form-row{margin-bottom:16px}
+.form-label{display:block;font-size:13px;font-weight:600;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px}
+.form-ctrl{width:100%;padding:13px 14px;border:1.5px solid var(--border);border-radius:12px;background:var(--surface2);color:var(--text);font-size:15px;outline:none;transition:border-color .2s;-webkit-appearance:none}
+.form-ctrl:focus{border-color:var(--green);background:var(--surface)}
+/* Buttons in modal */
+.btn{width:100%;padding:15px;border-radius:12px;border:none;font-size:16px;font-weight:700;cursor:pointer;transition:all .2s}
+.btn-green{background:linear-gradient(135deg,#1D9E75,#0f6e56);color:#fff;box-shadow:0 4px 14px rgba(29,158,117,.35)}
+.btn-red{background:var(--red-l);color:var(--red);margin-top:10px}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+/* Product grid */
+.prod-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.prod-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;cursor:pointer;transition:all .2s}
+.prod-card:active{transform:scale(.97)}
+.prod-name{font-size:14px;font-weight:700;margin-bottom:6px}
+.prod-price{font-size:18px;font-weight:800;color:var(--green)}
+.prod-qty{font-size:12px;color:var(--text2);margin-top:4px}
+.prod-qty.low{color:var(--red);font-weight:600}
+/* Debts */
+.debt-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+.debt-name{font-size:15px;font-weight:700}
+.debt-sub{font-size:12px;color:var(--text2);margin-top:2px}
+.debt-amount{font-size:20px;font-weight:800}
+.debt-amount.pos{color:var(--red)}
+.debt-amount.zero{color:var(--green)}
+/* Status list in modal */
+.status-list{display:flex;flex-direction:column;gap:8px}
+.status-item{padding:14px;border-radius:12px;border:1.5px solid var(--border);cursor:pointer;font-size:15px;font-weight:500;transition:all .2s;display:flex;align-items:center;gap:10px}
+.status-item:hover{border-color:var(--green);background:var(--green-l)}
+/* Toast */
+.toast-w{position:fixed;top:20px;left:0;right:0;display:flex;justify-content:center;z-index:999;pointer-events:none}
+.toast{padding:12px 20px;border-radius:12px;font-size:14px;font-weight:500;box-shadow:0 4px 16px rgba(0,0,0,.2);transform:translateY(-80px);transition:transform .3s;pointer-events:none;max-width:300px;text-align:center}
+.toast.show{transform:none}
+.toast.ok{background:var(--green);color:#fff}
+.toast.err{background:var(--red);color:#fff}
+/* Empty state */
+.empty{text-align:center;padding:48px 20px;color:var(--text2)}
+.empty-icon{font-size:48px;margin-bottom:12px;opacity:.5}
+.empty-text{font-size:15px}
+/* Section title */
+.sec-title{font-size:17px;font-weight:700;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}
+/* Skeleton */
+.skel{background:linear-gradient(90deg,var(--surface2) 25%,var(--surface) 50%,var(--surface2) 75%);background-size:200% 100%;animation:skel 1.4s infinite;border-radius:10px;height:80px;margin-bottom:10px}
+@keyframes skel{0%{background-position:200% 0}100%{background-position:-200% 0}}
+</style>
+</head>
+<body>
+<div class="toast-w"><div class="toast" id="toast"></div></div>
+
+<!-- Header -->
+<div class="hdr">
+  <div class="hdr-logo">M</div>
+  <div class="hdr-info">
+    <div class="hdr-title">MMebel Admin</div>
+    <div class="hdr-sub" id="hdr-name">Yuklanmoqda...</div>
+  </div>
+  <button class="hdr-btn hdr-logout" onclick="logout()">Chiqish</button>
+</div>
+
+<!-- Pages -->
+<!-- BUYURTMALAR -->
+<div class="page active" id="p-ord">
+  <div class="stats" id="stats-ord">
+    <div class="stat-card stat-blue"><div class="stat-icon">рџ“‹</div><div class="stat-val" id="s-jami">вЂ”</div><div class="stat-lbl">Jami</div></div>
+    <div class="stat-card stat-amber"><div class="stat-icon">вљ™пёЏ</div><div class="stat-val" id="s-proc">вЂ”</div><div class="stat-lbl">Jarayonda</div></div>
+    <div class="stat-card stat-green"><div class="stat-icon">вњ…</div><div class="stat-val" id="s-done">вЂ”</div><div class="stat-lbl">Yetkazildi</div></div>
+    <div class="stat-card stat-red"><div class="stat-icon">вЏ°</div><div class="stat-val" id="s-over">вЂ”</div><div class="stat-lbl">Muddati o'tgan</div></div>
+  </div>
+  <div class="search">
+    <span>рџ”Ќ</span>
+    <input type="text" id="search-inp" placeholder="Mijoz yoki mebel qidirish..." oninput="renderOrders()">
+  </div>
+  <div class="fbar">
+    <button class="fbtn active" onclick="setFilter('all',this)">Barchasi</button>
+    <button class="fbtn" onclick="setFilter('active',this)">Faol</button>
+    <button class="fbtn" onclick="setFilter('done',this)">Yetkazildi</button>
+    <button class="fbtn" onclick="setFilter('overdue',this)">Kechikkan</button>
+    <button class="fbtn" onclick="setFilter('cancelled',this)">Bekor</button>
+  </div>
+  <div id="ord-list"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+  <button class="fab" onclick="openModal('m-add-ord')">пј‹</button>
+</div>
+
+<!-- MEBELLAR -->
+<div class="page" id="p-meb">
+  <div class="sec-title">Mebellar <span id="meb-count" style="font-size:13px;color:var(--text2);font-weight:400"></span></div>
+  <div class="prod-grid" id="meb-list"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+</div>
+
+<!-- HISOB -->
+<div class="page" id="p-his">
+  <div class="sec-title">Dillerlar qarzi</div>
+  <div id="debt-list"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+</div>
+
+<!-- YETKAZISH -->
+<div class="page" id="p-yet">
+  <div class="sec-title">Yetkazish tarixi</div>
+  <div id="yet-list"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+</div>
+
+<!-- STATISTIKA -->
+<div class="page" id="p-stat">
+  <div class="sec-title">Statistika</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+    <div class="stat-card"><div class="stat-icon">рџ“¦</div><div class="stat-val" id="st-total" style="color:var(--blue)">вЂ”</div><div class="stat-lbl">Jami buyurtma</div></div>
+    <div class="stat-card"><div class="stat-icon">рџ’µ</div><div class="stat-val" id="st-rev" style="color:var(--green);font-size:18px">вЂ”</div><div class="stat-lbl">Umumiy summa</div></div>
+  </div>
+  <div class="sec-title" style="font-size:15px">Top mebellar</div>
+  <div id="top-meb"></div>
+  <div class="sec-title" style="font-size:15px;margin-top:16px">Top mijozlar</div>
+  <div id="top-cli"></div>
+</div>
+
+<!-- Bottom Nav -->
+<nav>
+  <button class="nav-btn active" onclick="showPage('p-ord',this)"><span class="nav-icon">рџ“‹</span>Buyurtma</button>
+  <button class="nav-btn" onclick="showPage('p-meb',this)"><span class="nav-icon">рџ›‹</span>Mebel</button>
+  <button class="nav-btn" onclick="showPage('p-his',this)"><span class="nav-icon">рџ’°</span>Hisob</button>
+  <button class="nav-btn" onclick="showPage('p-yet',this)"><span class="nav-icon">рџљљ</span>Yetkazish</button>
+  <button class="nav-btn" onclick="showPage('p-stat',this)"><span class="nav-icon">рџ“€</span>Statistika</button>
+</nav>
+
+<!-- MODAL: Add Order -->
+<div class="modal" id="m-add-ord" onclick="bgClose(event,'m-add-ord')">
+<div class="modal-box">
+  <div class="modal-hdr"><span class="modal-title">Yangi buyurtma</span><button class="modal-close" onclick="closeModal('m-add-ord')">Г—</button></div>
+  <div class="modal-body">
+    <div class="form-row"><label class="form-label">Mijoz</label>
+      <select class="form-ctrl" id="ao-client">
+        <option>Comfort</option><option>Iskandar</option><option>Grand plaza</option>
+        <option>Baxrom Uchtepa</option><option>Baxrom 9703</option><option>Bahodir akaрџљ›</option>
+        <option>Bahodir aka Andijon</option><option>Akrom aka</option><option>Zo'r mebel</option>
+        <option>Umid</option><option>Akmal aka</option><option>Do'kon 707</option>
+        <option>Farxod Jomiy</option><option>Munosib Mebel</option><option>Ideal Max</option>
+        <option>Muxtor aka</option><option>Elyor</option><option>Anor Mebel</option>
+        <option>Best Decor</option>
+        <option value="__custom">Boshqa (Yangi diller)</option>
+      </select>
+    </div>
+    <div class="form-row" id="ao-custom-wrap" style="display:none"><label class="form-label">Mijoz ismi</label><input class="form-ctrl" id="ao-custom-client" placeholder="Yangi mijoz ismi"></div>
+    <div class="form-row"><label class="form-label">Mebel</label>
+      <select class="form-ctrl" id="ao-prod">
+        <option>BF 06</option><option>BF 07</option><option>BF 09</option><option>BF 12</option>
+        <option>BF 14</option><option>BF 15</option><option>BF 18</option><option>BF 244</option>
+        <option>BF 264</option><option>BF 274</option><option>BF 294</option><option>BF 246</option>
+        <option>BF 266</option><option>BF 276</option><option>BF 296</option><option>BF 32</option>
+        <option>BF 33</option><option>BF 34</option><option>BF 35</option><option>BF 37</option>
+        <option>BF 38</option><option>BF 39</option><option>BF 44</option><option>BF 45</option>
+        <option>BF 544</option><option>BF 574</option><option>BF 594</option><option>BF 63</option>
+        <option>BF 64</option><option>BF 65</option><option>BF 68</option><option>BF 707</option>
+        <option>BF 708</option><option>BF 709</option><option>BF 762</option><option>BF 752</option>
+        <option>BF 772</option><option>KR 792</option><option>BF 713</option><option>BF 753</option>
+        <option>BF 763</option><option>D 100</option><option>D 106</option><option>D 109</option>
+        <option>D 50</option><option>D 59</option><option>D 003</option><option>D 004</option>
+        <option>D 006</option><option>D 005</option><option value="__custom">Boshqa</option>
+      </select>
+    </div>
+    <div class="form-row" id="ao-custprod-wrap" style="display:none"><label class="form-label">Mebel nomi</label><input class="form-ctrl" id="ao-custom-prod" placeholder="Mebel nomi"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-row"><label class="form-label">Soni</label><input class="form-ctrl" id="ao-amount" type="number" value="1" min="1"></div>
+      <div class="form-row"><label class="form-label">Narxi ($)</label><input class="form-ctrl" id="ao-price" type="number" placeholder="0"></div>
+    </div>
+    <div class="form-row"><label class="form-label">Muddat</label><input class="form-ctrl" id="ao-date" type="date"></div>
+    <div class="form-row"><label class="form-label">Izoh</label><input class="form-ctrl" id="ao-comment" placeholder="Ixtiyoriy..."></div>
+    <button class="btn btn-green" onclick="addOrder()">вњ“ Saqlash</button>
+  </div>
+</div></div>
+
+<!-- MODAL: Status change -->
+<div class="modal" id="m-status" onclick="bgClose(event,'m-status')">
+<div class="modal-box">
+  <div class="modal-hdr"><span class="modal-title">Holat o'zgartirish</span><button class="modal-close" onclick="closeModal('m-status')">Г—</button></div>
+  <div class="modal-body">
+    <div id="m-status-info" style="padding:12px;background:var(--surface2);border-radius:10px;margin-bottom:16px;font-size:14px;color:var(--text2)"></div>
+    <div class="status-list">
+      <div class="status-item" onclick="setStatus('Tayyorlanmoqda')">вљ™пёЏ Tayyorlanmoqda</div>
+      <div class="status-item" onclick="setStatus('Tayyor bo\'ldi')">вњ… Tayyor bo'ldi</div>
+      <div class="status-item" onclick="setStatus('Yuborildi')">рџ“¤ Yuborildi</div>
+      <div class="status-item" onclick="setStatus('Biz yetkazib berdik')">рџљљ Biz yetkazib berdik</div>
+      <div class="status-item" onclick="setStatus('Dillerni o\'zi olib ketdi')">рџЏЄ Diller o'zi olib ketdi</div>
+      <div class="status-item" onclick="setStatus('Hisob kitob qilindi')">рџ’і Hisob kitob qilindi</div>
+      <div class="status-item" onclick="setStatus('Bekor qilindi')" style="color:var(--red)">вњ• Bekor qilindi</div>
+    </div>
+  </div>
+</div></div>
+
+<!-- MODAL: Edit product -->
+<div class="modal" id="m-prod" onclick="bgClose(event,'m-prod')">
+<div class="modal-box">
+  <div class="modal-hdr"><span class="modal-title" id="m-prod-title">Mebel</span><button class="modal-close" onclick="closeModal('m-prod')">Г—</button></div>
+  <div class="modal-body">
+    <input type="hidden" id="m-prod-id">
+    <div class="form-row"><label class="form-label">Narxi ($)</label><input class="form-ctrl" id="m-prod-price" type="number"></div>
+    <div class="form-row"><label class="form-label">Soni (omborda)</label><input class="form-ctrl" id="m-prod-qty" type="number"></div>
+    <button class="btn btn-green" onclick="saveProd()">вњ“ Saqlash</button>
+  </div>
+</div></div>
+
+<!-- MODAL: Debt detail -->
+<div class="modal" id="m-debt" onclick="bgClose(event,'m-debt')">
+<div class="modal-box">
+  <div class="modal-hdr"><span class="modal-title" id="m-debt-title">Qarz</span><button class="modal-close" onclick="closeModal('m-debt')">Г—</button></div>
+  <div class="modal-body">
+    <div id="m-debt-body"></div>
+  </div>
+</div></div>
+
+<script>
+const FB = {
+  apiKey:"AIzaSyDwaAPfFIDgpgYudGH0zVOR9ju7XD9Lflk",
+  authDomain:"mmebel-bot.firebaseapp.com",
+  databaseURL:"https://mmebel-bot-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId:"mmebel-bot",
+  storageBucket:"mmebel-bot.appspot.com",
+  messagingSenderId:"XXXXXXXXXXXX",
+  appId:"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+};
+firebase.initializeApp(FB);
+const db = firebase.database(), auth = firebase.auth();
+const user = JSON.parse(localStorage.getItem('mmebel_user')||'null');
+if(!user || user.role !== 'admin') window.location.replace('login.html');
+document.getElementById('hdr-name').textContent = user.name || 'Admin';
+
+/* в”Ђв”Ђв”Ђ UTILS в”Ђв”Ђв”Ђ */
+function toast(msg,type='ok'){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.className='toast show '+type;
+  clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),3000);
+}
+function fMoney(n){return '$'+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:0});}
+function fDate(d){
+  if(!d)return'вЂ”';
+  if(d.includes('-')&&d.length===10){const[y,m,dd]=d.split('-');return`${dd}.${m}.${y}`;}
+  try{const dt=new Date(d);return`${dt.getDate()}.${dt.getMonth()+1}.${dt.getFullYear()}`;}catch{return d;}
+}
+function todayStr(){return new Date().toISOString().split('T')[0];}
+function getBadge(st){
+  const map={
+    'Tayyorlanmoqda':'badge-amber','Tayyor bo\'ldi':'badge-blue',
+    'Yuborildi':'badge-blue','Biz yetkazib berdik':'badge-green',
+    'Dillerni o\'zi olib ketdi':'badge-green','Hisob kitob qilindi':'badge-green',
+    'Bekor qilindi':'badge-red'
+  };
+  return `<span class="badge ${map[st]||'badge-gray'}">${st}</span>`;
+}
+function isOverdue(o){
+  if(['Biz yetkazib berdik','Dillerni o\'zi olib ketdi','Hisob kitob qilindi','Bekor qilindi'].includes(o.status)) return false;
+  const d = o.due_date;
+  if(!d) return false;
+  let dt;
+  if(d.includes('.')){ const[dd,mm,yyyy]=d.split('.'); dt=new Date(`${yyyy}-${mm}-${dd}`); }
+  else dt=new Date(d);
+  return dt < new Date();
+}
+
+/* в”Ђв”Ђв”Ђ NAV в”Ђв”Ђв”Ђ */
+function showPage(id,btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+  document.querySelector('.fab').style.display = id==='p-ord'?'flex':'none';
+}
+
+/* в”Ђв”Ђв”Ђ MODAL в”Ђв”Ђв”Ђ */
+function openModal(id){document.getElementById(id).classList.add('open');}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+function bgClose(e,id){if(e.target===document.getElementById(id))closeModal(id);}
+
+/* в”Ђв”Ђв”Ђ ORDERS в”Ђв”Ђв”Ђ */
+let allOrders={}, currentFilter='all', currentStatusId=null;
+
+db.ref('orders').on('value', snap=>{
+  allOrders={};
+  snap.forEach(c=>{ allOrders[c.key]=c.val(); });
+  renderOrders();
+  renderStats();
+  renderDeliveryHistory();
+  renderStats2();
+});
+
+function setFilter(f,btn){
+  currentFilter=f;
+  document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderOrders();
+}
+
+function renderOrders(){
+  const q=(document.getElementById('search-inp').value||'').toLowerCase();
+  let arr=Object.entries(allOrders)
+    .map(([k,v])=>({id:k,...v}))
+    .filter(o=>{
+      if(!o||typeof o!=='object') return false;
+      if(q && !`${o.client_name||''} ${o.product_id||''}`.toLowerCase().includes(q)) return false;
+      if(currentFilter==='active') return ['Tayyorlanmoqda','Tayyor bo\'ldi','Yuborildi'].includes(o.status);
+      if(currentFilter==='done') return ['Biz yetkazib berdik','Dillerni o\'zi olib ketdi','Hisob kitob qilindi'].includes(o.status);
+      if(currentFilter==='overdue') return isOverdue(o);
+      if(currentFilter==='cancelled') return o.status==='Bekor qilindi';
+      return true;
+    })
+    .sort((a,b)=>{
+      const ai=isOverdue(a)?0:1, bi=isOverdue(b)?0:1;
+      if(ai!==bi) return ai-bi;
+      return 0;
+    });
+
+  const el=document.getElementById('ord-list');
+  if(!arr.length){
+    el.innerHTML=`<div class="empty"><div class="empty-icon">рџ“­</div><div class="empty-text">Buyurtmalar topilmadi</div></div>`;
+    return;
+  }
+  el.innerHTML=arr.map(o=>`
+    <div class="order-card" onclick="openStatusModal('${o.id}')">
+      <div class="order-card-top">
+        <div>
+          <div class="order-client">${o.client_name||'вЂ”'}</div>
+          <div class="order-product">${o.product_id||'вЂ”'} В· ${o.amount||1} ta${o.price?` В· ${fMoney(o.total_price||o.price)}`:''}</div>
+        </div>
+        ${getBadge(o.status||'вЂ”')}
+      </div>
+      <div class="order-meta">
+        <span>рџ“… ${fDate(o.due_date)}</span>
+        ${o.comment?`<span>рџ’¬ ${o.comment}</span>`:''}
+        ${isOverdue(o)?`<span style="color:var(--red);font-weight:600">вљ пёЏ Muddati o'tgan</span>`:''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderStats(){
+  const arr=Object.values(allOrders).filter(Boolean);
+  document.getElementById('s-jami').textContent=arr.length;
+  document.getElementById('s-proc').textContent=arr.filter(o=>['Tayyorlanmoqda','Tayyor bo\'ldi','Yuborildi'].includes(o.status)).length;
+  document.getElementById('s-done').textContent=arr.filter(o=>['Biz yetkazib berdik','Dillerni o\'zi olib ketdi','Hisob kitob qilindi'].includes(o.status)).length;
+  document.getElementById('s-over').textContent=arr.filter(isOverdue).length;
+}
+
+function renderStats2(){
+  const arr=Object.values(allOrders).filter(Boolean);
+  document.getElementById('st-total').textContent=arr.length;
+  const rev=arr.reduce((s,o)=>s+Number(o.total_price||o.price||0),0);
+  document.getElementById('st-rev').textContent=fMoney(rev);
+  // Top mebellar
+  const mc={};
+  arr.forEach(o=>{ mc[o.product_id]=(mc[o.product_id]||0)+(o.amount||1); });
+  const topM=Object.entries(mc).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  document.getElementById('top-meb').innerHTML=topM.map(([k,v])=>`
+    <div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--surface);border-radius:10px;margin-bottom:8px;border:1px solid var(--border)">
+      <span style="font-weight:600">${k}</span><span style="color:var(--green);font-weight:700">${v} ta</span>
+    </div>`).join('')||'<div class="empty"><div class="empty-text">Ma\'lumot yo\'q</div></div>';
+  // Top clients
+  const cc={};
+  arr.forEach(o=>{ cc[o.client_name]=(cc[o.client_name]||0)+(o.amount||1); });
+  const topC=Object.entries(cc).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  document.getElementById('top-cli').innerHTML=topC.map(([k,v])=>`
+    <div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--surface);border-radius:10px;margin-bottom:8px;border:1px solid var(--border)">
+      <span style="font-weight:600">${k}</span><span style="color:var(--blue);font-weight:700">${v} ta</span>
+    </div>`).join('')||'';
+}
+
+function renderDeliveryHistory(){
+  const arr=Object.entries(allOrders)
+    .map(([k,v])=>({id:k,...v}))
+    .filter(o=>['Biz yetkazib berdik','Dillerni o\'zi olib ketdi'].includes(o?.status))
+    .sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0))
+    .slice(0,50);
+  const el=document.getElementById('yet-list');
+  if(!arr.length){ el.innerHTML=`<div class="empty"><div class="empty-icon">рџљљ</div><div class="empty-text">Yetkazishlar yo'q</div></div>`; return; }
+  el.innerHTML=arr.map(o=>`
+    <div class="order-card">
+      <div class="order-card-top">
+        <div><div class="order-client">${o.client_name}</div><div class="order-product">${o.product_id} В· ${o.amount} ta</div></div>
+        ${getBadge(o.status)}
+      </div>
+      <div class="order-meta"><span>рџ“… ${fDate(o.due_date)}</span>${o.driver?`<span>рџљ— ${o.driver}</span>`:''}</div>
+    </div>`).join('');
+}
+
+function openStatusModal(id){
+  currentStatusId=id;
+  const o=allOrders[id];
+  if(!o) return;
+  document.getElementById('m-status-info').innerHTML=
+    `<strong>${o.client_name}</strong> вЂ” ${o.product_id}<br>Hozirgi holat: ${getBadge(o.status)}`;
+  openModal('m-status');
+}
+
+function setStatus(st){
+  if(!currentStatusId) return;
+  db.ref('orders/'+currentStatusId+'/status').set(st)
+    .then(()=>{closeModal('m-status');toast('Holat yangilandi вњ“');})
+    .catch(()=>toast('Xato!','err'));
+}
+
+/* в”Ђв”Ђв”Ђ ADD ORDER в”Ђв”Ђв”Ђ */
+document.getElementById('ao-client').addEventListener('change',function(){
+  document.getElementById('ao-custom-wrap').style.display=this.value==='__custom'?'block':'none';
+});
+document.getElementById('ao-prod').addEventListener('change',function(){
+  document.getElementById('ao-custprod-wrap').style.display=this.value==='__custom'?'block':'none';
+});
+document.getElementById('ao-date').value = todayStr();
+
+function addOrder(){
+  let client=document.getElementById('ao-client').value;
+  if(client==='__custom') client=document.getElementById('ao-custom-client').value.trim();
+  let prod=document.getElementById('ao-prod').value;
+  if(prod==='__custom') prod=document.getElementById('ao-custom-prod').value.trim();
+  const amount=parseInt(document.getElementById('ao-amount').value)||1;
+  const price=parseFloat(document.getElementById('ao-price').value)||0;
+  const date=document.getElementById('ao-date').value;
+  const comment=document.getElementById('ao-comment').value.trim();
+  if(!client||!prod) return toast('Barcha maydonlarni to\'ldiring','err');
+  db.ref('orders').push({
+    client_name:client, product_id:prod, amount,
+    price, total_price:price*amount,
+    due_date:date, comment, status:'Tayyorlanmoqda',
+    created_at:new Date().toISOString()
+  }).then(()=>{ closeModal('m-add-ord'); toast('Buyurtma qo\'shildi вњ“'); })
+    .catch(()=>toast('Xato!','err'));
+}
+
+/* в”Ђв”Ђв”Ђ MEBELLAR в”Ђв”Ђв”Ђ */
+let allMebellar={};
+db.ref('mebellar').on('value', snap=>{
+  allMebellar={};
+  snap.forEach(c=>{ allMebellar[c.key]=c.val(); });
+  renderMebellar();
+});
+function renderMebellar(){
+  const arr=Object.entries(allMebellar);
+  document.getElementById('meb-count').textContent=arr.length+' ta';
+  document.getElementById('meb-list').innerHTML=arr.map(([k,v])=>`
+    <div class="prod-card" onclick="openProdModal('${k}')">
+      <div class="prod-name">${k}</div>
+      <div class="prod-price">${fMoney(v.narxi)}</div>
+      <div class="prod-qty ${(v.soni||0)<3?'low':''}">${v.soni||0} ta ${(v.soni||0)<3?'вљ пёЏ':''}</div>
+    </div>`).join('');
+}
+function openProdModal(id){
+  const p=allMebellar[id];
+  if(!p) return;
+  document.getElementById('m-prod-title').textContent=id;
+  document.getElementById('m-prod-id').value=id;
+  document.getElementById('m-prod-price').value=p.narxi||'';
+  document.getElementById('m-prod-qty').value=p.soni||'';
+  openModal('m-prod');
+}
+function saveProd(){
+  const id=document.getElementById('m-prod-id').value;
+  const price=parseFloat(document.getElementById('m-prod-price').value)||0;
+  const qty=parseInt(document.getElementById('m-prod-qty').value)||0;
+  db.ref('mebellar/'+id).update({narxi:price,soni:qty})
+    .then(()=>{closeModal('m-prod');toast('Mebel yangilandi вњ“');})
+    .catch(()=>toast('Xato!','err'));
+}
+
+/* в”Ђв”Ђв”Ђ DEBTS в”Ђв”Ђв”Ђ */
+db.ref('debts').on('value', snap=>{
+  const el=document.getElementById('debt-list'); el.innerHTML='';
+  let any=false;
+  snap.forEach(c=>{
+    const a=c.val()?.amount||0; any=true;
+    el.innerHTML+=`<div class="debt-card" onclick="openDebtDetail('${c.key}')">
+      <div><div class="debt-name">${c.key}</div><div class="debt-sub">${c.val()?.updated_at?fDate(c.val().updated_at):''}</div></div>
+      <div class="debt-amount ${a>0?'pos':'zero'}">${fMoney(a)}</div>
+    </div>`;
+  });
+  if(!any) el.innerHTML=`<div class="empty"><div class="empty-icon">рџ’љ</div><div class="empty-text">Qarzlar yo'q</div></div>`;
+});
+
+async function openDebtDetail(client){
+  document.getElementById('m-debt-title').textContent=client+' вЂ” qarz tarixi';
+  document.getElementById('m-debt-body').innerHTML='<div class="skel"></div><div class="skel"></div>';
+  openModal('m-debt');
+  const snap=await db.ref('accounting_history/'+client).limitToLast(20).once('value');
+  const arr=[];
+  snap.forEach(c=>arr.push(c.val()));
+  arr.reverse();
+  document.getElementById('m-debt-body').innerHTML=arr.length?arr.map(h=>`
+    <div style="padding:12px 0;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between"><span style="font-weight:600">${h.product_id||'вЂ”'}</span><span style="color:var(--green)">${fMoney(h.total_price||h.price)}</span></div>
+      <div style="font-size:12px;color:var(--text2);margin-top:4px">${h.accounting_type||''} В· ${fDate(h.accounting_date)}</div>
+      ${h.note?`<div style="font-size:12px;color:var(--text3);margin-top:2px">${h.note}</div>`:''}
+    </div>`).join(''):
+    `<div class="empty"><div class="empty-text">Tarix yo'q</div></div>`;
+}
+
+/* в”Ђв”Ђв”Ђ AUTH в”Ђв”Ђв”Ђ */
+function logout(){
+  if(confirm('Tizimdan chiqmoqchimisiz?')){
+    localStorage.removeItem('mmebel_user');
+    auth.signOut().finally(()=>window.location.replace('login.html'));
+  }
+}
+</script>
+</body>
+</html>
+
