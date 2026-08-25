@@ -76,7 +76,7 @@ REGULAR_CLIENTS = [
 DILLER_TELEGRAM_MAP = {
     "Munosib Mebel": [261261387],
     "Zo\u02bbr mebel": [8043160151, 8897559819, 15541688],
-    "Ideal Max": [953905880],
+    "Ideal Max": [953905880, 8310083751],
     "Iskandar": [1052843333],
     "Umid": [1270440064],
     "Elyor": [1268839562],
