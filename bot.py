@@ -3392,11 +3392,26 @@ async def delivery_control_start(message: types.Message, state: FSMContext):
 @dp.message(DeliveryControlState.order_id)
 async def delivery_order_id(message: types.Message, state: FSMContext):
     if "(" in message.text and ")" in message.text:
-        order_id = message.text.split("(")[-1].split(")")[0].strip().upper()
+        raw_order_id = message.text.split("(")[-1].split(")")[0].strip()
     else:
-        order_id = message.text.strip().upper()
+        raw_order_id = message.text.strip()
         
-    order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
+    order_ref = await asyncio.to_thread(db.reference(f'orders/{raw_order_id}').get)
+    order_id = raw_order_id
+    if not order_ref:
+        order_ref = await asyncio.to_thread(db.reference(f'orders/{raw_order_id.upper()}').get)
+        if order_ref:
+            order_id = raw_order_id.upper()
+            
+    if not order_ref:
+        orders_all = await asyncio.to_thread(db.reference('orders').get) or {}
+        search_target = raw_order_id.lower()
+        for k, v in orders_all.items():
+            if str(k).lower() == search_target:
+                order_id = k
+                order_ref = v
+                break
+                
     if not order_ref:
         await message.answer("Bunday ID li buyurtma topilmadi. Qaytadan kiriting:")
         return
@@ -4219,11 +4234,26 @@ async def admin_order_selected(message: types.Message, state: FSMContext):
         return
     
     if "(" in message.text and ")" in message.text:
-        order_id = message.text.split("(")[-1].split(")")[0].strip().upper()
+        raw_order_id = message.text.split("(")[-1].split(")")[0].strip()
     else:
-        order_id = message.text.strip().upper()
+        raw_order_id = message.text.strip()
     
-    order_ref = await asyncio.to_thread(db.reference(f'orders/{order_id}').get)
+    order_ref = await asyncio.to_thread(db.reference(f'orders/{raw_order_id}').get)
+    order_id = raw_order_id
+    if not order_ref:
+        order_ref = await asyncio.to_thread(db.reference(f'orders/{raw_order_id.upper()}').get)
+        if order_ref:
+            order_id = raw_order_id.upper()
+            
+    if not order_ref:
+        orders_all = await asyncio.to_thread(db.reference('orders').get) or {}
+        search_target = raw_order_id.lower()
+        for k, v in orders_all.items():
+            if str(k).lower() == search_target:
+                order_id = k
+                order_ref = v
+                break
+                
     if not order_ref:
         await message.answer("Bunday ID li buyurtma topilmadi. Qaytadan tanlang:")
         return
