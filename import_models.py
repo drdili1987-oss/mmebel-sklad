@@ -22,6 +22,8 @@ data = [
     ("Komplekt", ["BF 713", "BF 753", "BF 763"], "285 so'm"),
     ("Komplekt", ["BF 2461", "BF 2661"], "400$"),
     ("Komplekt", ["BF SH 2461", "BF SH 2661"], "265$"),
+    ("Komplekt", ["BF 87"], "300$"),
+    ("Komplekt", ["BF 773"], "295$"),
     
     ("Shkaf", ["D 100", "D 106", "D 109"], "260 so'm"),
     ("Shkaf", ["D 50", "D 59"], "195 so'm"),
