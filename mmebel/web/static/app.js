@@ -228,10 +228,19 @@ async function viewHome() {
     stat(d.stock_total, `Omborda jami (${d.products} xil)`, () => go("stock"), "wide"),
   ));
   if (isAdmin) {
+    view.appendChild(el("div", { class: "actions" }, el("button", { class: "btn ghost", type: "button", on: { click: openDashboard } },
+      "📊 Katta ekran dashboard")));
     view.appendChild(el("div", { class: "section-title" }, pay.items.length ? `Tasdiqlanmagan to'lovlar (${pay.items.length})` : "Tasdiqlanmagan to'lov yo'q"));
     if (pay.items.length) view.appendChild(paymentsList(pay.items));
     fab("＋ Yangi buyurtma", newOrderSheet);
   }
+}
+
+function openDashboard() {
+  const url = location.origin + "/panel/dashboard";
+  // Telegram ichida sessiya tokeni yo'q — dashboard brauzerda ochiladi (u yerda bir marta kirasiz)
+  if (IN_TELEGRAM && tg.openLink) tg.openLink(url);
+  else location.href = "/panel/dashboard";
 }
 
 /* ================= BUYURTMALAR ================= */
@@ -858,6 +867,10 @@ async function boot() {
   const who = $("who");
   clear(who).appendChild(document.createTextNode(`${S.me.name || "Foydalanuvchi"} · ${S.me.role_label}`));
   if (!IN_TELEGRAM) who.appendChild(el("button", { class: "linkbtn", type: "button", on: { click: logout } }, "Chiqish"));
+  if (new URLSearchParams(location.search).get("next") === "dashboard" && S.me.role === "admin" && !IN_TELEGRAM) {
+    location.replace("/panel/dashboard");
+    return;
+  }
   go(TABS[S.me.role][0][0]);
 }
 boot();

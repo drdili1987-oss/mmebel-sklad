@@ -235,3 +235,16 @@ async def test_session_expiry_is_sliding(client, monkeypatch):
     monkeypatch.setattr(sess.time, "time", lambda: t0 + 161 * 86400)
     services.sessions._cache.clear()
     assert await services.sessions.resolve(token) is None
+
+
+async def test_admin_dashboard_endpoint(client):
+    due = (now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    await client.post("/api/orders", headers=hdr(ADMIN),
+                      json={"client_name": "Umid", "product": "BF07", "amount": 2, "due_date": due})
+    assert (await client.get("/api/dashboard/full", headers=hdr(OMBOR))).status == 403
+    d = await (await client.get("/api/dashboard/full", headers=hdr(ADMIN))).json()
+    assert len(d["revenue"]) == 12 and d["revenue"][-1]["revenue"] == 680
+    assert len(d["deliveries"]) == 30
+    assert {s["key"]: s["count"] for s in d["status"]} == {"prep": 1, "ready": 0, "late": 0}
+    assert d["tomorrow"][0]["product_id"] == "BF07"
+    assert (await client.get("/panel/dashboard")).status == 200

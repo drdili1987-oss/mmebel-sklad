@@ -1,0 +1,84 @@
+/* Admin dashboard — katta ekran (monitor / televizor). Tokenlar app.css dan. */
+.dash {
+  --series: #3d8b2a;
+  --st-prep-c: #b07612; --st-ready-c: #2f6fb0; --st-late-c: #c2412f;
+  --grid-line: color-mix(in srgb, var(--muted) 18%, transparent);
+  padding: 0; background: var(--bg);
+}
+@media (prefers-color-scheme: dark) {
+  .dash { --series: #5aa83c; --st-prep-c: #b98019; --st-ready-c: #4a88cf; --st-late-c: #d9573f; }
+}
+
+.dash-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding: 14px 24px; color: var(--band-text); background: linear-gradient(160deg, var(--band-2), var(--band) 70%); }
+.dash-top h1 { margin: 0; font-size: 22px; }
+.dash-top .who { color: var(--band-muted); font-size: 13px; }
+.dash-actions { display: flex; gap: 8px; }
+.dash-btn { border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); color: var(--band-text);
+  border-radius: 10px; padding: 8px 14px; font-size: 14px; cursor: pointer; text-decoration: none; }
+.dash-btn:hover { background: rgba(255,255,255,.12); }
+
+.dash-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px;
+  padding: 18px 24px 32px; max-width: 1680px; margin: 0 auto; }
+.card { background: var(--card); border-radius: var(--radius-l); padding: 16px 18px; min-width: 0; }
+.span-12 { grid-column: span 12; } .span-8 { grid-column: span 8; } .span-6 { grid-column: span 6; }
+.span-4 { grid-column: span 4; } .span-3 { grid-column: span 3; } .span-2 { grid-column: span 2; }
+@media (max-width: 1100px) { .span-8, .span-6, .span-4 { grid-column: span 12; } .span-2 { grid-column: span 4; } .span-3 { grid-column: span 6; } }
+@media (max-width: 640px) { .dash-grid { padding: 12px; gap: 10px; } .span-2, .span-3 { grid-column: span 6; } }
+
+.card h2 { margin: 0; font-size: 15px; font-weight: 650; }
+.card .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 10px; }
+.tbl-toggle { border: 1px solid var(--line); background: none; border-radius: 8px; padding: 3px 9px;
+  font-size: 12px; color: var(--muted); cursor: pointer; flex: none; }
+
+/* ko'rsatkichlar */
+.hero { display: flex; flex-direction: column; justify-content: center;
+  background: linear-gradient(160deg, var(--band-2), var(--band)); color: var(--band-text); }
+.hero .label { color: var(--band-muted); font-size: 14px; }
+.hero .value { font-size: 52px; font-weight: 700; line-height: 1.05; letter-spacing: -0.02em; margin: 6px 0 2px; }
+.hero .note { color: #9fdc77; font-size: 13px; }
+.kpi .label { color: var(--muted); font-size: 13px; }
+.kpi .value { font-size: 30px; font-weight: 700; line-height: 1.15; margin-top: 4px; }
+.kpi.alert .value { color: var(--st-late); }
+.kpi a { color: inherit; text-decoration: none; }
+
+/* grafiklar */
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .axis text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart .gridline { stroke: var(--grid-line); stroke-width: 1; }
+.chart .baseline { stroke: color-mix(in srgb, var(--muted) 45%, transparent); stroke-width: 1; }
+.chart .bar { fill: var(--series); }
+.chart .bar.dim { fill: color-mix(in srgb, var(--series) 45%, var(--card)); }
+.chart .val { fill: var(--text); font-size: 12px; font-weight: 600; }
+.chart .hit { fill: transparent; cursor: default; }
+.chart .hit:hover + .bar, .chart .bar.hover { filter: brightness(1.12); }
+
+.hbars { display: grid; gap: 9px; }
+.hbar { display: grid; grid-template-columns: minmax(90px, 34%) 1fr auto; align-items: center; gap: 10px; font-size: 14px; }
+.hbar .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hbar .track { height: 14px; border-radius: 0 4px 4px 0; position: relative; }
+.hbar .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 0 4px 4px 0; background: var(--series); min-width: 3px; }
+.hbar .num { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: 0; }
+.st-prep { background: var(--st-prep-c); } .st-ready { background: var(--st-ready-c); } .st-late { background: var(--st-late-c); }
+
+/* jadvallar */
+.list-tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
+.list-tbl th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 0 6px 6px; }
+.list-tbl td { padding: 7px 6px; border-top: 1px solid var(--line); vertical-align: top; }
+.list-tbl td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.list-tbl .code { font-weight: 700; }
+.list-tbl .late { color: var(--st-late); font-weight: 600; }
+.empty-s { color: var(--muted); font-size: 14px; padding: 14px 0; }
+
+.tip { position: fixed; z-index: 50; pointer-events: none; background: var(--band); color: var(--band-text);
+  border-radius: 8px; padding: 7px 10px; font-size: 13px; line-height: 1.4; box-shadow: 0 6px 18px rgba(0,0,0,.25);
+  max-width: 260px; }
+.tip b { font-weight: 650; }
+
+/* Televizor rejimi: kattaroq shrift */
+:fullscreen .dash-grid, .tv .dash-grid { max-width: none; }
+.tv { font-size: 17px; }
+.tv .hero .value { font-size: 68px; }
+.tv .kpi .value { font-size: 38px; }

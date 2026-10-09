@@ -168,3 +168,86 @@ class ReportService:
                 out.append((oid, o))
         out.sort(key=lambda kv: (parse_date(kv[1].get("due_date")), kv[1].get("created_at", "")))
         return out
+
+
+async def admin_dashboard(services) -> dict:
+    """Admin dashboard uchun barcha ko'rsatkichlar bitta so'rovda."""
+    from datetime import timedelta
+
+    from ..utils import format_date, last_months
+    reports, finance = services.reports, services.finance
+    today = now().date()
+    stats = await reports.dashboard()
+
+    # 12 oylik tushum (bekor qilinganlarsiz, arxiv bilan)
+    sales = {m["month"]: m for m in await reports.sales(24)}
+    months = list(reversed(last_months(12)))
+    revenue = [{"month": m, "revenue": sales.get(m, {}).get("revenue", 0.0),
+                "orders": sales.get(m, {}).get("total", 0)} for m in months]
+    cur = sales.get(months[-1], {"items": []})
+    top_models = cur["items"][:8]
+
+    # So'nggi 30 kun yetkazishlar (kunlar bo'yicha)
+    deliveries = []
+    for m in last_months(2):
+        deliveries += await reports.deliveries(m)
+    per_day: dict[str, dict] = {}
+    start = today - timedelta(days=29)
+    for i in range(30):
+        d = start + timedelta(days=i)
+        per_day[d.isoformat()] = {"date": d.isoformat(), "count": 0, "items": 0}
+    for r in deliveries:
+        d = parse_date(r.get("timestamp"))
+        if d and d.isoformat() in per_day:
+            per_day[d.isoformat()]["count"] += 1
+            per_day[d.isoformat()]["items"] += order_amount(r)
+    recent = [{"date": format_date(r.get("timestamp")), "client": r.get("client", ""),
+               "product_id": r.get("product_id", ""), "amount": order_amount(r), "driver": r.get("driver", "")}
+              for r in deliveries[:8]]
+
+    debts = [d for d in await finance.all_debts() if d["debt"] > 0]
+
+    def short(oid, o):
+        return {"id": oid, "client": order_client(o), "product_id": o.get("product_id", ""),
+                "amount": order_amount(o), "due_date": format_date(o.get("due_date")), "status": o.get("status", "")}
+
+    due = await reports.due_orders(until_today=True)
+    overdue = [short(k, v) for k, v in due if (parse_date(v.get("due_date")) or today) < today]
+    due_today = [short(k, v) for k, v in due if parse_date(v.get("due_date")) == today]
+    tomorrow = [short(k, v) for k, v in await reports.due_orders(tomorrow=True)]
+
+    # Faol buyurtmalar: kechikkan / tayyorlanmoqda / tayyor (har biri faqat bitta guruhda)
+    split = {"late": 0, "prep": 0, "ready": 0}
+    for o in (await reports._orders()).values():
+        st = o.get("status", "")
+        if st not in ACTIVE_STATUSES:
+            continue
+        if is_overdue(o.get("due_date"), st, ACTIVE_STATUSES):
+            split["late"] += 1
+        elif st == ST_PREPARING:
+            split["prep"] += 1
+        else:
+            split["ready"] += 1
+    status_split = [{"key": "prep", "label": "Tayyorlanmoqda", "count": split["prep"]},
+                    {"key": "ready", "label": "Tayyor, yetkazilmagan", "count": split["ready"]},
+                    {"key": "late", "label": "Muddati o'tgan", "count": split["late"]}]
+
+    products = {k: v for k, v in iter_records(await services.store.get("mebellar") or {})}
+    low_stock = sorted(({"id": k, "name": p.get("nomi", k), "qty": int(parse_number(p.get("soni"), 0) or 0)}
+                        for k, p in products.items() if int(parse_number(p.get("soni"), 0) or 0) <= 1),
+                       key=lambda r: (r["qty"], r["name"]))[:12]
+
+    return {
+        "generated_at": now().strftime("%H:%M:%S"),
+        "stats": {**stats, "debt_total": money(sum(d["debt"] for d in debts)), "debtors": len(debts)},
+        "status": status_split,
+        "revenue": revenue,
+        "deliveries": list(per_day.values()),
+        "top_models": top_models,
+        "debts": debts[:10],
+        "overdue": overdue[:15],
+        "due_today": due_today[:15],
+        "tomorrow": tomorrow[:15],
+        "low_stock": low_stock,
+        "recent": recent,
+    }

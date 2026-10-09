@@ -472,6 +472,13 @@ async def driver_payment(request):
     return web.json_response({"balance": bal})
 
 
+@routes.get("/api/dashboard/full")
+@requires(ROLE_ADMIN)
+async def dashboard_full(request):
+    from ..services.reports import admin_dashboard
+    return web.json_response(await admin_dashboard(S(request)))
+
+
 @routes.get("/api/sales")
 @requires(ROLE_ADMIN)
 async def sales(request):

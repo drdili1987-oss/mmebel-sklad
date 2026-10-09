@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#182028">
+  <title>Dashboard — Munosib Mebel</title>
+  <link rel="icon" href="/panel/static/logo-mark.png">
+  <link rel="stylesheet" href="/panel/static/app.css?v=6">
+  <link rel="stylesheet" href="/panel/static/dashboard.css?v=6">
+</head>
+<body class="dash">
+  <header class="dash-top">
+    <div class="brand">
+      <img src="/panel/static/logo-mark.png" alt="" width="40" height="40">
+      <div>
+        <h1>Munosib Mebel</h1>
+        <div class="who" id="updated">Yuklanmoqda…</div>
+      </div>
+    </div>
+    <div class="dash-actions">
+      <a class="dash-btn" href="/panel/">Panel</a>
+      <button class="dash-btn" type="button" id="refresh">Yangilash</button>
+      <button class="dash-btn" type="button" id="fullscreen">To'liq ekran</button>
+    </div>
+  </header>
+  <main class="dash-grid" id="grid" aria-live="polite"></main>
+  <div class="tip" id="tip" role="tooltip" hidden></div>
+  <script src="/panel/static/dashboard.js?v=6"></script>
+</body>
+</html>

@@ -95,6 +95,11 @@ def build_app(settings: Settings, services: Services, bot: Bot, dp: Dispatcher, 
     app.router.add_post("/cron/{kind}", cron)
     app.router.add_get("/panel", panel_redirect)
     app.router.add_get("/panel/", panel_index)
+
+    async def dashboard_page(_):
+        return web.FileResponse(STATIC_DIR / "dashboard.html")
+
+    app.router.add_get("/panel/dashboard", dashboard_page)
     app.router.add_static("/panel/static/", STATIC_DIR, show_index=False, follow_symlinks=False)
     app.add_routes(api_routes)
 
