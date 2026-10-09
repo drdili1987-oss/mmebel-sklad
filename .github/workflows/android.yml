@@ -48,7 +48,11 @@ jobs:
       - name: Imzoni tekshirish
         run: |
           APK=android/app/build/outputs/apk/release/app-release.apk
-          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK" | head -3
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          if ! "$BT/apksigner" verify --print-certs "$APK" > "$RUNNER_TEMP/sig.txt" 2>&1; then
+            echo "::error title=Imzo xatosi::$(head -5 "$RUNNER_TEMP/sig.txt" | tr '\n' ' ')"; exit 1
+          fi
+          head -3 "$RUNNER_TEMP/sig.txt"
           cp "$APK" mmebel.apk
       - uses: actions/upload-artifact@v4
         with:
