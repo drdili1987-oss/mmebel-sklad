@@ -1,7 +1,24 @@
 services:
   - type: web
     name: mmebel-bot
-    env: python
+    runtime: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
+    healthCheckPath: /health
     autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: API_TOKEN
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      - key: FIREBASE_DB_URL
+        value: https://mmebel-bot-default-rtdb.europe-west1.firebasedatabase.app
+      - key: OWNER_IDS
+        sync: false
+      - key: CRON_SECRET
+        generateValue: true
+      - key: WEBHOOK_SECRET
+        generateValue: true
