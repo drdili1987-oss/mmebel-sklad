@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta, timezone
 from pathlib import Path
@@ -55,9 +56,22 @@ class Settings:
         return f"{self.public_url}/panel/" if self.public_url else ""
 
 
+_SECRET_RE = re.compile(r"[A-Za-z0-9_-]{1,256}")
+
+
 def _derive_secret(token: str, purpose: str) -> str:
-    # Telegram secret_token faqat [A-Za-z0-9_-] bo'lishi mumkin, 1..256 belgi.
     return hashlib.sha256(f"{purpose}:{token}".encode()).hexdigest()[:48]
+
+
+def webhook_secret(raw: str, token: str) -> str:
+    """Telegram secret_token faqat [A-Za-z0-9_-], 1..256 belgi bo'lishi mumkin.
+
+    Render generateValue kabi manbalar '+', '/', '=' qo'shishi mumkin — bunday holatda
+    qiymatdan xavfsiz hex kalit hosil qilinadi (maxfiyligi saqlanadi).
+    """
+    if raw and _SECRET_RE.fullmatch(raw):
+        return raw
+    return _derive_secret(raw or token, "webhook")
 
 
 def load_settings() -> Settings:
@@ -76,7 +90,7 @@ def load_settings() -> Settings:
             "FIREBASE_CREDENTIALS_FILE", str(BASE_DIR / "serviceAccountKey.json")
         ),
         public_url=public_url.rstrip("/"),
-        webhook_secret=_env("WEBHOOK_SECRET") or _derive_secret(token, "webhook"),
+        webhook_secret=webhook_secret(_env("WEBHOOK_SECRET"), token),
         cron_secret=_env("CRON_SECRET"),
         port=int(_env("PORT", "8080") or 8080),
         owner_ids=_int_list(_env("OWNER_IDS")),
