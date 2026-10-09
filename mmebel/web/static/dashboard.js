@@ -237,7 +237,16 @@ async function load() {
     const res = await fetch("/api/dashboard/full", { headers: { Authorization: "Bearer " + t } });
     if (res.status === 401) { location.replace("/panel/?next=dashboard"); return; }
     const data = await res.json().catch(() => ({}));
-    if (res.status === 403) { gate("Ruxsat yo'q", "Dashboard faqat admin uchun.", el("a", { class: "btn", href: "/panel/" }, "Panelga qaytish")); return; }
+    if (res.status === 403) {
+      const relogin = el("button", { class: "btn", type: "button", on: { click: async () => {
+        try { await fetch("/api/logout", { method: "POST", headers: { Authorization: "Bearer " + t } }); } catch (_) { /* baribir */ }
+        try { localStorage.removeItem("mmebel_token"); } catch (_) { /* yo'q */ }
+        location.replace("/panel/?next=dashboard");
+      } } }, "Boshqa akkaunt bilan kirish");
+      gate("Ruxsat yo'q", "Dashboard faqat admin uchun. Siz admin bo'lmagan akkaunt bilan kirgansiz — Telegram'da admin akkauntni tanlab, qayta kiring.",
+        el("div", { class: "actions two", style: "max-width:520px;margin:0 auto" }, relogin, el("a", { class: "btn ghost", href: "/panel/", style: "text-align:center;text-decoration:none" }, "Panelga qaytish")));
+      return;
+    }
     if (!res.ok) throw new Error(data.error || `Xato (${res.status})`);
     DATA = data;
     render();
