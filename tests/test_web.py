@@ -248,3 +248,44 @@ async def test_admin_dashboard_endpoint(client):
     assert {s["key"]: s["count"] for s in d["status"]} == {"prep": 1, "ready": 0, "late": 0}
     assert d["tomorrow"][0]["product_id"] == "BF07"
     assert (await client.get("/panel/dashboard")).status == 200
+
+
+# ---------- push ----------
+class FakeSender:
+    def __init__(self):
+        self.sent = []
+        self.dead = set()
+
+    def send(self, tokens, title, body):
+        self.sent.append((tuple(tokens), title, body))
+        return [t for t in tokens if t in self.dead]
+
+
+async def test_push_register_and_delivery(client):
+    services = client.server.app["services"]
+    fake = FakeSender()
+    services.push.sender = fake
+    tok = "fcm-token-" + "x" * 40
+    r = await client.post("/api/push/register", headers=hdr(OMBOR), json={"token": tok, "device": "Pixel"})
+    assert r.status == 200 and (await r.json())["enabled"] is True
+    # boshqa akkaunt shu telefonda kirsa, token unga o'tadi
+    await client.post("/api/push/register", headers=hdr(XODIM), json={"token": tok})
+    assert await services.push.tokens_for(OMBOR) == [] and await services.push.tokens_for(XODIM) == [tok]
+
+    due = (now() + timedelta(days=2)).strftime("%Y-%m-%d")
+    await client.post("/api/orders", headers=hdr(ADMIN),
+                      json={"client_name": "Umid", "product": "BF07", "amount": 1, "due_date": due})
+    await services.push.drain()
+    assert any(tok in t and "Yangi buyurtma" in title for t, title, _ in fake.sent)
+
+    # yaroqsiz token o'chiriladi
+    fake.dead.add(tok)
+    await services.push.notify(XODIM, "t", "b")
+    assert await services.push.tokens_for(XODIM) == []
+    assert (await client.post("/api/push/register", headers=hdr(XODIM), json={"token": "short"})).status == 400
+
+
+def test_split_message():
+    from mmebel.push import split_message
+    t, b = split_message("🔔 Yangi buyurtma!\n\n🆔 X-1\n🧑 Diller: Umid")
+    assert t == "🔔 Yangi buyurtma!" and b == "🆔 X-1 · 🧑 Diller: Umid"

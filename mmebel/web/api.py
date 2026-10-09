@@ -182,7 +182,26 @@ async def auth_poll(request):
 async def logout(request):
     if request.get("token"):
         await S(request).sessions.revoke_token(request["token"])
+    try:
+        d = await request.json()
+    except Exception:  # noqa: BLE001
+        d = {}
+    if isinstance(d, dict) and d.get("push_token"):
+        await S(request).push.unregister(actor(request), str(d["push_token"]))
     return web.json_response({"ok": True})
+
+
+@routes.post("/api/push/register")
+async def push_register(request):
+    d = await body(request)
+    await S(request).push.register(actor(request), str(d.get("token", "")), str(d.get("device", "")))
+    return web.json_response({"ok": True, "enabled": S(request).push.enabled})
+
+
+@routes.post("/api/push/test")
+async def push_test(request):
+    sent = await S(request).push.notify(actor(request), "Munosib Mebel", "Bildirishnomalar ishlayapti ✅")
+    return web.json_response({"sent": sent, "enabled": S(request).push.enabled})
 
 
 # ================= umumiy =================
@@ -500,6 +519,7 @@ async def user_set(request):
     await S(request).users.set_role(actor(request), str(d.get("id", "")), role, str(d.get("client_name", "")))
     if role not in PANEL_ROLES:
         await S(request).sessions.revoke_user(str(d.get("id", "")))
+        await S(request).push.unregister_user(str(d.get("id", "")))
     return web.json_response({"ok": True})
 
 
@@ -508,6 +528,7 @@ async def user_set(request):
 async def user_revoke(request):
     await S(request).users.remove(actor(request), request.match_info["uid"])
     await S(request).sessions.revoke_user(request.match_info["uid"])
+    await S(request).push.unregister_user(request.match_info["uid"])
     return web.json_response({"ok": True})
 
 

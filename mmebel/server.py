@@ -125,8 +125,12 @@ async def configure_bot(bot: Bot, settings: Settings) -> None:
 
 def assemble(settings: Settings, store: Store):
     services = Services(store, owner_ids=settings.owner_ids)
+    from .push import FCMSender
+    from .store import FirebaseStore
+    if isinstance(store, FirebaseStore):
+        services.push.sender = FCMSender()
     bot = create_bot(settings.api_token)
-    notifier = Notifier(bot, services.users)
+    notifier = Notifier(bot, services.users, push=services.push)
     events = Events(notifier)
     scheduler = Scheduler(services, notifier, bot, settings)
     dp = create_dispatcher(services, notifier, events, settings, scheduler)

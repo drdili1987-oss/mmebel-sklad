@@ -779,6 +779,22 @@ async function settingsSection(holder) {
 }
 
 /* ================= ishga tushirish ================= */
+/* ---------- push: Android ilova tokenni shu funksiyaga beradi ---------- */
+let PUSH_TOKEN = "";
+let pushRegistered = "";
+async function registerPush() {
+  if (!PUSH_TOKEN || IN_TELEGRAM || !S.me || pushRegistered === PUSH_TOKEN) return;
+  try {
+    await api("POST", "/api/push/register", { token: PUSH_TOKEN, device: navigator.userAgent.slice(0, 110) });
+    pushRegistered = PUSH_TOKEN;
+  } catch (_) { /* keyingi ochilishda qayta urinadi */ }
+}
+window.mmebelSetPushToken = function (t) {
+  if (typeof t !== "string" || !/^[A-Za-z0-9:_-]{20,4096}$/.test(t)) return;
+  PUSH_TOKEN = t;
+  registerPush();
+};
+
 /* ---------- ilova rejimi: Telegram orqali kirish ---------- */
 let loginTimer = null;
 const IN_APP = /MMebelApp/.test(navigator.userAgent);
@@ -835,7 +851,8 @@ function showLogin(note) {
 
 async function logout() {
   if (!(await confirmDlg("Ilovadan chiqilsinmi?"))) return;
-  try { await api("POST", "/api/logout"); } catch (_) { /* baribir chiqamiz */ }
+  try { await api("POST", "/api/logout", PUSH_TOKEN ? { push_token: PUSH_TOKEN } : {}); } catch (_) { /* baribir chiqamiz */ }
+  pushRegistered = "";
   setToken("");
   showLogin("Chiqdingiz.");
 }
@@ -867,6 +884,14 @@ async function boot() {
   const who = $("who");
   clear(who).appendChild(document.createTextNode(`${S.me.name || "Foydalanuvchi"} · ${S.me.role_label}`));
   if (!IN_TELEGRAM) who.appendChild(el("button", { class: "linkbtn", type: "button", on: { click: logout } }, "Chiqish"));
+  if (IN_APP) who.appendChild(el("button", { class: "linkbtn", type: "button", on: { click: async (e) => {
+    const r = await act(e.target, () => api("POST", "/api/push/test"));
+    if (!r) return;
+    if (!r.enabled) toast("Push hali serverda yoqilmagan.", true);
+    else if (!r.sent) toast("Bu telefon bildirishnomaga ro'yxatdan o'tmagan. Ilovaga bildirishnoma ruxsatini bering va qayta oching.", true);
+    else toast("Sinov xabari yuborildi");
+  } } }, "🔔 Sinov"));
+  registerPush();
   if (new URLSearchParams(location.search).get("next") === "dashboard" && S.me.role === "admin" && !IN_TELEGRAM) {
     location.replace("/panel/dashboard");
     return;

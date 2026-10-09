@@ -1,6 +1,9 @@
 package uz.mmebel.sklad
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
+import android.os.Build
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Bitmap
@@ -21,6 +24,9 @@ import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import com.google.firebase.FirebaseApp
+import com.google.firebase.messaging.FirebaseMessaging
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
@@ -35,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var progress: ProgressBar
     private lateinit var offline: LinearLayout
     private val baseUri: Uri by lazy { Uri.parse(BuildConfig.BASE_URL) }
+    private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,6 +88,31 @@ class MainActivity : ComponentActivity() {
         })
 
         if (savedInstanceState != null) web.restoreState(savedInstanceState) else web.loadUrl(BuildConfig.BASE_URL)
+        setupPush()
+    }
+
+    /** Push: kanal, ruxsat (Android 13+), FCM token. google-services.json bo'lmasa — jim o'tkazib yuboriladi. */
+    private fun setupPush() {
+        Push.ensureChannel(this)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        if (FirebaseApp.getApps(this).isEmpty()) return
+        try {
+            FirebaseMessaging.getInstance().token.addOnSuccessListener { t ->
+                Push.saveToken(this, t)
+                injectPushToken()
+            }
+        } catch (e: Exception) {
+            // Firebase sozlanmagan — push o'chiq
+        }
+    }
+
+    /** Tokenni panelga beramiz; panel uni sessiya bilan serverga ro'yxatdan o'tkazadi. */
+    private fun injectPushToken() {
+        val t = Push.token(this) ?: return
+        web.evaluateJavascript("window.mmebelSetPushToken && window.mmebelSetPushToken('$t')", null)
     }
 
     private fun reload() {
@@ -109,6 +141,10 @@ class MainActivity : ComponentActivity() {
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
             progress.visibility = View.VISIBLE
+        }
+
+        override fun onPageFinished(view: WebView, url: String?) {
+            injectPushToken()
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {

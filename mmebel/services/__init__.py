@@ -24,3 +24,5 @@ class Services:
         self.orders = OrderService(store, self.inventory, self.finance)
         self.reports = ReportService(store, self.finance)
         self.sessions = SessionService(store)
+        from ..push import PushService
+        self.push = PushService(store)  # sender assemble() da ulanadi

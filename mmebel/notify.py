@@ -24,16 +24,21 @@ def strip_html(text: str) -> str:
 
 
 class Notifier:
-    def __init__(self, bot: Bot, users_service):
+    def __init__(self, bot: Bot, users_service, push=None):
         self.bot = bot
         self.users = users_service
+        self.push = push
 
-    async def send(self, chat_id: int, text: str, reply_markup=None) -> bool:
+    async def send(self, chat_id: int, text: str, reply_markup=None, push: bool = True) -> bool:
         chunks = chunk_text(text)
         ok = True
         for i, chunk in enumerate(chunks):
             markup = reply_markup if i == len(chunks) - 1 else None
             ok &= await self._send_one(chat_id, chunk, markup)
+        if push and self.push is not None:
+            from .push import split_message
+            title, body = split_message(strip_html(text))
+            self.push.notify_later(chat_id, title, body)
         return ok
 
     async def _send_one(self, chat_id: int, text: str, markup) -> bool:

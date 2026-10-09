@@ -4,6 +4,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Push: google-services.json bo'lsa Firebase ulanadi; bo'lmasa ilova pushsiz yig'iladi
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 // Server manzili: -PbaseUrl=... bilan o'zgartirish mumkin
 val baseUrl: String = (project.findProperty("baseUrl") as String?) ?: "https://mmebel-bot.onrender.com/panel/"
 val ciVersionCode: Int = (System.getenv("VERSION_CODE") ?: "1").toInt()
@@ -56,4 +61,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.webkit:webkit:1.12.1")
+    implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    implementation("com.google.firebase:firebase-messaging")
 }
