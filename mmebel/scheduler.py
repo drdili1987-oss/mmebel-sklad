@@ -36,6 +36,7 @@ REMINDERS = (
     Reminder("tomorrow", dtime(15, 5), dtime(20, 0)),
 )
 BACKUP_AT = dtime(23, 50)
+ARCHIVE_AT = dtime(3, 0)
 RECIPIENT_ROLES = (ROLE_ADMIN, ROLE_OMBORCHI, ROLE_XODIM)
 
 
@@ -122,6 +123,13 @@ class Scheduler:
                     await self.run_reminder(r.key)
                 except Exception:  # noqa: BLE001
                     log.exception("Eslatma %s xatosi", r.key)
+        if t >= ARCHIVE_AT:
+            try:
+                if await self.claim("archive"):
+                    n = await self.services.orders.archive_old()
+                    log.info("Arxivga ko'chirildi: %d ta buyurtma", n)
+            except Exception:  # noqa: BLE001
+                log.exception("Arxiv xatosi")
         if t >= BACKUP_AT:
             try:
                 if await self.claim("backup"):

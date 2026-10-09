@@ -53,6 +53,15 @@ def build_app(settings: Settings, services: Services, bot: Bot, dp: Dispatcher, 
     app["services"] = services
     app["events"] = events
     app["limiter"] = RateLimiter(RATE_LIMIT)
+    app["auth_limiter"] = RateLimiter(20)
+    _username: dict = {}
+
+    async def bot_username() -> str:
+        if "v" not in _username:
+            _username["v"] = (await bot.me()).username
+        return _username["v"]
+
+    app["bot_username"] = bot_username
 
     async def health(_):
         return web.json_response({"ok": True})

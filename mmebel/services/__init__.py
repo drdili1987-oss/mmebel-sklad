@@ -8,6 +8,7 @@ from .finance import FinanceService
 from .inventory import InventoryService
 from .orders import OrderService
 from .reports import ReportService
+from .sessions import SessionService
 from .users import UserService
 
 __all__ = ["Services", "ServiceError", "NotFound", "Conflict"]
@@ -22,3 +23,4 @@ class Services:
         self.finance = FinanceService(store, self.catalog)
         self.orders = OrderService(store, self.inventory, self.finance)
         self.reports = ReportService(store, self.finance)
+        self.sessions = SessionService(store)

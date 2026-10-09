@@ -191,3 +191,28 @@ async def test_driver_payments(svc):
     assert await svc.finance.driver_payment(ADMIN, "Javxar", 5, "receive") == -15
     with pytest.raises(ServiceError):
         await svc.finance.driver_payment(ADMIN, "Javxar", -5, "give")
+
+
+async def test_archive_moves_only_old_closed_orders(svc):
+    old = "2026-01-05 10:00:00"
+    await svc.store.update("orders", {
+        "A-1": {"client_name": "Umid", "product_id": "BF07", "amount": 1, "status": "Hisob kitob qilindi",
+                "created_at": old, "delivered_at": old, "price": 100},
+        "A-2": {"client_name": "Umid", "product_id": "BF07", "amount": 1, "status": "Biz yetkazib berdik",
+                "created_at": old, "delivered_at": old, "price": 100},
+        "A-3": {"client_name": "Umid", "product_id": "BF07", "amount": 1, "status": "Bekor qilindi",
+                "created_at": old},
+    })
+    debt_before = (await svc.finance.account("Umid")).debt
+    n = await svc.orders.archive_old(days=60)
+    assert n == 2
+    assert set(await svc.orders.all()) == {"A-2"}          # qarzdagi buyurtma qoladi
+    assert (await svc.finance.account("Umid")).debt == debt_before == 100
+    sales = await svc.reports.sales()
+    assert sum(m["total"] for m in sales) == 2              # arxiv statistikada hisoblanadi (bekor qilingansiz)
+
+
+async def test_price_migration(svc):
+    await svc.store.set("mebellar/X1", {"id": "X1", "nomi": "X 1", "narxi": "350 so'm", "soni": 1})
+    await svc.catalog.run_migrations()
+    assert (await svc.inventory.get("X1"))["narxi"] == 350

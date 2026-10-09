@@ -21,6 +21,15 @@
   --font: -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Noto Sans", sans-serif;
   --font-code: "SF Pro Display", "Roboto Condensed", "Arial Narrow", var(--font);
 }
+/* Ilova rejimi (Telegram tashqarisida): tizim mavzusiga moslashadi */
+@media (prefers-color-scheme: dark) {
+  .standalone {
+    --bg: #12181f; --card: #1c242d; --text: #eef2f5; --muted: #8d99a6; --link: #6fb1f0;
+    --accent: #3d8bd6; --accent-text: #ffffff;
+  }
+}
+.standalone body { padding-top: env(safe-area-inset-top); }
+.linkbtn { border: 0; background: none; color: var(--link); padding: 0 0 0 10px; font-size: 13px; cursor: pointer; }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var(--font); }
 body { padding-bottom: calc(64px + env(safe-area-inset-bottom)); -webkit-tap-highlight-color: transparent; }

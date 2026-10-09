@@ -120,4 +120,18 @@ class CatalogService:
             await self.store.update("users", updates)
             await self.store.set("meta/migrations/v1_roles", now_str())
             log.info("Migratsiya v1_roles bajarildi: %d yozuv", len(updates))
+        if not done.get("v2_prices"):
+            # "350 so'm" kabi matnli narxlarni songa o'girish (valyuta — $)
+            from ..utils import iter_records, money, parse_number
+            products = await self.store.get("mebellar") or {}
+            updates = {}
+            for pid, p in iter_records(products):
+                raw = p.get("narxi")
+                if isinstance(raw, str):
+                    n = parse_number(raw)
+                    updates[f"{pid}/narxi"] = money(n) if n is not None else None
+            if updates:
+                await self.store.update("mebellar", updates)
+            await self.store.set("meta/migrations/v2_prices", now_str())
+            log.info("Migratsiya v2_prices bajarildi: %d ta narx", len(updates))
         self._cache = None

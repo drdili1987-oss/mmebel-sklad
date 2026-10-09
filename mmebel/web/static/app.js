@@ -4,6 +4,11 @@
 "use strict";
 
 const tg = window.Telegram && window.Telegram.WebApp;
+const IN_TELEGRAM = !!(tg && tg.initData);
+const NATIVE = window.MMebelApp || null; // Android ilova ko'prigi
+const TOKEN_KEY = "mmebel_token";
+function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (_) { return ""; } }
+function setToken(t) { try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch (_) { /* yo'q */ } }
 const S = { me: null, tab: null, ordersScope: "active", ordersQuery: "", stockQuery: "", moneySeg: "debts",
   moreSeg: "deliveries", month: null };
 
@@ -91,15 +96,27 @@ function confirmDlg(text) {
   });
 }
 
+class ApiError extends Error { constructor(msg, status) { super(msg); this.status = status; } }
 async function api(method, path, body) {
-  const res = await fetch(path, {
-    method,
-    headers: { "Authorization": "tma " + (tg ? tg.initData : ""), "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const auth = IN_TELEGRAM ? "tma " + tg.initData : (getToken() ? "Bearer " + getToken() : "");
+  let res;
+  try {
+    res = await fetch(path, {
+      method,
+      headers: { "Authorization": auth, "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (_) {
+    throw new ApiError("Internet aloqasi yo'q. Tarmoqni tekshirib, qayta urinib ko'ring.", 0);
+  }
   let data = {};
   try { data = await res.json(); } catch (_) { /* bo'sh javob */ }
-  if (!res.ok) throw new Error(data.error || `Xato (${res.status})`);
+  if (res.status === 401 && !IN_TELEGRAM && !path.startsWith("/api/auth/")) {
+    setToken("");
+    showLogin("Sessiya tugagan. Qaytadan kiring.");
+    throw new ApiError(data.error || "Sessiya tugagan.", 401);
+  }
+  if (!res.ok) throw new ApiError(data.error || `Xato (${res.status})`, res.status);
   return data;
 }
 async function act(btn, fn, okMsg) {
@@ -123,8 +140,15 @@ function sheet(build) {
   if (first && first.dataset.autofocus !== undefined) first.focus();
   return close;
 }
+/* Android "orqaga" tugmasi: ochiq oyna bo'lsa yopadi (true), aks holda ilova o'zi hal qiladi */
+window.mmebelBack = function () {
+  const c = sheetStack[sheetStack.length - 1];
+  if (c) { c(); return true; }
+  if (S.me && S.tab !== TABS[S.me.role][0][0]) { go(TABS[S.me.role][0][0]); return true; }
+  return false;
+};
 function syncBack() {
-  if (!tg || !tg.BackButton) return;
+  if (!IN_TELEGRAM || !tg.BackButton) return;
   if (sheetStack.length) tg.BackButton.show(); else tg.BackButton.hide();
 }
 if (tg && tg.BackButton) tg.BackButton.onClick(() => { const c = sheetStack[sheetStack.length - 1]; if (c) c(); });
@@ -747,22 +771,80 @@ async function settingsSection(holder) {
 }
 
 /* ================= ishga tushirish ================= */
+/* ---------- ilova rejimi: Telegram orqali kirish ---------- */
+let loginTimer = null;
+function openExternal(url) {
+  if (NATIVE && NATIVE.openExternal) NATIVE.openExternal(url);
+  else window.open(url, "_blank", "noopener");
+}
+function showLogin(note) {
+  clearTimeout(loginTimer);
+  S.me = null;
+  sheetStack.slice().forEach((c) => c());
+  $("tabs").classList.add("hidden");
+  document.querySelectorAll(".fab").forEach((f) => f.remove());
+  clear($("toolbar"));
+  $("title").textContent = "MMebel";
+  $("who").textContent = "Sklad va buyurtmalar";
+  const status = el("p", { class: "muted small", role: "status" }, note || "");
+  const btn = el("button", { class: "btn", type: "button" }, "Telegram orqali kirish");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    status.textContent = "Bot ochilmoqda…";
+    let s;
+    try { s = await api("POST", "/api/auth/start", { device: navigator.userAgent.slice(0, 110) }); }
+    catch (e) { status.textContent = e.message; btn.disabled = false; return; }
+    openExternal(s.bot_link);
+    status.textContent = "Botda «START» ni bosing, so'ng shu yerga qayting. Kutilmoqda…";
+    const deadline = Date.now() + s.expires_in * 1000;
+    const tick = async () => {
+      if (Date.now() > deadline) { status.textContent = "Vaqt tugadi. Qaytadan bosing."; btn.disabled = false; return; }
+      try {
+        const r = await api("POST", "/api/auth/poll", { code: s.code, poll_secret: s.poll_secret });
+        if (r.status === "approved") { setToken(r.token); haptic("success"); boot(); return; }
+        if (r.status === "rejected") { status.textContent = "Ilova faqat admin, omborchi va xodimlar uchun. Adminga murojaat qiling."; btn.disabled = false; return; }
+        if (r.status === "expired") { status.textContent = "Vaqt tugadi. Qaytadan bosing."; btn.disabled = false; return; }
+      } catch (_) { /* tarmoq uzilishi — keyingi urinish */ }
+      loginTimer = setTimeout(tick, 2000);
+    };
+    loginTimer = setTimeout(tick, 2000);
+  });
+  clear($("view")).appendChild(el("div", { class: "gate" },
+    el("h1", {}, "Hisobingizga kiring"),
+    el("p", { class: "muted" }, "Kirish Telegram bot orqali tasdiqlanadi — parol kerak emas. Ilova admin, omborchi va xodimlar uchun."),
+    el("div", { class: "actions" }, btn), status));
+}
+
+async function logout() {
+  if (!(await confirmDlg("Ilovadan chiqilsinmi?"))) return;
+  try { await api("POST", "/api/logout"); } catch (_) { /* baribir chiqamiz */ }
+  setToken("");
+  showLogin("Chiqdingiz.");
+}
+
+function showError(msg) {
+  const retry = el("button", { class: "btn ghost", type: "button", on: { click: boot } }, "Qayta urinish");
+  clear($("view")).appendChild(el("div", { class: "gate" }, el("h1", {}, "Ulanib bo'lmadi"),
+    el("p", { class: "muted" }, msg), el("div", { class: "actions" }, retry)));
+  $("who").textContent = "";
+}
+
 async function boot() {
-  if (tg) { tg.ready(); tg.expand(); }
-  if (!tg || !tg.initData) {
-    clear($("view")).appendChild(el("div", { class: "gate" }, el("h1", {}, "Panel Telegram ichida ochiladi"),
-      el("p", { class: "muted" }, "Botga kiring va «🖥 Panel» tugmasini bosing.")));
-    $("who").textContent = "";
-    return;
-  }
+  if (IN_TELEGRAM) { tg.ready(); tg.expand(); }
+  else document.documentElement.classList.add("standalone");
+  if (!IN_TELEGRAM && !getToken()) { showLogin(); return; }
+  clear($("view")).appendChild(loading());
   try {
     S.me = await api("GET", "/api/me");
   } catch (e) {
-    clear($("view")).appendChild(el("div", { class: "gate" }, el("h1", {}, "Kirish imkoni yo'q"), el("p", { class: "muted" }, e.message)));
-    $("who").textContent = "";
+    if (e.status === 401 && !IN_TELEGRAM) return; // showLogin allaqachon chaqirilgan
+    if (e.status === 403 && !IN_TELEGRAM) { setToken(""); showLogin(e.message); return; }
+    showError(e.message);
     return;
   }
-  $("who").textContent = `${S.me.name || "Foydalanuvchi"} · ${S.me.role_label}`;
+  const who = $("who");
+  clear(who).appendChild(document.createTextNode(`${S.me.name || "Foydalanuvchi"} · ${S.me.role_label}`));
+  if (!IN_TELEGRAM) who.appendChild(el("button", { class: "linkbtn", type: "button", on: { click: logout } }, "Chiqish"));
   go(TABS[S.me.role][0][0]);
 }
 boot();

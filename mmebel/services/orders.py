@@ -280,6 +280,35 @@ class OrderService:
         await self._audit(actor_id, order_id, "edit", changes)
         return dict(order, **updates, _changes=changes)
 
+    # ---------- arxiv ----------
+    async def archive_old(self, days: int = 60, limit: int = 500) -> int:
+        """Yopilgan (hisob-kitob qilingan / bekor qilingan) eski buyurtmalarni `orders_archive/{oy}` ga ko'chiradi.
+
+        Ular qarzga kirmaydi, shuning uchun hisob-kitob o'zgarmaydi; asosiy `orders` tuguni kichik qoladi.
+        """
+        from datetime import timedelta
+
+        from ..constants import ST_SETTLED
+        from ..utils import now, parse_datetime
+        cutoff = (now() - timedelta(days=days)).replace(tzinfo=None)
+        updates: dict = {}
+        moved = 0
+        for oid, o in (await self.all()).items():
+            if o.get("status") not in (ST_SETTLED, ST_CANCELLED):
+                continue
+            ref = parse_datetime(o.get("cancelled_at") or o.get("delivered_at") or o.get("created_at"))
+            if not ref or ref > cutoff:
+                continue
+            month = str(o.get("created_at", ""))[:7] or "eski"
+            updates[f"orders_archive/{month}/{oid}"] = dict(o, archived_at=now_str())
+            updates[f"orders/{oid}"] = None
+            moved += 1
+            if moved >= limit:
+                break
+        if updates:
+            await self.store.update("", updates)
+        return moved
+
     async def _audit(self, actor_id, order_id: str, action: str, details: dict) -> None:
         await self.store.push("audit_log", {"action": f"order_{action}", "order_id": order_id,
                                             "details": details, "by": str(actor_id), "at": now_str()})

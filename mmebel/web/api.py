@@ -23,7 +23,7 @@ from ..constants import (
 from ..services import Conflict, NotFound, ServiceError
 from ..services.finance import order_client, order_gross
 from ..utils import is_overdue, iter_records, last_months, money, parse_date, to_int
-from .auth import AuthError, validate_init_data
+from .auth import AuthError, TgUser, validate_init_data
 
 log = logging.getLogger(__name__)
 routes = web.RouteTableDef()
@@ -58,12 +58,26 @@ async def api_middleware(request: web.Request, handler):
         return await handler(request)
     services = request.app["services"]
     settings = request.app["settings"]
+    if request.path.startswith("/api/auth/"):
+        # Ochiq endpointlar (ilovaga kirish) — IP bo'yicha cheklanadi
+        if not request.app["auth_limiter"].allow(request.remote or "?"):
+            return _json_error(429, "Juda ko'p urinish. Bir daqiqadan so'ng qayta urinib ko'ring.")
+        return await _guarded(request, handler)
     header = request.headers.get("Authorization", "")
-    init_data = header[4:] if header.startswith("tma ") else ""
-    try:
-        user = validate_init_data(init_data, settings.api_token)
-    except AuthError as e:
-        return _json_error(401, f"Avtorizatsiya xatosi: {e}. Panelni bot orqali qayta oching.")
+    if header.startswith("Bearer "):
+        token = header[7:].strip()
+        uid = await services.sessions.resolve(token)
+        if not uid:
+            return _json_error(401, "Sessiya tugagan. Ilovaga qaytadan kiring.")
+        u = await services.users.get(uid) or {}
+        user = TgUser(id=int(uid), first_name=u.get("name", ""), last_name="", username=u.get("username", ""))
+        request["token"] = token
+    else:
+        init_data = header[4:] if header.startswith("tma ") else ""
+        try:
+            user = validate_init_data(init_data, settings.api_token)
+        except AuthError as e:
+            return _json_error(401, f"Avtorizatsiya xatosi: {e}. Panelni bot orqali qayta oching.")
     if not request.app["limiter"].allow(user.id):
         return _json_error(429, "Juda ko'p so'rov. Bir daqiqadan so'ng urinib ko'ring.")
     role = await services.users.role(user.id)
@@ -71,6 +85,10 @@ async def api_middleware(request: web.Request, handler):
         return _json_error(403, "Panel faqat admin, omborchi va xodimlar uchun.")
     request["user"] = user
     request["role"] = role
+    return await _guarded(request, handler)
+
+
+async def _guarded(request: web.Request, handler):
     try:
         return await handler(request)
     except web.HTTPException:
@@ -133,6 +151,29 @@ def order_out(oid: str, o: dict, role: str) -> dict:
     for f in ("created_by", "delivered_by", "ready_by", "cancelled_by", "client_tg_id"):
         out.pop(f, None)
     return out
+
+
+# ================= ilovaga kirish (ochiq) =================
+@routes.post("/api/auth/start")
+async def auth_start(request):
+    d = await body(request)
+    res = await S(request).sessions.start(device=str(d.get("device", ""))[:120])
+    username = await request.app["bot_username"]()
+    res["bot_link"] = f"https://t.me/{username}?start=login_{res['code']}"
+    return web.json_response(res)
+
+
+@routes.post("/api/auth/poll")
+async def auth_poll(request):
+    d = await body(request)
+    return web.json_response(await S(request).sessions.poll(str(d.get("code", "")), str(d.get("poll_secret", ""))))
+
+
+@routes.post("/api/logout")
+async def logout(request):
+    if request.get("token"):
+        await S(request).sessions.revoke_token(request["token"])
+    return web.json_response({"ok": True})
 
 
 # ================= umumiy =================
@@ -439,8 +480,10 @@ async def users(request):
 @requires(ROLE_ADMIN)
 async def user_set(request):
     d = await body(request)
-    await S(request).users.set_role(actor(request), str(d.get("id", "")), str(d.get("role", "")),
-                                    str(d.get("client_name", "")))
+    role = str(d.get("role", ""))
+    await S(request).users.set_role(actor(request), str(d.get("id", "")), role, str(d.get("client_name", "")))
+    if role not in PANEL_ROLES:
+        await S(request).sessions.revoke_user(str(d.get("id", "")))
     return web.json_response({"ok": True})
 
 
@@ -448,6 +491,7 @@ async def user_set(request):
 @requires(ROLE_ADMIN)
 async def user_revoke(request):
     await S(request).users.remove(actor(request), request.match_info["uid"])
+    await S(request).sessions.revoke_user(request.match_info["uid"])
     return web.json_response({"ok": True})
 
 

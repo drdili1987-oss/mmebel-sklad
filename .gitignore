@@ -11,3 +11,9 @@ backup_*.json
 .idea/
 .vscode/
 .DS_Store
+*.jks
+*.keystore
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties

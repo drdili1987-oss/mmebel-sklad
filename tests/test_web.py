@@ -48,6 +48,11 @@ async def client(aiohttp_client):
 
     bot.send_message = fake_send  # tarmoqqa chiqmaslik uchun
     app = build_app(s, services, bot, dp, scheduler, events)
+
+    async def fake_username():
+        return "mmebel_test_bot"
+
+    app["bot_username"] = fake_username
     c = await aiohttp_client(app)
     c.sent = sent
     c.store = store
@@ -162,3 +167,50 @@ async def test_panel_static_and_headers(client):
     assert "Content-Security-Policy" in r.headers
     assert (await client.get("/panel/static/app.js")).status == 200
     assert (await client.get("/panel/static/../../config.py")).status in (403, 404)
+
+
+# ---------- mobil ilova kirishi ----------
+async def test_app_login_flow(client):
+    r = await client.post("/api/auth/start", json={"device": "Android"})
+    d = await r.json()
+    assert d["bot_link"] == f"https://t.me/mmebel_test_bot?start=login_{d['code']}"
+    services = client.server.app["services"]
+
+    # tasdiqlanmaguncha kutadi; noto'g'ri secret bilan hech narsa olinmaydi
+    assert (await (await client.post("/api/auth/poll", json={"code": d["code"], "poll_secret": d["poll_secret"]})).json())["status"] == "pending"
+    assert (await client.post("/api/auth/poll", json={"code": d["code"], "poll_secret": "wrong"})).status == 404
+
+    await services.sessions.approve(d["code"], OMBOR)
+    res = await (await client.post("/api/auth/poll", json={"code": d["code"], "poll_secret": d["poll_secret"]})).json()
+    assert res["status"] == "approved"
+    token = res["token"]
+    # bir martalik
+    assert (await client.post("/api/auth/poll", json={"code": d["code"], "poll_secret": d["poll_secret"]})).status == 404
+
+    bearer = {"Authorization": f"Bearer {token}"}
+    me = await (await client.get("/api/me", headers=bearer)).json()
+    assert me["role"] == "omborchi" and me["id"] == OMBOR
+    assert (await client.get("/api/debts", headers=bearer)).status == 403
+
+    # rol olib tashlansa sessiya ham bekor
+    await client.post("/api/users", headers=hdr(ADMIN), json={"id": str(OMBOR), "role": "mijoz"})
+    assert (await client.get("/api/me", headers=bearer)).status == 401
+
+    assert (await client.get("/api/me", headers={"Authorization": "Bearer fake"})).status == 401
+
+
+async def test_app_login_rejected_for_non_staff(client):
+    d = await (await client.post("/api/auth/start", json={})).json()
+    await client.server.app["services"].sessions.approve(d["code"], DILLER, approve=False)
+    res = await (await client.post("/api/auth/poll", json={"code": d["code"], "poll_secret": d["poll_secret"]})).json()
+    assert res["status"] == "rejected"
+
+
+async def test_logout(client):
+    services = client.server.app["services"]
+    s = await services.sessions.start()
+    await services.sessions.approve(s["code"], XODIM)
+    token = (await services.sessions.poll(s["code"], s["poll_secret"]))["token"]
+    bearer = {"Authorization": f"Bearer {token}"}
+    assert (await client.post("/api/logout", headers=bearer)).status == 200
+    assert (await client.get("/api/me", headers=bearer)).status == 401

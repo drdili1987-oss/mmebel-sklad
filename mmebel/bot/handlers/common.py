@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import F, Router
-from aiogram.filters import Command, StateFilter
+from aiogram.filters import Command, CommandObject, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, MenuButtonDefault, MenuButtonWebApp, Message, WebAppInfo
 
@@ -25,6 +25,27 @@ async def sync_menu_button(bot, chat_id: int, role: str, settings) -> None:
             await bot.set_chat_menu_button(chat_id=chat_id, menu_button=MenuButtonDefault())
     except Exception as e:  # noqa: BLE001
         log.debug("menu button: %s", e)
+
+
+@router.message(CommandStart(deep_link=True, magic=F.args.startswith("login_")))
+async def app_login(message: Message, command: CommandObject, state: FSMContext, role: str, services):
+    """Mobil ilovaga kirishni tasdiqlash (ilova ochgan bot havolasi)."""
+    from ...services import ServiceError
+    await state.clear()
+    code = (command.args or "")[6:]
+    allowed = role in PANEL_ROLES
+    try:
+        await services.sessions.approve(code, message.from_user.id, approve=allowed)
+    except ServiceError as e:
+        await message.answer(f"❌ {h(e)}", reply_markup=kb.main_menu(role))
+        return
+    if allowed:
+        await message.answer(f"✅ <b>Ilovaga kirish tasdiqlandi.</b>\nRol: {ROLE_LABELS.get(role, role)}\n\n"
+                             "Ilovaga qayting — bir necha soniyada ochiladi.", reply_markup=kb.main_menu(role))
+    else:
+        await message.answer("⛔ Ilova faqat admin, omborchi va xodimlar uchun.\n"
+                             f"Sizning ID: <code>{message.from_user.id}</code> — rol olish uchun adminga yuboring.",
+                             reply_markup=kb.main_menu(role))
 
 
 @router.message(Command("start"))

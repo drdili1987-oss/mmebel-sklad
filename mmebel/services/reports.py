@@ -24,6 +24,15 @@ class ReportService:
     async def _orders(self) -> dict:
         return {k: v for k, v in iter_records(await self.store.get("orders") or {})}
 
+    async def _orders_with_archive(self) -> dict:
+        out: dict = {}
+        arch = await self.store.get("orders_archive") or {}
+        if isinstance(arch, dict):
+            for month in arch.values():
+                out.update({k: v for k, v in iter_records(month)})
+        out.update(await self._orders())
+        return out
+
     async def dashboard(self) -> dict:
         orders = await self._orders()
         products = {k: v for k, v in iter_records(await self.store.get("mebellar") or {})}
@@ -59,7 +68,7 @@ class ReportService:
         raw = await self.store.get(f"deliveries/{month}") or {}
         rows = [dict(d, id=k) for k, d in iter_records(raw)]
         seen = {r.get("order_id") for r in rows}
-        orders = await self._orders()
+        orders = await self._orders_with_archive()
         for oid, o in orders.items():
             if oid in seen or o.get("month") != month or o.get("status") not in DELIVERED_STATUSES:
                 continue
@@ -108,7 +117,7 @@ class ReportService:
 
     async def sales(self, months: int = 12) -> list[dict]:
         """Oylar kesimida eng ko'p buyurtma qilingan mebellar (bekor qilinganlarsiz)."""
-        orders = await self._orders()
+        orders = await self._orders_with_archive()
         stats: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         revenue: dict[str, float] = defaultdict(float)
         for o in orders.values():

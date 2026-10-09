@@ -1,0 +1,55 @@
+name: Android APK
+on:
+  push:
+    branches: [main]
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - name: Imzo kaliti
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::GitHub Secrets'da ANDROID_KEYSTORE_B64 yo'q (README → Android bo'limi)"; exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+      - name: APK yig'ish
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: mmebel
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: gradle --no-daemon assembleRelease
+      - name: Imzoni tekshirish
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs "$APK" | head -3
+          cp "$APK" mmebel.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mmebel-apk
+          path: mmebel.apk
+      - name: Release (doimiy havola)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="android-v1.0.${{ github.run_number }}"
+          gh release create "$TAG" mmebel.apk --title "MMebel Android 1.0.${{ github.run_number }}" \
+            --notes "Android ilova. O'rnatish: mmebel.apk ni yuklab, oching." --latest

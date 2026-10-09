@@ -9,7 +9,7 @@ Mebel ishlab chiqarish va sklad uchun Telegram bot hamda 3 ta web panel (Telegra
 | **Xodim** | faol buyurtmalar | ishlab chiqarish rejasi (model bo'yicha jamlangan), faol buyurtmalar |
 | **Diller** | zakaz berish, bekor qilish, holat, to'lov bildirish | — |
 
-Panel bot ichidagi **🖥 Panel** tugmasi (yoki chap pastdagi menyu tugmasi) orqali ochiladi. Login va parol yo'q: server Telegram imzosini (initData HMAC) tekshiradi, rolni esa bazadan oladi.
+Panel **Android ilovada** yoki bot ichidagi **🖥 Panel** tugmasi (yoki chap pastdagi menyu tugmasi) orqali ochiladi. Login va parol yo'q: server Telegram imzosini (initData HMAC) tekshiradi, rolni esa bazadan oladi.
 
 ## Tuzilma
 
@@ -28,9 +28,19 @@ mmebel/
   web/                  REST API, initData tekshiruvi, panel (HTML/CSS/JS)
   events.py, notify.py  xabarnomalar
   scheduler.py          kunlik eslatmalar va zaxira nusxa
-tests/                  32 ta test (servislar, API, bot oqimlari)
+android/                Android ilova (Kotlin, WebView qobiq)
+tests/                  testlar (servislar, API, bot oqimlari, kirish)
 database.rules.json     Firebase Rules: mijozdan to'g'ridan-to'g'ri kirish yopiq
 ```
+
+## Android ilova
+
+- Yuklab olish (har doim eng oxirgi versiya): `https://github.com/drdili1987-oss/mmebel-sklad/releases/latest/download/mmebel.apk`
+- Kirish: «Telegram orqali kirish» → botda START → ilovaga qayting. Sessiya 60 kun amal qiladi; rol olib tashlansa darhol bekor bo'ladi.
+- Ilova paneli serverdan yuklanadi — panel o'zgarishlari uchun ilovani yangilash shart emas.
+- APK `android/` o'zgarganda GitHub Actions'da avtomatik yig'iladi va Release'ga qo'yiladi.
+  Buning uchun repo Secrets'da `ANDROID_KEYSTORE_B64` va `ANDROID_KEYSTORE_PASSWORD` bo'lishi kerak
+  (imzo kaliti — yo'qolsa, ilovani yangilab bo'lmaydi; zaxira nusxasini saqlang).
 
 ## O'rnatish (Render)
 
