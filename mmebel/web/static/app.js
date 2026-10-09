@@ -774,7 +774,11 @@ async function settingsSection(holder) {
 /* ---------- ilova rejimi: Telegram orqali kirish ---------- */
 let loginTimer = null;
 function openExternal(url) {
-  if (NATIVE && NATIVE.openExternal) NATIVE.openExternal(url);
+  try {
+    if (NATIVE && NATIVE.openExternal) { NATIVE.openExternal(url); return; }
+  } catch (_) { /* ko'prik ishlamasa — oddiy havola orqali */ }
+  // Ilova ichida (WebView) bu navigatsiyani Android ushlab, Telegram'da ochadi; brauzerda yangi oyna
+  if (/MMebelApp/.test(navigator.userAgent)) window.location.href = url;
   else window.open(url, "_blank", "noopener");
 }
 function showLogin(note) {
@@ -795,10 +799,14 @@ function showLogin(note) {
     try { s = await api("POST", "/api/auth/start", { device: navigator.userAgent.slice(0, 110) }); }
     catch (e) { status.textContent = e.message; btn.disabled = false; return; }
     openExternal(s.bot_link);
-    status.textContent = "Botda «START» ni bosing, so'ng shu yerga qayting. Kutilmoqda…";
+    // Avtomatik ochilmasa — foydalanuvchi o'zi bosadigan havola
+    clear(status).append(
+      "Telegram'da botni oching va «START» ni bosing, so'ng shu yerga qayting. Kutilmoqda…",
+      el("div", { class: "actions" }, el("a", { class: "btn ghost", href: s.bot_link, target: "_blank", rel: "noopener",
+        style: "display:block;text-align:center;text-decoration:none" }, "Telegram ochilmadimi? Shu yerni bosing")));
     const deadline = Date.now() + s.expires_in * 1000;
     const tick = async () => {
-      if (Date.now() > deadline) { status.textContent = "Vaqt tugadi. Qaytadan bosing."; btn.disabled = false; return; }
+      if (Date.now() > deadline) { clear(status).append("Vaqt tugadi. Qaytadan bosing."); btn.disabled = false; return; }
       try {
         const r = await api("POST", "/api/auth/poll", { code: s.code, poll_secret: s.poll_secret });
         if (r.status === "approved") { setToken(r.token); haptic("success"); boot(); return; }
