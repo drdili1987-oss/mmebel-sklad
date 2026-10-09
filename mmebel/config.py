@@ -40,6 +40,7 @@ class Settings:
     cron_secret: str
     port: int
     owner_ids: list[int] = field(default_factory=list)
+    role_assign: dict[str, str] = field(default_factory=dict)
     keep_awake: bool = True
     use_polling: bool = False
 
@@ -74,6 +75,16 @@ def webhook_secret(raw: str, token: str) -> str:
     return _derive_secret(raw or token, "webhook")
 
 
+def _role_assign(raw: str) -> dict[str, str]:
+    """ROLE_ASSIGN="123:omborchi,456:xodim" -> {"123": "omborchi", "456": "xodim"}"""
+    out: dict[str, str] = {}
+    for part in raw.replace(";", ",").split(","):
+        uid, _, role = part.strip().partition(":")
+        if uid.strip().isdigit() and role.strip():
+            out[uid.strip()] = role.strip().lower()
+    return out
+
+
 def load_settings() -> Settings:
     token = _env("API_TOKEN")
     if not token:
@@ -94,6 +105,7 @@ def load_settings() -> Settings:
         cron_secret=_env("CRON_SECRET"),
         port=int(_env("PORT", "8080") or 8080),
         owner_ids=_int_list(_env("OWNER_IDS")),
+        role_assign=_role_assign(_env("ROLE_ASSIGN")),
         keep_awake=_env("KEEP_AWAKE", "1") not in ("0", "false", "no"),
         use_polling=_env("USE_POLLING", "0") in ("1", "true", "yes"),
     )

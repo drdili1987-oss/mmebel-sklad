@@ -134,6 +134,10 @@ async def main() -> None:
     store = init_firebase(settings)
     services, bot, dp, scheduler, events = assemble(settings, store)
     await services.catalog.run_migrations()
+    if settings.role_assign:
+        done = await services.users.apply_role_assignments(settings.role_assign)
+        if done:
+            log.info("ROLE_ASSIGN qo'llandi: %s", ", ".join(done))
     await configure_bot(bot, settings)
 
     app = build_app(settings, services, bot, dp, scheduler, events)

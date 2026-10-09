@@ -216,3 +216,11 @@ async def test_price_migration(svc):
     await svc.store.set("mebellar/X1", {"id": "X1", "nomi": "X 1", "narxi": "350 so'm", "soni": 1})
     await svc.catalog.run_migrations()
     assert (await svc.inventory.get("X1"))["narxi"] == 350
+
+
+async def test_role_assign_applies_once(svc):
+    assert await svc.users.apply_role_assignments({"555": "omborchi", "556": "diller", "557": "boss"}) == ["555:omborchi"]
+    assert await svc.users.role(555) == "omborchi"
+    await svc.users.set_role(ADMIN, 555, "xodim")              # keyin paneldan o'zgartirildi
+    assert await svc.users.apply_role_assignments({"555": "omborchi"}) == []
+    assert await svc.users.role(555) == "xodim"                # qayta ustidan yozilmaydi

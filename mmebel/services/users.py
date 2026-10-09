@@ -124,6 +124,28 @@ class UserService:
         })
         self.invalidate()
 
+    async def apply_role_assignments(self, assignments: dict[str, str]) -> list[str]:
+        """ROLE_ASSIGN sozlamasidagi rollarni bir marta yozadi.
+
+        Har bir (ID, rol) jufti faqat bir marta qo'llanadi — keyin paneldan o'zgartirilsa, qayta ustidan yozilmaydi.
+        """
+        applied = await self.store.get("meta/role_assign") or {}
+        done = []
+        for uid, role in assignments.items():
+            if role not in ALL_ROLES or role == ROLE_DILLER:  # diller uchun kompaniya nomi kerak — panel orqali
+                continue
+            if applied.get(uid) == role:
+                continue
+            await self.store.update(f"users/{uid}", {"role": role, "role_updated_at": now_str(),
+                                                     "role_updated_by": "ROLE_ASSIGN"})
+            await self.store.set(f"meta/role_assign/{uid}", role)
+            await self.store.push("audit_log", {"action": "set_role", "user_id": uid, "role": role,
+                                                "by": "ROLE_ASSIGN", "at": now_str()})
+            done.append(f"{uid}:{role}")
+        if done:
+            self.invalidate()
+        return done
+
     async def remove(self, actor_id, user_id) -> None:
         uid = str(user_id)
         if uid == str(actor_id):
