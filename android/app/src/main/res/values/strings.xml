@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">MMebel</string>
+    <string name="app_name">Munosib Mebel</string>
     <string name="offline_title">Ulanib bo\'lmadi</string>
     <string name="offline_text">Internet aloqasini tekshiring. Server uyg\'onayotgan bo\'lsa, bir oz kuting.</string>
     <string name="retry">Qayta urinish</string>

@@ -20,7 +20,7 @@ from ..utils import clean_text, iter_records
 from .errors import Conflict, NotFound, run_tx
 
 LOGIN_TTL = 5 * 60
-SESSION_TTL = 60 * 24 * 3600
+SESSION_TTL = 60 * 24 * 3600  # oxirgi foydalanishdan boshlab (faol xodim chiqarib yuborilmaydi)
 TOUCH_EVERY = 3600
 _CACHE_TTL = 60.0
 
@@ -102,7 +102,7 @@ class SessionService:
                 self._cache.pop(key, None)
                 return None
             self._cache[key] = (now, rec)
-        if now - float(rec.get("created", 0)) > SESSION_TTL:
+        if now - float(rec.get("last_used") or rec.get("created", 0)) > SESSION_TTL:
             await self.revoke_token(token)
             return None
         if now - float(rec.get("last_used", 0)) > TOUCH_EVERY:

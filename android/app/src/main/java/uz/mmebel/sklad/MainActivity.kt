@@ -21,6 +21,8 @@ import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 /**
  * MMebel paneli uchun Android qobiq.
@@ -42,6 +44,13 @@ class MainActivity : ComponentActivity() {
         progress = findViewById(R.id.progress)
         offline = findViewById(R.id.offline)
         findViewById<Button>(R.id.retry).setOnClickListener { reload() }
+
+        // Android 15 (edge-to-edge): kontent status/navigatsiya paneli ostiga kirib ketmasin
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.root)) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            WindowInsetsCompat.CONSUMED
+        }
 
         with(web.settings) {
             javaScriptEnabled = true

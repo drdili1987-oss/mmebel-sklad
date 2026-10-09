@@ -214,3 +214,24 @@ async def test_logout(client):
     bearer = {"Authorization": f"Bearer {token}"}
     assert (await client.post("/api/logout", headers=bearer)).status == 200
     assert (await client.get("/api/me", headers=bearer)).status == 401
+
+
+async def test_session_expiry_is_sliding(client, monkeypatch):
+    import mmebel.services.sessions as sess
+    services = client.server.app["services"]
+    s = await services.sessions.start()
+    await services.sessions.approve(s["code"], XODIM)
+    token = (await services.sessions.poll(s["code"], s["poll_secret"]))["token"]
+    t0 = time.time()
+    # 50 kundan keyin foydalanildi -> muddat yangilanadi
+    monkeypatch.setattr(sess.time, "time", lambda: t0 + 50 * 86400)
+    services.sessions._cache.clear()
+    assert await services.sessions.resolve(token) == str(XODIM)
+    # yana 50 kun (jami 100 kun, lekin oxirgi foydalanishdan 50) -> hali amal qiladi
+    monkeypatch.setattr(sess.time, "time", lambda: t0 + 100 * 86400)
+    services.sessions._cache.clear()
+    assert await services.sessions.resolve(token) == str(XODIM)
+    # 61 kun foydalanilmadi -> tugaydi
+    monkeypatch.setattr(sess.time, "time", lambda: t0 + 161 * 86400)
+    services.sessions._cache.clear()
+    assert await services.sessions.resolve(token) is None

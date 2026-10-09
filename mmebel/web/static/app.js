@@ -785,7 +785,7 @@ function showLogin(note) {
   $("tabs").classList.add("hidden");
   document.querySelectorAll(".fab").forEach((f) => f.remove());
   clear($("toolbar"));
-  $("title").textContent = "MMebel";
+  $("title").textContent = "Munosib Mebel";
   $("who").textContent = "Sklad va buyurtmalar";
   const status = el("p", { class: "muted small", role: "status" }, note || "");
   const btn = el("button", { class: "btn", type: "button" }, "Telegram orqali kirish");
@@ -818,6 +818,7 @@ function showLogin(note) {
     loginTimer = setTimeout(tick, 2000);
   });
   clear($("view")).appendChild(el("div", { class: "gate" },
+    el("img", { class: "gate-logo", src: "/panel/static/logo-full.png", alt: "Munosib Mebel" }),
     el("h1", {}, "Hisobingizga kiring"),
     el("p", { class: "muted" }, "Kirish Telegram bot orqali tasdiqlanadi — parol kerak emas. Ilova admin, omborchi va xodimlar uchun."),
     el("div", { class: "actions" }, btn), status));
@@ -838,7 +839,11 @@ function showError(msg) {
 }
 
 async function boot() {
-  if (IN_TELEGRAM) { tg.ready(); tg.expand(); }
+  if (IN_TELEGRAM) {
+    tg.ready(); tg.expand();
+    document.documentElement.classList.add(tg.colorScheme === "dark" ? "tg-dark" : "tg-light");
+    try { if (tg.isVersionAtLeast("6.1")) { tg.setHeaderColor("#182028"); tg.setBackgroundColor(tg.colorScheme === "dark" ? "#11161b" : "#eef3ea"); } } catch (_) { /* eski versiya */ }
+  }
   else document.documentElement.classList.add("standalone");
   if (!IN_TELEGRAM && !getToken()) { showLogin(); return; }
   clear($("view")).appendChild(loading());
