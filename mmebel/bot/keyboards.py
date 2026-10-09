@@ -65,7 +65,7 @@ def main_menu(role: str) -> ReplyKeyboardMarkup:
     elif role == ROLE_XODIM:
         rows = [[B_ACTIVE], [B_PANEL]]
     elif role == ROLE_DILLER:
-        rows = [[B_STOCK_PUBLIC, B_D_ORDER], [B_D_HISTORY, B_D_CANCEL], [B_D_STATUS, B_D_PAYMENT], [B_D_PHOTOS]]
+        rows = [[B_STOCK_PUBLIC, B_D_ORDER], [B_D_HISTORY, B_D_CANCEL], [B_D_STATUS, B_D_PAYMENT], [B_D_PHOTOS, B_PANEL]]
     else:
         rows = [[B_STOCK_PUBLIC]]
     return _kb(rows)

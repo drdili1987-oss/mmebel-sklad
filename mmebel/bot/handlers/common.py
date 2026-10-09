@@ -7,7 +7,7 @@ from aiogram.filters import Command, CommandObject, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, MenuButtonDefault, MenuButtonWebApp, Message, WebAppInfo
 
-from ...constants import PANEL_ROLES, ROLE_ADMIN, ROLE_LABELS
+from ...constants import APP_ROLES, ROLE_ADMIN, ROLE_LABELS
 from ...utils import chunk_text, fmt_money, h, to_int
 from .. import keyboards as kb
 
@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 async def sync_menu_button(bot, chat_id: int, role: str, settings) -> None:
     """Xodimlarda chap pastki "Panel" tugmasi bo'ladi (WebApp initData shu orqali keladi)."""
     try:
-        if role in PANEL_ROLES and settings.panel_url:
+        if role in APP_ROLES and settings.panel_url:
             await bot.set_chat_menu_button(chat_id=chat_id, menu_button=MenuButtonWebApp(
                 text="Panel", web_app=WebAppInfo(url=settings.panel_url)))
         else:
@@ -33,7 +33,7 @@ async def app_login(message: Message, command: CommandObject, state: FSMContext,
     from ...services import ServiceError
     await state.clear()
     code = (command.args or "")[6:]
-    allowed = role in PANEL_ROLES
+    allowed = role in APP_ROLES
     log.info("app login: user=%s role=%s code=%s… allowed=%s", message.from_user.id, role, code[:6], allowed)
     try:
         await services.sessions.approve(code, message.from_user.id, approve=allowed)
@@ -44,7 +44,7 @@ async def app_login(message: Message, command: CommandObject, state: FSMContext,
         await message.answer(f"✅ <b>Ilovaga kirish tasdiqlandi.</b>\nRol: {ROLE_LABELS.get(role, role)}\n\n"
                              "Ilovaga qayting — bir necha soniyada ochiladi.", reply_markup=kb.main_menu(role))
     else:
-        await message.answer("⛔ Ilova faqat admin, omborchi va xodimlar uchun.\n"
+        await message.answer("⛔ Ilova faqat zavod xodimlari va dillerlar uchun.\n"
                              f"Sizning ID: <code>{message.from_user.id}</code> — rol olish uchun adminga yuboring.",
                              reply_markup=kb.main_menu(role))
 
@@ -73,8 +73,8 @@ async def go_home(message: Message, state: FSMContext, role: str):
 
 @router.message(F.text == kb.B_PANEL)
 async def open_panel(message: Message, role: str, settings):
-    if role not in PANEL_ROLES:
-        await message.answer("⛔ Panel faqat xodimlar uchun.", reply_markup=kb.main_menu(role))
+    if role not in APP_ROLES:
+        await message.answer("⛔ Panel faqat zavod xodimlari va dillerlar uchun.", reply_markup=kb.main_menu(role))
         return
     if not settings.panel_url:
         await message.answer("Panel manzili sozlanmagan (PUBLIC_URL).")

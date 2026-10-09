@@ -11,7 +11,8 @@ from aiohttp import web
 from ..constants import (
     ACTIVE_STATUSES,
     DELIVERED_STATUSES,
-    PANEL_ROLES,
+    APP_ROLES,
+    ROLE_DILLER,
     ROLE_ADMIN,
     ROLE_LABELS,
     ROLE_OMBORCHI,
@@ -29,6 +30,7 @@ log = logging.getLogger(__name__)
 routes = web.RouteTableDef()
 
 PRICE_FIELDS = ("price", "total_price")
+DILLER_COMMON_PATHS = frozenset({"/api/me", "/api/logout", "/api/push/register", "/api/push/test"})
 RATE_LIMIT = 120  # so'rov / daqiqa / foydalanuvchi
 
 
@@ -82,9 +84,14 @@ async def api_middleware(request: web.Request, handler):
     if not request.app["limiter"].allow(user.id):
         return _json_error(429, "Juda ko'p so'rov. Bir daqiqadan so'ng urinib ko'ring.")
     role = await services.users.role(user.id)
-    if role not in PANEL_ROLES:
+    if role not in APP_ROLES:
         log.info("API 403 user=%s role=%s %s", user.id, role, request.path)
-        return _json_error(403, "Panel faqat admin, omborchi va xodimlar uchun.")
+        return _json_error(403, "Ilova faqat zavod xodimlari va dillerlar uchun. Adminga murojaat qiling.")
+    # Diller faqat o'z bo'limiga (/api/d/*) va umumiy endpointlarga kira oladi
+    if role == ROLE_DILLER and not (request.path.startswith("/api/d/") or request.path in DILLER_COMMON_PATHS):
+        return _json_error(403, "Bu bo'lim dillerlar uchun emas.")
+    if role != ROLE_DILLER and request.path.startswith("/api/d/"):
+        return _json_error(403, "Bu bo'lim faqat dillerlar uchun.")
     request["user"] = user
     request["role"] = role
     return await _guarded(request, handler)
@@ -218,6 +225,9 @@ async def me(request):
         meta.update(clients=s["clients"], months=last_months(12), roles=ROLE_LABELS)
     elif role == ROLE_OMBORCHI:
         meta.update(months=last_months(12))
+    elif role == ROLE_DILLER:
+        meta = {"models": s["models"], "price_channel": s["price_channel"],
+                "client_name": await S(request).users.client_name_for(u.id) or ""}
     return web.json_response({"id": u.id, "name": u.full_name, "username": u.username,
                               "role": role, "role_label": ROLE_LABELS[role], "meta": meta})
 
@@ -517,7 +527,7 @@ async def user_set(request):
     d = await body(request)
     role = str(d.get("role", ""))
     await S(request).users.set_role(actor(request), str(d.get("id", "")), role, str(d.get("client_name", "")))
-    if role not in PANEL_ROLES:
+    if role not in APP_ROLES:
         await S(request).sessions.revoke_user(str(d.get("id", "")))
         await S(request).push.unregister_user(str(d.get("id", "")))
     return web.json_response({"ok": True})

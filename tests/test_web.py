@@ -82,9 +82,8 @@ async def test_api_requires_auth(client):
 
 
 async def test_non_staff_forbidden(client):
-    for uid in (DILLER, STRANGER):
-        r = await client.get("/api/me", headers=hdr(uid))
-        assert r.status == 403
+    r = await client.get("/api/me", headers=hdr(STRANGER))   # roli yo'q foydalanuvchi
+    assert r.status == 403
 
 
 async def test_role_permissions(client):
@@ -201,7 +200,7 @@ async def test_app_login_flow(client):
 
 async def test_app_login_rejected_for_non_staff(client):
     d = await (await client.post("/api/auth/start", json={})).json()
-    await client.server.app["services"].sessions.approve(d["code"], DILLER, approve=False)
+    await client.server.app["services"].sessions.approve(d["code"], STRANGER, approve=False)
     res = await (await client.post("/api/auth/poll", json={"code": d["code"], "poll_secret": d["poll_secret"]})).json()
     assert res["status"] == "rejected"
 
@@ -289,3 +288,50 @@ def test_split_message():
     from mmebel.push import split_message
     t, b = split_message("🔔 Yangi buyurtma!\n\n🆔 X-1\n🧑 Diller: Umid")
     assert t == "🔔 Yangi buyurtma!" and b == "🆔 X-1 · 🧑 Diller: Umid"
+
+
+# ---------- diller paneli ----------
+async def test_diller_api_isolation_and_flow(client):
+    services = client.server.app["services"]
+    due = (now() + timedelta(days=3)).strftime("%Y-%m-%d")
+    # boshqa dillerning buyurtmasi
+    await services.orders.create(ADMIN, client_name="Ideal Max", product="BF07", amount=1, due_date=due)
+    # diller xodimlar bo'limiga kira olmaydi, xodim diller bo'limiga kira olmaydi
+    assert (await client.get("/api/orders", headers=hdr(DILLER))).status == 403
+    assert (await client.get("/api/products", headers=hdr(DILLER))).status == 403
+    assert (await client.get("/api/d/orders", headers=hdr(OMBOR))).status == 403
+    me = await (await client.get("/api/me", headers=hdr(DILLER))).json()
+    assert me["role"] == "diller" and me["meta"]["client_name"] == "Umid"
+
+    cat = await (await client.get("/api/d/catalog", headers=hdr(DILLER))).json()
+    assert any(i["id"] == "BF07" and i["qty"] == 4 for i in cat["items"])
+
+    r = await client.post("/api/d/orders", headers=hdr(DILLER), json={"product": "BF 07", "amount": 2, "due_date": due})
+    assert r.status == 201
+    oid = (await r.json())["id"]
+    assert any(cid == OMBOR for cid, _ in client.sent)  # omborchiga xabar
+
+    items = (await (await client.get("/api/d/orders", headers=hdr(DILLER))).json())["items"]
+    assert [i["id"] for i in items] == [oid]           # Ideal Max buyurtmasi ko'rinmaydi
+    assert items[0]["can_cancel"] is True
+
+    # boshqa dillerning buyurtmasini bekor qila olmaydi
+    other = next(k for k, v in (await services.orders.all()).items() if v["client_name"] == "Ideal Max")
+    assert (await client.post(f"/api/d/orders/{other}/cancel", headers=hdr(DILLER))).status == 400
+    assert (await client.post(f"/api/d/orders/{oid}/cancel", headers=hdr(DILLER))).status == 200
+
+    r = await client.post("/api/d/payments", headers=hdr(DILLER), json={"amount": 150})
+    assert r.status == 201
+    acc = await (await client.get("/api/d/account", headers=hdr(DILLER))).json()
+    assert acc["client"] == "Umid" and acc["pending_payments"][0]["amount"] == 150
+    s = await (await client.get("/api/d/summary", headers=hdr(DILLER))).json()
+    assert s["active"] == 0
+
+
+async def test_diller_without_company(client):
+    await client.post("/api/users", headers=hdr(ADMIN), json={"id": "888", "role": "diller", "client_name": "Comfort"})
+    services = client.server.app["services"]
+    await services.store.update("users/888", {"client_name": None})
+    services.users.invalidate()
+    r = await client.get("/api/d/orders", headers=hdr(888))
+    assert r.status == 400 and "biriktirilmagan" in (await r.json())["error"]

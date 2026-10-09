@@ -202,6 +202,9 @@ async def test_bot_approves_app_login(h):
     assert (await h.services.sessions.poll(s["code"], s["poll_secret"]))["status"] == "approved"
     s2 = await h.services.sessions.start()
     r = await h.text(DILLER, f"/start login_{s2['code']}")
-    assert "faqat admin" in r[0].text
+    assert "tasdiqlandi" in r[0].text                       # diller ham kira oladi (o'z bo'limiga)
+    s3 = await h.services.sessions.start()
+    r = await h.text(999, f"/start login_{s3['code']}")
+    assert "faqat zavod xodimlari va dillerlar" in r[0].text
     r = await h.text(OMBOR, "/start login_notexist")
     assert "❌" in r[0].text

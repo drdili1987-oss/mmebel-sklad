@@ -73,6 +73,15 @@ class Events:
             reply_markup=kb.inline([[("✅ Tasdiqlash", f"diller_confirm:{oid}"), ("❌ Rad etish", f"diller_reject:{oid}")]]),
         )
 
+    async def payment_requested(self, pay: dict) -> None:
+        """Diller to'lov bildirdi — adminlarga tasdiqlash tugmalari bilan."""
+        await self.n.to_admins(
+            f"💵 <b>Diller to'lov bildirdi!</b>\n\n🧑 {h(pay['diller_name'])} ({h(pay['client_name'])})\n"
+            f"💰 Summa: <b>{fmt_money(pay['amount'])}</b>\n📅 {pay['timestamp']}\n\nTasdiqlaysizmi?",
+            reply_markup=kb.inline([[("✅ Tasdiqlash", f"pay_confirm:{pay['pay_id']}"),
+                                     ("❌ Rad etish", f"pay_reject:{pay['pay_id']}")]]),
+        )
+
     async def payment_resolved(self, pay: dict, approve: bool, debt, actor_id: int) -> None:
         if approve:
             msg = f"✅ <b>To'lovingiz tasdiqlandi!</b>\n💵 {fmt_money(pay['amount'])}\n💳 Yangi qarz: <b>{fmt_money(debt)}</b>"

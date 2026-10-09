@@ -102,6 +102,8 @@ def build_app(settings: Settings, services: Services, bot: Bot, dp: Dispatcher, 
     app.router.add_get("/panel/dashboard", dashboard_page)
     app.router.add_static("/panel/static/", STATIC_DIR, show_index=False, follow_symlinks=False)
     app.add_routes(api_routes)
+    from .web.diller_api import routes as diller_routes
+    app.add_routes(diller_routes)
 
     if not settings.use_polling:
         SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=settings.webhook_secret).register(
