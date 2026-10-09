@@ -1,13 +1,17 @@
 package uz.mmebel.sklad
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 
@@ -49,7 +53,12 @@ object Push {
     fun token(ctx: Context): String? =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("token", null)?.takeIf { TOKEN_RE.matches(it) }
 
+    @SuppressLint("MissingPermission") // ruxsat quyida aniq tekshiriladi
     fun show(ctx: Context, title: String, body: String) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return
+        }
         ensureChannel(ctx)
         val open = PendingIntent.getActivity(
             ctx, 0,

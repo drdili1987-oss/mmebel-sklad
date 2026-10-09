@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "167577429069",
+    "firebase_url": "https://mmebel-bot-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "mmebel-bot",
+    "storage_bucket": "mmebel-bot.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:167577429069:android:48bf0ef7b1029b4e1ae804",
+        "android_client_info": {
+          "package_name": "uz.mmebel.sklad"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBC1cJfVHmPfREGSjcx4ylLMkFJimXE8sM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
