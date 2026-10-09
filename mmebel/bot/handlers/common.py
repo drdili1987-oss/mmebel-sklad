@@ -34,6 +34,7 @@ async def app_login(message: Message, command: CommandObject, state: FSMContext,
     await state.clear()
     code = (command.args or "")[6:]
     allowed = role in PANEL_ROLES
+    log.info("app login: user=%s role=%s code=%s… allowed=%s", message.from_user.id, role, code[:6], allowed)
     try:
         await services.sessions.approve(code, message.from_user.id, approve=allowed)
     except ServiceError as e:

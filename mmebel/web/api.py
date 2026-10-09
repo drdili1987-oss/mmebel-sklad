@@ -68,6 +68,7 @@ async def api_middleware(request: web.Request, handler):
         token = header[7:].strip()
         uid = await services.sessions.resolve(token)
         if not uid:
+            log.info("API 401 (sessiya yo'q) %s", request.path)
             return _json_error(401, "Sessiya tugagan. Ilovaga qaytadan kiring.")
         u = await services.users.get(uid) or {}
         user = TgUser(id=int(uid), first_name=u.get("name", ""), last_name="", username=u.get("username", ""))
@@ -82,6 +83,7 @@ async def api_middleware(request: web.Request, handler):
         return _json_error(429, "Juda ko'p so'rov. Bir daqiqadan so'ng urinib ko'ring.")
     role = await services.users.role(user.id)
     if role not in PANEL_ROLES:
+        log.info("API 403 user=%s role=%s %s", user.id, role, request.path)
         return _json_error(403, "Panel faqat admin, omborchi va xodimlar uchun.")
     request["user"] = user
     request["role"] = role
@@ -94,6 +96,7 @@ async def _guarded(request: web.Request, handler):
     except web.HTTPException:
         raise
     except NotFound as e:
+        log.info("API 404 %s: %s", request.path, e)
         return _json_error(404, str(e))
     except Conflict as e:
         return _json_error(409, str(e))
@@ -159,6 +162,7 @@ async def auth_start(request):
     d = await body(request)
     res = await S(request).sessions.start(device=str(d.get("device", ""))[:120])
     username = await request.app["bot_username"]()
+    log.info("auth/start: code=%s… bot=%s", res["code"][:6], username)
     res["bot_link"] = f"https://t.me/{username}?start=login_{res['code']}"
     return web.json_response(res)
 
@@ -166,7 +170,10 @@ async def auth_start(request):
 @routes.post("/api/auth/poll")
 async def auth_poll(request):
     d = await body(request)
-    return web.json_response(await S(request).sessions.poll(str(d.get("code", "")), str(d.get("poll_secret", ""))))
+    res = await S(request).sessions.poll(str(d.get("code", "")), str(d.get("poll_secret", "")))
+    if res["status"] != "pending":
+        log.info("auth/poll: code=%s… status=%s user=%s", str(d.get("code", ""))[:6], res["status"], res.get("user_id", "-"))
+    return web.json_response(res)
 
 
 @routes.post("/api/logout")
