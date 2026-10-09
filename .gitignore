@@ -1,5 +1,13 @@
 .venv/
+venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+.ruff_cache/
 serviceAccountKey.json
+*.json.key
 .env
+backup_*.json
+.idea/
+.vscode/
+.DS_Store
