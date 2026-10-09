@@ -1,3 +1,4 @@
+// MMebel Android ilovasi — panel uchun qobiq. Yig'ish: GitHub Actions (android.yml).
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
