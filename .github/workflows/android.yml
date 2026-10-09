@@ -40,7 +40,7 @@ jobs:
           set -o pipefail
           if ! gradle --no-daemon --console=plain assembleRelease 2>&1 | tee "$RUNNER_TEMP/build.log"; then
             # Xatoni annotatsiyaga chiqaramiz (loglarni ochmasdan ko'rish uchun)
-            MSG=$(grep -E "^e: |error:|What went wrong|Could not|> |FAILURE|Exception" "$RUNNER_TEMP/build.log" | head -40)
+            MSG=$( { grep -E "^e: |^w: .*error|error:|ERROR" "$RUNNER_TEMP/build.log"; grep -A 12 "What went wrong" "$RUNNER_TEMP/build.log"; } | grep -v "^> Task" | head -40)
             MSG="${MSG//'%'/'%25'}"; MSG="${MSG//$'\n'/'%0A'}"; MSG="${MSG//$'\r'/'%0D'}"
             echo "::error title=Gradle xatosi::$MSG"
             exit 1
