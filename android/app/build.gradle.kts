@@ -66,6 +66,7 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-ktx:1.9.3")
+    implementation("androidx.fragment:fragment-ktx:1.8.5") // Firebase eski versiyani olib keladi — ActivityResult uchun >= 1.3
     implementation("androidx.webkit:webkit:1.12.1")
     implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
     implementation("com.google.firebase:firebase-messaging")
