@@ -5,7 +5,6 @@
 
 const tg = window.Telegram && window.Telegram.WebApp;
 const IN_TELEGRAM = !!(tg && tg.initData);
-const NATIVE = window.MMebelApp || null; // Android ilova ko'prigi
 const TOKEN_KEY = "mmebel_token";
 function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (_) { return ""; } }
 function setToken(t) { try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch (_) { /* yo'q */ } }
@@ -773,13 +772,11 @@ async function settingsSection(holder) {
 /* ================= ishga tushirish ================= */
 /* ---------- ilova rejimi: Telegram orqali kirish ---------- */
 let loginTimer = null;
-function openExternal(url) {
-  try {
-    if (NATIVE && NATIVE.openExternal) { NATIVE.openExternal(url); return; }
-  } catch (_) { /* ko'prik ishlamasa — oddiy havola orqali */ }
-  // Ilova ichida (WebView) bu navigatsiyani Android ushlab, Telegram'da ochadi; brauzerda yangi oyna
-  if (/MMebelApp/.test(navigator.userAgent)) window.location.href = url;
-  else window.open(url, "_blank", "noopener");
+const IN_APP = /MMebelApp/.test(navigator.userAgent);
+function openExternal(s) {
+  // Android ilova: tg:// havolasini WebView ushlab, to'g'ridan-to'g'ri Telegram ilovasida ochadi
+  if (IN_APP) { window.location.href = s.tg_link || s.bot_link; return; }
+  window.open(s.bot_link, "_blank", "noopener");
 }
 function showLogin(note) {
   clearTimeout(loginTimer);
@@ -798,12 +795,15 @@ function showLogin(note) {
     let s;
     try { s = await api("POST", "/api/auth/start", { device: navigator.userAgent.slice(0, 110) }); }
     catch (e) { status.textContent = e.message; btn.disabled = false; return; }
-    openExternal(s.bot_link);
+    openExternal(s);
     // Avtomatik ochilmasa — foydalanuvchi o'zi bosadigan havola
     clear(status).append(
       "Telegram'da botni oching va «START» ni bosing, so'ng shu yerga qayting. Kutilmoqda…",
-      el("div", { class: "actions" }, el("a", { class: "btn ghost", href: s.bot_link, target: "_blank", rel: "noopener",
-        style: "display:block;text-align:center;text-decoration:none" }, "Telegram ochilmadimi? Shu yerni bosing")));
+      el("div", { class: "actions" },
+        el("a", { class: "btn ghost", href: IN_APP ? (s.tg_link || s.bot_link) : s.bot_link,
+          style: "display:block;text-align:center;text-decoration:none" }, "Telegram ochilmadimi? Shu yerni bosing")),
+      el("p", { class: "muted small" }, "Yoki Telegram'da botga o'zingiz shu matnni yuboring: ",
+        el("b", { style: "user-select:all" }, `/start login_${s.code}`)));
     const deadline = Date.now() + s.expires_in * 1000;
     const tick = async () => {
       if (Date.now() > deadline) { clear(status).append("Vaqt tugadi. Qaytadan bosing."); btn.disabled = false; return; }

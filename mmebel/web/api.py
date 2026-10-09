@@ -162,8 +162,10 @@ async def auth_start(request):
     d = await body(request)
     res = await S(request).sessions.start(device=str(d.get("device", ""))[:120])
     username = await request.app["bot_username"]()
-    log.info("auth/start: code=%s… bot=%s", res["code"][:6], username)
     res["bot_link"] = f"https://t.me/{username}?start=login_{res['code']}"
+    res["tg_link"] = f"tg://resolve?domain={username}&start=login_{res['code']}"
+    log.info("auth/start: code=%s… bot=%s app=%s", res["code"][:6], username,
+             "MMebelApp" in request.headers.get("User-Agent", ""))
     return web.json_response(res)
 
 
