@@ -234,3 +234,27 @@ async def test_role_assign_tag_forces_reapply(svc):
     assert await svc.users.role(555) == "admin"
     await svc.users.set_role(ADMIN, 555, "xodim")
     assert await svc.users.apply_role_assignments({"555": "admin@2"}) == []   # belgi o'sha — yana yozilmaydi
+
+
+async def test_admin_custom_product_order(svc):
+    due = (now() + timedelta(days=3)).strftime("%d.%m.%Y")
+    name = "Shkaf 4 eshik (oq, 2.4 m) / oynali"
+    try:
+        await svc.orders.create(ADMIN, client_name="Umid", product=name, amount=1, due_date=due)
+        raise AssertionError("narxsiz o'tib ketdi")
+    except ServiceError as e:
+        assert "narxini" in str(e)
+    o = await svc.orders.create(ADMIN, client_name="Umid", product=name, amount=2, due_date=due, custom_price=450)
+    assert o["product_id"] == name and o["total_price"] == 900 and o["deducted_qty"] == 0
+    assert o["order_id"].split("-")[0].isalnum() and len(o["order_id"]) <= 20
+    got = await svc.orders.get(o["order_id"])
+    assert got["product_id"] == name
+    # bekor qilish ombor bilan ishlaydi (yo'q mebel — hech narsa qaytmaydi, xato ham yo'q)
+    await svc.orders.cancel(ADMIN, o["order_id"])
+    # diller shablondan tashqari mebel bera olmaydi
+    try:
+        await svc.orders.create(ADMIN, client_name="Umid", product=name, amount=1, due_date=due,
+                                source="diller", custom_price=1)
+        raise AssertionError
+    except ServiceError:
+        pass

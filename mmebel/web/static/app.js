@@ -396,7 +396,15 @@ function newOrderSheet() {
       m.clients.map((c) => el("option", { value: c }, c)), el("option", { value: "__new" }, "+ Yangi diller"));
     const newClient = el("input", { type: "text", maxlength: "60", placeholder: "Yangi diller nomi", class: "hidden" });
     clientSel.addEventListener("change", () => newClient.classList.toggle("hidden", clientSel.value !== "__new"));
-    const product = el("input", { type: "text", list: "models-dl", maxlength: "40", placeholder: "Masalan: BF 07" });
+    const product = el("input", { type: "text", list: "models-dl", maxlength: "60", placeholder: "Ro'yxatdan tanlang yoki o'zingiz yozing" });
+    const productHint = el("p", { class: "muted small", style: "margin:4px 0 0" }, "");
+    const known = new Set(m.models.map((x) => x.replace(/[\s-]/g, "").toUpperCase()));
+    product.addEventListener("input", () => {
+      const v = product.value.trim();
+      const custom = v && !known.has(v.replace(/[\s-]/g, "").toUpperCase());
+      productHint.textContent = custom ? "Shablonda yo'q mebel — narxini albatta kiriting." : "";
+      price.placeholder = custom ? "Narxi ($) — majburiy" : "Bo'sh qoldirsangiz — ombordagi narx";
+    });
     const dl = el("datalist", { id: "models-dl" }, m.models.map((x) => el("option", { value: x })));
     const amount = el("input", { type: "number", min: "1", max: "10000", value: "1", inputmode: "numeric" });
     const price = el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", placeholder: "Bo'sh qoldirsangiz — ombordagi narx" });
@@ -415,7 +423,7 @@ function newOrderSheet() {
       if (r) { close(); S.ordersScope = "active"; go("orders"); }
     });
     return el("div", {}, el("h2", {}, "Yangi buyurtma"),
-      field("Diller", el("div", {}, clientSel, newClient)), field("Mebel", el("div", {}, product, dl)),
+      field("Diller", el("div", {}, clientSel, newClient)), field("Mebel", el("div", {}, product, dl, productHint)),
       el("div", { class: "actions two", style: "margin-top:0" }, field("Soni", amount), field("Muddat", due)),
       field("1 dona narxi ($)", price), field("Izoh", comment), el("div", { class: "actions" }, btn));
   });

@@ -229,3 +229,18 @@ async def test_session_cleanup(h):
     await h.store.set("sessions/new", {"user_id": "1", "created": int(_t.time()), "last_used": int(_t.time())})
     assert await h.services.sessions.cleanup() == (1, 1)
     assert set((await h.store.get("sessions")).keys()) == {"new"}
+
+
+async def test_admin_custom_product_via_bot(h):
+    await h.text(ADMIN, "📝 Yangi buyurtma")
+    await h.text(ADMIN, "Umid")
+    await h.text(ADMIN, "Boshqa (Qo'lda kiritish)")
+    r = await h.text(ADMIN, "Kuxnya 2.5m (yong'oq rang) <maxsus>")
+    assert "narxini" in r[0].text
+    await h.text(ADMIN, "780")
+    await h.text(ADMIN, "1")
+    await h.text(ADMIN, due())
+    r = await h.text(ADMIN, "⏩ O'tkazib yuborish")
+    assert "Buyurtma qabul qilindi" in r[0].text and "&lt;maxsus&gt;" in r[0].text
+    o = next(iter((await h.services.orders.all()).values()))
+    assert o["product_id"] == "Kuxnya 2.5m (yong'oq rang) <maxsus>" and o["total_price"] == 780

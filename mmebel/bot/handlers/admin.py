@@ -109,9 +109,10 @@ async def no_custom_product(message: Message, state: FSMContext, services):
 
 
 async def _set_product(message: Message, state: FSMContext, services, name: str, force_price: bool = False):
+    name = (name or "").strip()[:60]
     pid = product_key(name)
-    if not pid or not pid.isalnum() or len(pid) > 40:
-        await message.answer("❌ Mebel nomi noto'g'ri. Qaytadan kiriting.")
+    if not pid or not any(c.isalnum() for c in pid):
+        await message.answer("❌ Mebel nomini kiriting (masalan: Shkaf 4 eshik, oq rang).")
         return
     p = await services.inventory.get(pid)
     price = services.inventory.unit_price(p)

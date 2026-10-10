@@ -189,3 +189,5 @@ main { padding: 4px 12px 24px; max-width: 760px; margin: 0 auto; }
   background: var(--card, rgba(61,139,42,.08)); border: 1px solid var(--line); font-size: 14px; }
 .hint ol { margin: 8px 0 6px; padding-left: 20px; }
 .hint li { margin: 4px 0; }
+/* Shablondan tashqari uzun mebel nomlari ekrandan chiqib ketmasin */
+.order .code, .plan .code, .sheet .code-big { overflow-wrap: anywhere; }

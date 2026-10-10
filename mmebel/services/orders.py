@@ -88,8 +88,10 @@ class OrderService:
 
     # ---------- yaratish ----------
     async def _new_id(self, pid: str) -> str:
+        # ID qisqa va faqat harf-raqam: Firebase kaliti va Telegram tugmalari (64 bayt) uchun
+        base = "".join(c for c in pid if c.isascii() and c.isalnum())[:14] or "X"
         for _ in range(5):
-            oid = f"{pid}-{uuid.uuid4().hex[:5].upper()}"
+            oid = f"{base}-{uuid.uuid4().hex[:5].upper()}"
             if not await self.store.get(f"orders/{oid}/status"):
                 return oid
         raise ServiceError("ID yaratib bo'lmadi, qayta urinib ko'ring.")
@@ -100,9 +102,10 @@ class OrderService:
         client_name = clean_text(client_name, 80)
         if not client_name or not is_valid_key(client_name):
             raise ServiceError("Mijoz nomi bo'sh yoki unda . $ # [ ] / belgilari bor.")
-        pid = product_key(product)
-        if not pid or not pid.replace("_", "").isalnum() or len(pid) > 40:
-            raise ServiceError("Mebel nomi noto'g'ri.")
+        name = clean_text(product, 60)
+        pid = product_key(name)
+        if not pid or not any(c.isalnum() for c in pid) or any(ord(c) < 32 for c in name):
+            raise ServiceError("Mebel nomini kiriting.")
         qty = parse_number(amount)
         if qty is None or qty != int(qty) or not (0 < qty <= MAX_AMOUNT):
             raise ServiceError(f"Soni 1 dan {MAX_AMOUNT} gacha butun son bo'lishi kerak.")
@@ -112,7 +115,15 @@ class OrderService:
             raise ServiceError("Sana noto'g'ri. Format: KK.OO.YYYY (bugundan oldin bo'lmasin).")
 
         product_rec = await self.inventory.get(pid)
-        if custom_price not in (None, ""):
+        known = product_rec is not None or pid in {product_key(m) for m in await self.finance.catalog.models()}
+        if not known:
+            # Shablonda yo'q / o'zgartirilgan mebel: nomi qanday yozilgan bo'lsa shunday saqlanadi,
+            # narxi bazada yo'q — shuning uchun qo'lda kiritilishi shart (aks holda qarz 0 bo'lib qoladi)
+            if source == "diller":
+                raise ServiceError("Bu mebel katalogda yo'q. Ro'yxatdan tanlang.")
+            if custom_price in (None, ""):
+                raise ServiceError("Bu mebel shablonda yo'q — 1 dona narxini kiriting.")
+            pid = name
             unit = parse_number(custom_price)
             if unit is None or unit < 0 or unit > 1_000_000:
                 raise ServiceError("Narx noto'g'ri.")
