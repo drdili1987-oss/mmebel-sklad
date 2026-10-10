@@ -29,7 +29,8 @@ class Notifier:
         self.users = users_service
         self.push = push
 
-    async def send(self, chat_id: int, text: str, reply_markup=None, push: bool = True) -> bool:
+    async def send(self, chat_id: int, text: str, reply_markup=None, push: bool = True,
+                   sound: str | None = None) -> bool:
         chunks = chunk_text(text)
         ok = True
         for i, chunk in enumerate(chunks):
@@ -38,7 +39,7 @@ class Notifier:
         if push and self.push is not None:
             from .push import split_message
             title, body = split_message(strip_html(text))
-            self.push.notify_later(chat_id, title, body)
+            self.push.notify_later(chat_id, title, body, sound)
         return ok
 
     async def _send_one(self, chat_id: int, text: str, markup) -> bool:
@@ -68,24 +69,24 @@ class Notifier:
                 await asyncio.sleep(1 + attempt)
         return False
 
-    async def to_ids(self, ids, text: str, reply_markup=None, exclude=None) -> int:
+    async def to_ids(self, ids, text: str, reply_markup=None, exclude=None, sound: str | None = None) -> int:
         sent = 0
         for uid in dict.fromkeys(int(i) for i in ids):
             if exclude is not None and uid == int(exclude):
                 continue
-            sent += await self.send(uid, text, reply_markup)
+            sent += await self.send(uid, text, reply_markup, sound=sound)
             await asyncio.sleep(0.05)  # Telegram limitlariga rioya
         return sent
 
-    async def to_roles(self, roles, text: str, reply_markup=None, exclude=None) -> int:
-        return await self.to_ids(await self.users.ids_with_roles(roles), text, reply_markup, exclude)
+    async def to_roles(self, roles, text: str, reply_markup=None, exclude=None, sound: str | None = None) -> int:
+        return await self.to_ids(await self.users.ids_with_roles(roles), text, reply_markup, exclude, sound)
 
     async def to_admins(self, text: str, reply_markup=None, exclude=None) -> int:
         return await self.to_roles([ROLE_ADMIN], text, reply_markup, exclude)
 
-    async def to_staff(self, text: str, exclude=None, include_admin: bool = True) -> int:
+    async def to_staff(self, text: str, exclude=None, include_admin: bool = True, sound: str | None = None) -> int:
         roles = [ROLE_OMBORCHI, ROLE_XODIM] + ([ROLE_ADMIN] if include_admin else [])
-        return await self.to_roles(roles, text, exclude=exclude)
+        return await self.to_roles(roles, text, exclude=exclude, sound=sound)
 
-    async def to_client(self, client_name: str, text: str, reply_markup=None) -> int:
-        return await self.to_ids(await self.users.diller_ids_for_client(client_name), text, reply_markup)
+    async def to_client(self, client_name: str, text: str, reply_markup=None, sound: str | None = None) -> int:
+        return await self.to_ids(await self.users.diller_ids_for_client(client_name), text, reply_markup, sound=sound)

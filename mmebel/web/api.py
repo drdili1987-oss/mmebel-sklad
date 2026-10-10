@@ -207,7 +207,12 @@ async def push_register(request):
 
 @routes.post("/api/push/test")
 async def push_test(request):
-    sent = await S(request).push.notify(actor(request), "Munosib Mebel", "Bildirishnomalar ishlayapti ✅")
+    from ..push import SOUNDS
+    d = await body(request) if request.can_read_body else {}
+    sound = d.get("sound") if isinstance(d, dict) and d.get("sound") in SOUNDS else None
+    titles = {"new": "🔔 Yangi buyurtma (sinov)", "ready": "✅ Buyurtma tayyor (sinov)", "cancel": "❌ Bekor qilindi (sinov)"}
+    sent = await S(request).push.notify(actor(request), titles.get(sound, "Munosib Mebel"),
+                                        "Bildirishnomalar ishlayapti ✅", sound)
     return web.json_response({"sent": sent, "enabled": S(request).push.enabled})
 
 

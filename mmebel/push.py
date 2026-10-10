@@ -15,6 +15,15 @@ from .utils import clean_text, iter_records, now_str
 log = logging.getLogger(__name__)
 MAX_TOKENS_PER_USER = 5
 
+# Ovozli xabarlar: tur -> (Android kanali, res/raw dagi fayl nomi).
+# Android 8+ da ovoz kanalga bog'langan, shuning uchun har bir ovozga alohida kanal.
+DEFAULT_CHANNEL = "orders"
+SOUNDS: dict[str, tuple[str, str]] = {
+    "new": ("order_new", "yangi_buyurtma"),
+    "ready": ("order_ready", "buyurtma_tayyor"),
+    "cancel": ("order_cancel", "buyurtma_bekor"),
+}
+
 
 def _key(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()[:32]
@@ -33,17 +42,19 @@ def split_message(text: str) -> tuple[str, str]:
 class FCMSender:
     """firebase_admin.messaging orqali yuboradi. Natija: o'chirilishi kerak bo'lgan tokenlar ro'yxati."""
 
-    def send(self, tokens: list[str], title: str, body: str) -> list[str]:
+    def send(self, tokens: list[str], title: str, body: str, sound: str | None = None) -> list[str]:
         from firebase_admin import messaging
 
+        channel, raw = SOUNDS.get(sound or "", (DEFAULT_CHANNEL, None))
+        an = (messaging.AndroidNotification(channel_id=channel, sound=raw, color="#3D8B2A", icon="ic_stat_notify")
+              if raw else
+              messaging.AndroidNotification(channel_id=channel, color="#3D8B2A", icon="ic_stat_notify",
+                                            default_sound=True))
         msgs = [messaging.Message(
             token=t,
             notification=messaging.Notification(title=title, body=body),
-            android=messaging.AndroidConfig(
-                priority="high",
-                notification=messaging.AndroidNotification(channel_id="orders", color="#3D8B2A",
-                                                           icon="ic_stat_notify", default_sound=True),
-            ),
+            data={"sound": sound or ""},
+            android=messaging.AndroidConfig(priority="high", notification=an),
         ) for t in tokens]
         resp = messaging.send_each(msgs)
         dead = []
@@ -101,14 +112,14 @@ class PushService:
         raw = await self.store.get(f"push_tokens/{user_id}") or {}
         return [r["token"] for _, r in iter_records(raw) if r.get("token")]
 
-    async def notify(self, user_id, title: str, body: str) -> int:
+    async def notify(self, user_id, title: str, body: str, sound: str | None = None) -> int:
         if not self.enabled:
             return 0
         tokens = await self.tokens_for(user_id)
         if not tokens:
             return 0
         try:
-            dead = await asyncio.to_thread(self.sender.send, tokens, title, body)
+            dead = await asyncio.to_thread(self.sender.send, tokens, title, body, sound)
         except Exception as e:  # noqa: BLE001 — push Telegram xabarini to'xtatmasligi kerak
             log.warning("Push xatosi (%s): %s", user_id, e)
             return 0
@@ -116,11 +127,11 @@ class PushService:
             await self.unregister(user_id, t)
         return len(tokens) - len(dead)
 
-    def notify_later(self, user_id, title: str, body: str) -> None:
+    def notify_later(self, user_id, title: str, body: str, sound: str | None = None) -> None:
         """Fon vazifasi sifatida yuborish — bot javobini sekinlashtirmaydi."""
         if not self.enabled:
             return
-        task = asyncio.create_task(self.notify(user_id, title, body))
+        task = asyncio.create_task(self.notify(user_id, title, body, sound))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 

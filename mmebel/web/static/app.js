@@ -1057,7 +1057,8 @@ async function boot() {
   clear(who).appendChild(document.createTextNode(`${S.me.name || "Foydalanuvchi"} · ${S.me.role_label}`));
   if (!IN_TELEGRAM) who.appendChild(el("button", { class: "linkbtn", type: "button", on: { click: logout } }, "Chiqish"));
   if (IN_APP) who.appendChild(el("button", { class: "linkbtn", type: "button", on: { click: async (e) => {
-    const r = await act(e.target, () => api("POST", "/api/push/test"));
+    const sound = PUSH_TEST_SOUNDS[pushTestIdx++ % PUSH_TEST_SOUNDS.length];
+    const r = await act(e.target, () => api("POST", "/api/push/test", { sound }));
     if (!r) return;
     if (!r.enabled) toast("Push hali serverda yoqilmagan.", true);
     else if (!r.sent) toast("Bu telefon bildirishnomaga ro'yxatdan o'tmagan. Ilovaga bildirishnoma ruxsatini bering va qayta oching.", true);
@@ -1070,4 +1071,6 @@ async function boot() {
   }
   go(TABS[S.me.role][0][0]);
 }
+const PUSH_TEST_SOUNDS = ["new", "ready", "cancel"]; // har bosishda navbatdagi ovoz
+let pushTestIdx = 0;
 boot();

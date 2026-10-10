@@ -4,6 +4,9 @@
     <string name="offline_text">Internet aloqasini tekshiring. Server uyg\'onayotgan bo\'lsa, bir oz kuting.</string>
     <string name="retry">Qayta urinish</string>
     <string name="no_app">Telegram ilovasi topilmadi</string>
-    <string name="channel_orders">Buyurtmalar</string>
-    <string name="channel_orders_desc">Yangi, bekor qilingan va tayyor bo\'lgan buyurtmalar haqida</string>
+    <string name="channel_orders">Boshqa xabarlar</string>
+    <string name="channel_orders_desc">To\'lovlar, yetkazishlar va boshqa xabarlar</string>
+    <string name="channel_new">Yangi buyurtma</string>
+    <string name="channel_ready">Buyurtma tayyor</string>
+    <string name="channel_cancel">Buyurtma bekor qilindi</string>
 </resources>

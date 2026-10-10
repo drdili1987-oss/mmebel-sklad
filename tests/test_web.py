@@ -255,8 +255,8 @@ class FakeSender:
         self.sent = []
         self.dead = set()
 
-    def send(self, tokens, title, body):
-        self.sent.append((tuple(tokens), title, body))
+    def send(self, tokens, title, body, sound=None):
+        self.sent.append((tuple(tokens), title, body, sound))
         return [t for t in tokens if t in self.dead]
 
 
@@ -275,7 +275,25 @@ async def test_push_register_and_delivery(client):
     await client.post("/api/orders", headers=hdr(ADMIN),
                       json={"client_name": "Umid", "product": "BF07", "amount": 1, "due_date": due})
     await services.push.drain()
-    assert any(tok in t and "Yangi buyurtma" in title for t, title, _ in fake.sent)
+    assert any(tok in t and "Yangi buyurtma" in title and snd == "new" for t, title, _, snd in fake.sent)
+    oid = next(iter(await services.orders.all()))
+
+    # tayyor / bekor — o'z ovozi bilan
+    fake.sent.clear()
+    await client.post(f"/api/orders/{oid}/ready", headers=hdr(ADMIN))
+    await services.push.drain()
+    assert {snd for _, _, _, snd in fake.sent} == {"ready"}
+    fake.sent.clear()
+    await client.post(f"/api/orders/{oid}/cancel", headers=hdr(ADMIN))
+    await services.push.drain()
+    assert {snd for _, _, _, snd in fake.sent} == {"cancel"}
+
+    # sinov tugmasi: tanlangan ovoz, noma'lumi — oddiy ovoz
+    fake.sent.clear()
+    await client.post("/api/push/test", headers=hdr(XODIM), json={"sound": "ready"})
+    await client.post("/api/push/test", headers=hdr(XODIM), json={"sound": "../x"})
+    await client.post("/api/push/test", headers=hdr(XODIM))
+    assert [snd for _, _, _, snd in fake.sent] == ["ready", None, None]
 
     # yaroqsiz token o'chiriladi
     fake.dead.add(tok)
@@ -335,3 +353,20 @@ async def test_diller_without_company(client):
     services.users.invalidate()
     r = await client.get("/api/d/orders", headers=hdr(888))
     assert r.status == 400 and "biriktirilmagan" in (await r.json())["error"]
+
+
+def test_fcm_payload_sound_channels(monkeypatch):
+    from firebase_admin import messaging
+
+    from mmebel.push import FCMSender
+    captured = []
+
+    class Resp:
+        responses = ()
+
+    monkeypatch.setattr(messaging, "send_each", lambda msgs: captured.extend(msgs) or Resp())
+    FCMSender().send(["t1"], "T", "B", "cancel")
+    FCMSender().send(["t2"], "T", "B")
+    a, b = (m.android.notification for m in captured)
+    assert (a.channel_id, a.sound) == ("order_cancel", "buyurtma_bekor") and captured[0].data == {"sound": "cancel"}
+    assert (b.channel_id, b.sound, b.default_sound) == ("orders", None, True)

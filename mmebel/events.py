@@ -19,29 +19,31 @@ class Events:
         if by_diller:
             stock = (f"📦 Ombordan ayirildi: {o['deducted_qty']} ta" if o.get("deducted_qty")
                      else "⚠️ Omborda yo'q — ishlab chiqarish kerak")
-            await self.n.to_staff(order_card(oid, o, title="🔔 Yangi zakaz (dillerdan)!") + f"\n{stock}")
+            await self.n.to_staff(order_card(oid, o, title="🔔 Yangi zakaz (dillerdan)!") + f"\n{stock}",
+                                  sound="new")
             return
-        await self.n.to_staff(order_card(oid, o, title="🔔 Yangi buyurtma!"), exclude=actor_id)
+        await self.n.to_staff(order_card(oid, o, title="🔔 Yangi buyurtma!"), exclude=actor_id, sound="new")
         await self.n.to_client(order_client(o), order_card(oid, o, show_price=True,
-                                                           title="🎉 Sizga yangi buyurtma shakllantirildi!"))
+                                                           title="🎉 Sizga yangi buyurtma shakllantirildi!"),
+                               sound="new")
 
     async def order_ready(self, oid: str, o: dict, actor_id: int) -> None:
         text = (f"✅ <b>Mahsulot tayyor bo'ldi!</b>\n🆔 <code>{h(oid)}</code>\n🧑 {h(order_client(o))}\n"
                 f"📦 {h(o.get('product_id'))} — {h(o.get('amount'))} ta")
-        await self.n.to_roles([ROLE_ADMIN, ROLE_XODIM, ROLE_OMBORCHI], text, exclude=actor_id)
+        await self.n.to_roles([ROLE_ADMIN, ROLE_XODIM, ROLE_OMBORCHI], text, exclude=actor_id, sound="ready")
         await self.n.to_client(order_client(o), f"🎉 <b>Buyurtmangiz tayyor bo'ldi!</b>\n\n📦 <b>{h(o.get('product_id'))}"
                                f"</b> — {h(o.get('amount'))} ta\n📅 Muddat: {format_date(o.get('due_date'))}\n\n"
-                               "Yetkazib berish haqida tez orada xabar beramiz.")
+                               "Yetkazib berish haqida tez orada xabar beramiz.", sound="ready")
 
     async def order_cancelled(self, oid: str, o: dict, actor_id: int, *, by_diller: bool = False) -> None:
         who = "diller tomonidan" if by_diller else "xodim tomonidan"
         text = (f"❌ <b>Buyurtma bekor qilindi ({who})</b>\n🆔 <code>{h(oid)}</code>\n📦 {h(o.get('product_id'))} — "
                 f"{h(o.get('amount'))} ta\n🧑 {h(order_client(o))}\n↩️ Omborga qaytdi: {o.get('returned_qty', 0)} ta")
-        await self.n.to_staff(text, exclude=actor_id)
+        await self.n.to_staff(text, exclude=actor_id, sound="cancel")
         if not by_diller:
             await self.n.to_client(order_client(o), f"❌ <b>Buyurtmangiz bekor qilindi</b>\n🆔 <code>{h(oid)}</code>\n"
                                    f"📦 {h(o.get('product_id'))} — {h(o.get('amount'))} ta\n\n"
-                                   "Batafsil ma'lumot uchun admin bilan bog'laning.")
+                                   "Batafsil ma'lumot uchun admin bilan bog'laning.", sound="cancel")
 
     async def order_delivered(self, oid: str, o: dict, actor_id: int) -> None:
         driver = o.get("driver", "")
