@@ -196,15 +196,36 @@ async def test_markdown_chars_do_not_break(h):
 
 
 async def test_bot_approves_app_login(h):
-    s = await h.services.sessions.start()
+    from aiogram.methods import EditMessageText
+    s = await h.services.sessions.start(device="Mozilla/5.0 (iPhone; CPU iPhone OS 18_0) Safari/604.1")
     r = await h.text(OMBOR, f"/start login_{s['code']}")
-    assert "tasdiqlandi" in r[0].text
+    assert "iPhone" in r[0].text and "RAD ETING" in r[0].text
+    # faqat havolani ochish kirishni tasdiqlamaydi (fishing himoyasi)
+    assert (await h.services.sessions.poll(s["code"], s["poll_secret"]))["status"] == "pending"
+    assert ("✅ Ha, men kiryapman", f"al:y:{s['code']}") in h.buttons(r[0])
+    await h.press(OMBOR, f"al:y:{s['code']}")
+    assert any(isinstance(c, EditMessageText) and "tasdiqlandi" in c.text for c in h.session.calls)
     assert (await h.services.sessions.poll(s["code"], s["poll_secret"]))["status"] == "approved"
+
     s2 = await h.services.sessions.start()
-    r = await h.text(DILLER, f"/start login_{s2['code']}")
-    assert "tasdiqlandi" in r[0].text                       # diller ham kira oladi (o'z bo'limiga)
+    await h.text(DILLER, f"/start login_{s2['code']}")
+    await h.press(DILLER, f"al:n:{s2['code']}")                 # rad etildi
+    assert (await h.services.sessions.poll(s2["code"], s2["poll_secret"]))["status"] == "rejected"
+
     s3 = await h.services.sessions.start()
     r = await h.text(999, f"/start login_{s3['code']}")
     assert "faqat zavod xodimlari va dillerlar" in r[0].text
+    await h.press(999, f"al:y:{s3['code']}")                    # begona tugmani soxtalasa ham — rad
+    assert (await h.services.sessions.poll(s3["code"], s3["poll_secret"]))["status"] != "approved"
     r = await h.text(OMBOR, "/start login_notexist")
     assert "❌" in r[0].text
+
+
+async def test_session_cleanup(h):
+    import time as _t
+    s = await h.services.sessions.start()
+    await h.store.update(f"app_login/{s['code']}", {"created": int(_t.time()) - 3600})
+    await h.store.set("sessions/old", {"user_id": "1", "created": 1, "last_used": 1})
+    await h.store.set("sessions/new", {"user_id": "1", "created": int(_t.time()), "last_used": int(_t.time())})
+    assert await h.services.sessions.cleanup() == (1, 1)
+    assert set((await h.store.get("sessions")).keys()) == {"new"}

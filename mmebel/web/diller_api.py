@@ -10,6 +10,7 @@ from ..utils import is_overdue, money, product_key, to_int
 from .api import body
 
 routes = web.RouteTableDef()
+MAX_DILLER_AMOUNT = 1000  # bot bilan bir xil
 
 
 def S(request):  # noqa: N802
@@ -75,8 +76,16 @@ async def create(request):
     me = request["user"]
     client = await company(request)
     d = await body(request)
-    o = await S(request).orders.create(me.id, client_name=client, product=str(d.get("product", "")),
-                                       amount=d.get("amount"), due_date=str(d.get("due_date", "")),
+    pid = product_key(str(d.get("product", "")))
+    allowed = {product_key(m) for m in await S(request).catalog.models()}
+    stock = (await S(request).inventory.get(pid)) if pid else None
+    if pid not in allowed and not (stock and to_int(stock.get("soni")) > 0):
+        raise ServiceError("Bu mebel katalogda yo'q. Ro'yxatdan tanlang.")
+    amount = to_int(d.get("amount"), 0) if not isinstance(d.get("amount"), bool) else 0
+    if not 0 < amount <= MAX_DILLER_AMOUNT or str(d.get("amount")).strip() != str(amount):
+        raise ServiceError(f"Soni 1 dan {MAX_DILLER_AMOUNT} gacha butun son bo'lishi kerak.")
+    o = await S(request).orders.create(me.id, client_name=client, product=pid,
+                                       amount=amount, due_date=str(d.get("due_date", "")),
                                        comment=str(d.get("comment", "")), source="diller", client_tg_id=me.id)
     await request.app["events"].order_created(o, me.id, by_diller=True)
     return web.json_response(d_order(o["order_id"], o, me.id), status=201)

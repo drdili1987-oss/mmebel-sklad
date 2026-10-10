@@ -44,8 +44,9 @@ class SessionService:
         })
         return {"code": code, "poll_secret": poll_secret, "expires_in": LOGIN_TTL}
 
-    async def approve(self, code: str, user_id: int, approve: bool = True) -> dict:
-        if not code.isalnum() or len(code) > 40:
+    async def peek(self, code: str) -> dict:
+        """Kutilayotgan kirish so'rovi (tasdiqlashdan oldin foydalanuvchiga qurilmani ko'rsatish uchun)."""
+        if not code or not code.isalnum() or len(code) > 40:
             raise NotFound("Kirish havolasi noto'g'ri.")
         rec = await self.store.get(f"app_login/{code}")
         if not isinstance(rec, dict):
@@ -53,6 +54,12 @@ class SessionService:
         if time.time() - float(rec.get("created", 0)) > LOGIN_TTL:
             await self.store.delete(f"app_login/{code}")
             raise Conflict("Kirish havolasi eskirgan. Ilovada qaytadan «Kirish» ni bosing.")
+        if rec.get("status") != "pending":
+            raise Conflict("Bu havola allaqachon ishlatilgan.")
+        return rec
+
+    async def approve(self, code: str, user_id: int, approve: bool = True) -> dict:
+        rec = await self.peek(code)
 
         def tx(cur):
             if not isinstance(cur, dict) or cur.get("status") != "pending":
@@ -124,6 +131,21 @@ class SessionService:
                 self._cache.pop(key, None)
                 n += 1
         return n
+
+    async def cleanup(self) -> tuple[int, int]:
+        """Eskirgan kirish so'rovlari va sessiyalarni o'chiradi (tungi vazifa)."""
+        now = time.time()
+        logins = sessions = 0
+        for code, rec in iter_records(await self.store.get("app_login") or {}):
+            if now - float(rec.get("created", 0) or 0) > LOGIN_TTL:
+                await self.store.delete(f"app_login/{code}")
+                logins += 1
+        for key, rec in iter_records(await self.store.get("sessions") or {}):
+            if now - float(rec.get("last_used") or rec.get("created", 0) or 0) > SESSION_TTL:
+                await self.store.delete(f"sessions/{key}")
+                self._cache.pop(key, None)
+                sessions += 1
+        return logins, sessions
 
     async def list_for(self, user_id) -> list[dict]:
         raw = await self.store.get("sessions") or {}

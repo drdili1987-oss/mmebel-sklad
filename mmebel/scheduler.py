@@ -20,6 +20,7 @@ from aiogram.types import FSInputFile
 from .constants import ROLE_ADMIN, ROLE_OMBORCHI, ROLE_XODIM, ST_PREPARING, ST_READY
 from .utils import format_date, h, has_comment, now, now_str
 
+BACKUP_EXCLUDE = ("fsm", "sessions", "app_login", "push_tokens", "webpush")
 log = logging.getLogger(__name__)
 
 
@@ -128,6 +129,8 @@ class Scheduler:
                 if await self.claim("archive"):
                     n = await self.services.orders.archive_old()
                     log.info("Arxivga ko'chirildi: %d ta buyurtma", n)
+                    logins, sessions = await self.services.sessions.cleanup()
+                    log.info("Tozalandi: %d ta eski kirish so'rovi, %d ta eskirgan sessiya", logins, sessions)
             except Exception:  # noqa: BLE001
                 log.exception("Arxiv xatosi")
         if t >= BACKUP_AT:
@@ -140,7 +143,9 @@ class Scheduler:
     # ---------- backup ----------
     async def send_backup(self, only_to: int | None = None) -> None:
         data = await self.services.store.get("") or {}
-        data.pop("fsm", None)
+        # Kirish tokenlari va qurilma ma'lumotlari zaxiraga kirmaydi: fayl Telegram chatlarida yuradi
+        for key in BACKUP_EXCLUDE:
+            data.pop(key, None)
         fd, path = tempfile.mkstemp(prefix=f"backup_{now().strftime('%Y%m%d_%H%M')}_", suffix=".json")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:

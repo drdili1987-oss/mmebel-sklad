@@ -20,6 +20,7 @@ from ..utils import clean_text, is_valid_key, iter_records, money, now_str, pars
 from .errors import Conflict, NotFound, ServiceError, run_tx
 
 MAX_PAYMENT = 10_000_000
+MAX_PENDING_PER_DILLER = 3  # adminlarni xabar bilan "bombardimon" qilmaslik uchun
 
 
 def order_client(o: dict) -> str:
@@ -291,6 +292,10 @@ class FinanceService:
             raise ServiceError("To'lov summasi musbat son bo'lishi kerak.")
         if not is_valid_key(client):
             raise ServiceError("Mijoz nomi aniqlanmadi. Admin bilan bog'laning.")
+        mine = [p for p in await self.pending_payments() if str(p.get("diller_tg_id")) == str(diller_tg_id)]
+        if len(mine) >= MAX_PENDING_PER_DILLER:
+            raise ServiceError(f"Sizda tasdiq kutilayotgan {len(mine)} ta to'lov bor. "
+                               "Admin ularni ko'rib chiqqach, yangisini yuboring.")
         pay_id = uuid.uuid4().hex[:8].upper()
         record = {"pay_id": pay_id, "diller_tg_id": int(diller_tg_id), "diller_name": clean_text(diller_name, 80),
                   "client_name": client, "amount": money(amt), "timestamp": now_str(), "status": "pending"}

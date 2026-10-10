@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from ..store import Store
-from ..utils import clean_text, iter_records, money, now_str, parse_number, product_key, to_int
+from ..utils import clean_text, is_valid_key, iter_records, money, now_str, parse_number, product_key, to_int
 from .errors import NotFound, ServiceError
 
 MAX_QTY = 100_000
@@ -23,7 +23,10 @@ class InventoryService:
         return {k: v for k, v in iter_records(await self.store.get("mebellar") or {})}
 
     async def get(self, product_id: str) -> dict | None:
-        p = await self.store.get(f"mebellar/{product_key(product_id)}")
+        pid = product_key(product_id)
+        if not is_valid_key(pid):  # "/" orqali boshqa yo'lga yozib yuborishning oldini olish
+            return None
+        p = await self.store.get(f"mebellar/{pid}")
         return p if isinstance(p, dict) else None
 
     @staticmethod

@@ -27,26 +27,67 @@ async def sync_menu_button(bot, chat_id: int, role: str, settings) -> None:
         log.debug("menu button: %s", e)
 
 
+def describe_device(ua: str) -> str:
+    ua = ua or ""
+    if "MMebelApp" in ua:
+        return "Android ilova"
+    os_name = ("iPhone" if "iPhone" in ua else "iPad" if "iPad" in ua else "Android" if "Android" in ua
+               else "Windows" if "Windows" in ua else "Mac" if "Mac OS" in ua else "Linux" if "Linux" in ua
+               else "noma'lum qurilma")
+    browser = ("Edge" if "Edg/" in ua else "Chrome" if "Chrome/" in ua else "Firefox" if "Firefox/" in ua
+               else "Safari" if "Safari/" in ua else "")
+    return f"{os_name} · {browser}" if browser else os_name
+
+
 @router.message(CommandStart(deep_link=True, magic=F.args.startswith("login_")))
 async def app_login(message: Message, command: CommandObject, state: FSMContext, role: str, services):
-    """Mobil ilovaga kirishni tasdiqlash (ilova ochgan bot havolasi)."""
+    """Mobil ilovaga kirish so'rovi. Tasdiq alohida tugma bilan — begona yuborgan havola bilan
+    bexosdan uning qurilmasiga kirish berib qo'ymaslik uchun (fishing himoyasi)."""
     from ...services import ServiceError
     await state.clear()
     code = (command.args or "")[6:]
     allowed = role in APP_ROLES
     log.info("app login: user=%s role=%s code=%s… allowed=%s", message.from_user.id, role, code[:6], allowed)
-    try:
-        await services.sessions.approve(code, message.from_user.id, approve=allowed)
-    except ServiceError as e:
-        await message.answer(f"❌ {h(e)}", reply_markup=kb.main_menu(role))
-        return
-    if allowed:
-        await message.answer(f"✅ <b>Ilovaga kirish tasdiqlandi.</b>\nRol: {ROLE_LABELS.get(role, role)}\n\n"
-                             "Ilovaga qayting — bir necha soniyada ochiladi.", reply_markup=kb.main_menu(role))
-    else:
+    if not allowed:
+        try:
+            await services.sessions.approve(code, message.from_user.id, approve=False)
+        except ServiceError:
+            pass
         await message.answer("⛔ Ilova faqat zavod xodimlari va dillerlar uchun.\n"
                              f"Sizning ID: <code>{message.from_user.id}</code> — rol olish uchun adminga yuboring.",
                              reply_markup=kb.main_menu(role))
+        return
+    try:
+        rec = await services.sessions.peek(code)
+    except ServiceError as e:
+        await message.answer(f"❌ {h(e)}", reply_markup=kb.main_menu(role))
+        return
+    await message.answer(
+        f"🔐 <b>Ilovaga kirish so'rovi</b>\n\n📱 Qurilma: <b>{h(describe_device(rec.get('device', '')))}</b>\n"
+        f"👤 Rol: {ROLE_LABELS.get(role, role)}\n\n"
+        "Hozir <b>o'zingiz</b> ilovada «Telegram orqali kirish» ni bosgan bo'lsangiz — tasdiqlang.\n"
+        "⚠️ Agar bu havolani sizga boshqa odam yuborgan bo'lsa — <b>RAD ETING</b>, aks holda u sizning "
+        "akkauntingiz bilan kiradi.",
+        reply_markup=kb.inline([[("✅ Ha, men kiryapman", f"al:y:{code}"), ("❌ Rad etish", f"al:n:{code}")]]),
+    )
+
+
+@router.callback_query(F.data.startswith("al:"))
+async def app_login_confirm(cb: CallbackQuery, role: str, services):
+    from ...services import ServiceError
+    _, answer, code = (cb.data.split(":", 2) + ["", ""])[:3]
+    approve = answer == "y" and role in APP_ROLES
+    try:
+        await services.sessions.approve(code, cb.from_user.id, approve=approve)
+    except ServiceError as e:
+        await cb.answer(str(e), show_alert=True)
+        await cb.message.edit_reply_markup(reply_markup=None)
+        return
+    log.info("app login %s: user=%s code=%s…", "approved" if approve else "rejected", cb.from_user.id, code[:6])
+    text = ("✅ <b>Ilovaga kirish tasdiqlandi.</b>\nIlovaga qayting — bir necha soniyada ochiladi." if approve
+            else "❌ Kirish rad etildi. Hech kim akkauntingizga kira olmaydi.")
+    await cb.message.edit_text(text)
+    await cb.answer()
 
 
 @router.message(Command("start"))

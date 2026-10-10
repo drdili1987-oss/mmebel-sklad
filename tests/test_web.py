@@ -370,3 +370,34 @@ def test_fcm_payload_sound_channels(monkeypatch):
     a, b = (m.android.notification for m in captured)
     assert (a.channel_id, a.sound) == ("order_cancel", "buyurtma_bekor") and captured[0].data == {"sound": "cancel"}
     assert (b.channel_id, b.sound, b.default_sound) == ("orders", None, True)
+
+
+async def test_diller_api_limits(client):
+    due = (now() + timedelta(days=3)).strftime("%d.%m.%Y")
+    bad_product = await client.post("/api/d/orders", headers=hdr(DILLER),
+                                    json={"product": "ANYTHING123", "amount": 1, "due_date": due})
+    assert bad_product.status == 400                      # katalogda yo'q mebel — narxsiz zakaz bo'lmaydi
+    for amt in (0, 1001, "2.5", True):
+        r = await client.post("/api/d/orders", headers=hdr(DILLER), json={"product": "BF 07", "amount": amt, "due_date": due})
+        assert r.status == 400, amt
+    ok = await client.post("/api/d/orders", headers=hdr(DILLER), json={"product": "BF 07", "amount": 2, "due_date": due})
+    assert ok.status == 201
+    # tasdiqlanmagan to'lovlar soni cheklangan
+    codes = [(await client.post("/api/d/payments", headers=hdr(DILLER), json={"amount": 10})).status for _ in range(4)]
+    assert codes == [201, 201, 201, 400]
+
+
+async def test_product_path_injection_rejected(client):
+    r = await client.put("/api/products/BF07%2FSONI/qty", headers=hdr(ADMIN), json={"qty": 1})
+    assert r.status == 404
+    services = client.server.app["services"]
+    assert (await services.inventory.get("BF07"))["soni"] == 5
+
+
+async def test_auth_limits_by_client_ip(client):
+    def hdrs(ip):
+        return {"X-Forwarded-For": f"{ip}, 10.0.0.1"}
+    codes = [(await client.post("/api/auth/start", headers=hdrs("1.1.1.1"), json={})).status for _ in range(11)]
+    assert codes[:10] == [200] * 10 and codes[10] == 429
+    # boshqa mijoz (IP) bloklanmaydi — avval hammasi bitta proksi IP si ostida edi
+    assert (await client.post("/api/auth/start", headers=hdrs("2.2.2.2"), json={})).status == 200

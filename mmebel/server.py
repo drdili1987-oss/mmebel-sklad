@@ -18,7 +18,7 @@ from .notify import Notifier
 from .scheduler import Scheduler
 from .services import Services
 from .store import Store, init_firebase
-from .web.api import RATE_LIMIT, RateLimiter, api_middleware, routes as api_routes
+from .web.api import AUTH_GLOBAL_LIMIT, RATE_LIMIT, AuthLimiter, RateLimiter, api_middleware, routes as api_routes
 
 log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
@@ -53,7 +53,8 @@ def build_app(settings: Settings, services: Services, bot: Bot, dp: Dispatcher, 
     app["services"] = services
     app["events"] = events
     app["limiter"] = RateLimiter(RATE_LIMIT)
-    app["auth_limiter"] = RateLimiter(20)
+    app["auth_limiter"] = AuthLimiter()
+    app["auth_global"] = RateLimiter(AUTH_GLOBAL_LIMIT)
     _username: dict = {}
 
     async def bot_username() -> str:

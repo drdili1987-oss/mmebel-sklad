@@ -35,13 +35,23 @@ DILLER_COMMON_PATHS = frozenset({"/api/me", "/api/logout", "/api/push/register",
 RATE_LIMIT = 120  # so'rov / daqiqa / foydalanuvchi
 
 
+AUTH_START_LIMIT = 10    # yangi kirish so'rovi / daqiqa / IP
+AUTH_POLL_LIMIT = 60     # ilova har 2 soniyada so'raydi (30/daqiqa) + zaxira
+AUTH_GLOBAL_LIMIT = 600  # barcha IP lar uchun jami — IP soxtalashtirilsa ham bazani himoyalaydi
+
+
 class RateLimiter:
+    MAX_KEYS = 5000
+
     def __init__(self, limit: int, window: float = 60.0):
         self.limit, self.window = limit, window
-        self.hits: dict[int, deque] = defaultdict(deque)
+        self.hits: dict = defaultdict(deque)
 
-    def allow(self, key: int) -> bool:
+    def allow(self, key) -> bool:
         now = time.monotonic()
+        if len(self.hits) > self.MAX_KEYS:  # xotira cheksiz o'smasin
+            for k in [k for k, q in self.hits.items() if not q or now - q[-1] > self.window]:
+                del self.hits[k]
         q = self.hits[key]
         while q and now - q[0] > self.window:
             q.popleft()
@@ -49,6 +59,30 @@ class RateLimiter:
             return False
         q.append(now)
         return True
+
+
+class AuthLimiter:
+    """start va poll uchun alohida chegara (poll tez-tez chaqiriladi)."""
+
+    def __init__(self):
+        self.start = RateLimiter(AUTH_START_LIMIT)
+        self.poll = RateLimiter(AUTH_POLL_LIMIT)
+
+    def allow(self, key) -> bool:
+        kind, ip = key
+        return (self.poll if kind == "poll" else self.start).allow(ip)
+
+
+def client_ip(request: web.Request) -> str:
+    """Render/Cloudflare proksisi ortida haqiqiy mijoz IP si (request.remote — proksi manzili)."""
+    for name in ("CF-Connecting-IP", "True-Client-IP"):
+        v = request.headers.get(name, "").strip()
+        if v:
+            return v[:64]
+    xff = request.headers.get("X-Forwarded-For", "")
+    if xff:
+        return xff.split(",")[0].strip()[:64]
+    return request.remote or "?"
 
 
 def _json_error(status: int, message: str) -> web.Response:
@@ -62,8 +96,10 @@ async def api_middleware(request: web.Request, handler):
     services = request.app["services"]
     settings = request.app["settings"]
     if request.path.startswith("/api/auth/"):
-        # Ochiq endpointlar (ilovaga kirish) — IP bo'yicha cheklanadi
-        if not request.app["auth_limiter"].allow(request.remote or "?"):
+        # Ochiq endpointlar (ilovaga kirish) — mijoz IP si bo'yicha va umumiy cheklov
+        kind = "poll" if request.path == "/api/auth/poll" else "start"
+        if not (request.app["auth_global"].allow("all")
+                and request.app["auth_limiter"].allow((kind, client_ip(request)))):
             return _json_error(429, "Juda ko'p urinish. Bir daqiqadan so'ng qayta urinib ko'ring.")
         return await _guarded(request, handler)
     header = request.headers.get("Authorization", "")
@@ -595,4 +631,4 @@ async def audit(request):
     return web.json_response({"items": rows[:200]})
 
 
-__all__ = ["routes", "api_middleware", "RateLimiter", "RATE_LIMIT"]
+__all__ = ["routes", "api_middleware", "RateLimiter", "AuthLimiter", "RATE_LIMIT", "AUTH_GLOBAL_LIMIT"]
