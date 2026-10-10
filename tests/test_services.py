@@ -224,3 +224,13 @@ async def test_role_assign_applies_once(svc):
     await svc.users.set_role(ADMIN, 555, "xodim")              # keyin paneldan o'zgartirildi
     assert await svc.users.apply_role_assignments({"555": "omborchi"}) == []
     assert await svc.users.role(555) == "xodim"                # qayta ustidan yozilmaydi
+
+
+async def test_role_assign_tag_forces_reapply(svc):
+    await svc.users.apply_role_assignments({"555": "admin"})
+    await svc.users.set_role(ADMIN, 555, "omborchi")           # adashib o'zgartirildi
+    assert await svc.users.apply_role_assignments({"555": "admin"}) == []
+    assert await svc.users.apply_role_assignments({"555": "admin@2"}) == ["555:admin"]
+    assert await svc.users.role(555) == "admin"
+    await svc.users.set_role(ADMIN, 555, "xodim")
+    assert await svc.users.apply_role_assignments({"555": "admin@2"}) == []   # belgi o'sha — yana yozilmaydi

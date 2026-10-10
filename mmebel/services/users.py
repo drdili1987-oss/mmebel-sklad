@@ -128,17 +128,19 @@ class UserService:
         """ROLE_ASSIGN sozlamasidagi rollarni bir marta yozadi.
 
         Har bir (ID, rol) jufti faqat bir marta qo'llanadi — keyin paneldan o'zgartirilsa, qayta ustidan yozilmaydi.
+        Qayta majburan qo'llash uchun yangi belgi qo'shiladi: "123:admin@2" (belgi o'zgarsa — yana bir marta yoziladi).
         """
         applied = await self.store.get("meta/role_assign") or {}
         done = []
-        for uid, role in assignments.items():
+        for uid, spec in assignments.items():
+            role = spec.partition("@")[0]
             if role not in ALL_ROLES or role == ROLE_DILLER:  # diller uchun kompaniya nomi kerak — panel orqali
                 continue
-            if applied.get(uid) == role:
+            if applied.get(uid) == spec:
                 continue
             await self.store.update(f"users/{uid}", {"role": role, "role_updated_at": now_str(),
                                                      "role_updated_by": "ROLE_ASSIGN"})
-            await self.store.set(f"meta/role_assign/{uid}", role)
+            await self.store.set(f"meta/role_assign/{uid}", spec)
             await self.store.push("audit_log", {"action": "set_role", "user_id": uid, "role": role,
                                                 "by": "ROLE_ASSIGN", "at": now_str()})
             done.append(f"{uid}:{role}")
