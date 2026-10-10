@@ -43,6 +43,7 @@ class Settings:
     role_assign: dict[str, str] = field(default_factory=dict)
     keep_awake: bool = True
     use_polling: bool = False
+    vapid_private_key: str = ""
 
     @property
     def webhook_path(self) -> str:
@@ -108,4 +109,5 @@ def load_settings() -> Settings:
         role_assign=_role_assign(_env("ROLE_ASSIGN")),
         keep_awake=_env("KEEP_AWAKE", "1") not in ("0", "false", "no"),
         use_polling=_env("USE_POLLING", "0") in ("1", "true", "yes"),
+        vapid_private_key=_env("VAPID_PRIVATE_KEY"),
     )

@@ -970,10 +970,51 @@ window.mmebelSetPushToken = function (t) {
 /* ---------- ilova rejimi: Telegram orqali kirish ---------- */
 let loginTimer = null;
 const IN_APP = /MMebelApp/.test(navigator.userAgent);
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const IS_STANDALONE = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 function openExternal(s) {
-  // Android ilova: tg:// havolasini WebView ushlab, to'g'ridan-to'g'ri Telegram ilovasida ochadi
-  if (IN_APP) { window.location.href = s.tg_link || s.bot_link; return; }
+  // Android ilova va iPhone'dagi o'rnatilgan web-ilova: tg:// to'g'ridan-to'g'ri Telegram ilovasini ochadi
+  if (IN_APP || (IS_IOS && IS_STANDALONE)) { window.location.href = s.tg_link || s.bot_link; return; }
   window.open(s.bot_link, "_blank", "noopener");
+}
+
+/* ---------- Web Push: iPhone (bosh ekrandagi web-ilova) va brauzerlar ---------- */
+const WEB_PUSH_OK = !IN_APP && !IN_TELEGRAM && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+let WEB_ENDPOINT = "";
+function b64uToBytes(s) {
+  const b = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4));
+  return Uint8Array.from(b, (c) => c.charCodeAt(0));
+}
+function bytesToB64u(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+/* ask=true faqat tugma bosilganda: iOS ruxsat so'rovini faqat foydalanuvchi harakatida ko'rsatadi */
+async function webPushSubscribe(ask) {
+  if (!WEB_PUSH_OK || !S.me || Notification.permission === "denied") return false;
+  if (Notification.permission !== "granted") {
+    if (!ask || (await Notification.requestPermission()) !== "granted") return false;
+  }
+  const { key } = await api("GET", "/api/push/web/key");
+  if (!key) return false;
+  const reg = await navigator.serviceWorker.register("/panel/sw.js", { scope: "/panel/" });
+  await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  const old = sub && sub.options && sub.options.applicationServerKey;
+  if (sub && old && bytesToB64u(old) !== key) { await sub.unsubscribe(); sub = null; } // server kaliti almashgan
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(key) });
+  await api("POST", "/api/push/web/subscribe", { subscription: sub.toJSON(), device: navigator.userAgent.slice(0, 110) });
+  WEB_ENDPOINT = sub.endpoint;
+  return true;
+}
+function iosInstallHint() {
+  if (!IS_IOS || IS_STANDALONE || IN_TELEGRAM) return null;
+  return el("div", { class: "hint" },
+    el("b", {}, "📲 iPhone'ga ilova qilib o'rnating"),
+    el("ol", {},
+      el("li", {}, "Safari'ning pastidagi «Ulashish» ", el("b", {}, "⬆︎"), " tugmasini bosing"),
+      el("li", {}, "«Bosh ekranga qo'shish» (Add to Home Screen) ni tanlang"),
+      el("li", {}, "Ekrandagi «Munosib Mebel» belgisidan oching va shu yerda kiring")),
+    el("p", { class: "muted small" }, "Xabarnomalar faqat o'rnatilgan ilovada ishlaydi (iOS 16.4+)."));
 }
 function showLogin(note) {
   clearTimeout(loginTimer);
@@ -1018,12 +1059,16 @@ function showLogin(note) {
     el("img", { class: "gate-logo", src: "/panel/static/logo-full.png", alt: "Munosib Mebel" }),
     el("h1", {}, "Hisobingizga kiring"),
     el("p", { class: "muted" }, "Kirish Telegram bot orqali tasdiqlanadi — parol kerak emas. Ilova zavod xodimlari va dillerlar uchun."),
-    el("div", { class: "actions" }, btn), status));
+    el("div", { class: "actions" }, btn), status, iosInstallHint() || ""));
 }
 
 async function logout() {
   if (!(await confirmDlg("Ilovadan chiqilsinmi?"))) return;
-  try { await api("POST", "/api/logout", PUSH_TOKEN ? { push_token: PUSH_TOKEN } : {}); } catch (_) { /* baribir chiqamiz */ }
+  const out = {};
+  if (PUSH_TOKEN) out.push_token = PUSH_TOKEN;
+  if (WEB_ENDPOINT) out.web_endpoint = WEB_ENDPOINT;
+  try { await api("POST", "/api/logout", out); } catch (_) { /* baribir chiqamiz */ }
+  WEB_ENDPOINT = "";
   pushRegistered = "";
   setToken("");
   showLogin("Chiqdingiz.");
@@ -1056,15 +1101,33 @@ async function boot() {
   const who = $("who");
   clear(who).appendChild(document.createTextNode(`${S.me.name || "Foydalanuvchi"} · ${S.me.role_label}`));
   if (!IN_TELEGRAM) who.appendChild(el("button", { class: "linkbtn", type: "button", on: { click: logout } }, "Chiqish"));
-  if (IN_APP) who.appendChild(el("button", { class: "linkbtn", type: "button", on: { click: async (e) => {
+  const testBtn = () => el("button", { class: "linkbtn", type: "button", on: { click: async (e) => {
     const sound = PUSH_TEST_SOUNDS[pushTestIdx++ % PUSH_TEST_SOUNDS.length];
     const r = await act(e.target, () => api("POST", "/api/push/test", { sound }));
     if (!r) return;
     if (!r.enabled) toast("Push hali serverda yoqilmagan.", true);
-    else if (!r.sent) toast("Bu telefon bildirishnomaga ro'yxatdan o'tmagan. Ilovaga bildirishnoma ruxsatini bering va qayta oching.", true);
+    else if (!r.sent) toast("Bu telefon bildirishnomaga ro'yxatdan o'tmagan. Bildirishnoma ruxsatini bering va qayta oching.", true);
     else toast("Sinov xabari yuborildi");
-  } } }, "🔔 Sinov"));
+  } } }, "🔔 Sinov");
+  if (IN_APP) who.appendChild(testBtn());
   registerPush();
+  if (WEB_PUSH_OK && Notification.permission === "granted") {
+    webPushSubscribe(false).then((ok) => { if (ok) who.appendChild(testBtn()); }).catch(() => { /* keyingi ochilishda */ });
+  } else if (WEB_PUSH_OK && Notification.permission === "default") {
+    const enable = el("button", { class: "linkbtn", type: "button" }, "🔔 Xabarnomalarni yoqish");
+    enable.addEventListener("click", async () => {
+      enable.disabled = true;
+      let ok = false;
+      try { ok = await webPushSubscribe(true); } catch (e) { toast(e.message || "Yoqib bo'lmadi", true); }
+      enable.disabled = false;
+      if (ok) { enable.replaceWith(testBtn()); toast("Xabarnomalar yoqildi ✅"); }
+      else if (Notification.permission === "denied") { enable.remove(); toast("Ruxsat berilmadi. Sozlamalar → Bildirishnomalar orqali yoqing.", true); }
+    });
+    who.appendChild(enable);
+  }
+  const hint = iosInstallHint();
+  if (hint) who.appendChild(el("button", { class: "linkbtn", type: "button",
+    on: { click: () => sheet(() => el("div", {}, iosInstallHint())) } }, "📲 O'rnatish"));
   if (new URLSearchParams(location.search).get("next") === "dashboard" && S.me.role === "admin" && !IN_TELEGRAM) {
     location.replace("/panel/dashboard");
     return;

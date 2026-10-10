@@ -30,7 +30,8 @@ log = logging.getLogger(__name__)
 routes = web.RouteTableDef()
 
 PRICE_FIELDS = ("price", "total_price")
-DILLER_COMMON_PATHS = frozenset({"/api/me", "/api/logout", "/api/push/register", "/api/push/test"})
+DILLER_COMMON_PATHS = frozenset({"/api/me", "/api/logout", "/api/push/register", "/api/push/test",
+                                 "/api/push/web/key", "/api/push/web/subscribe", "/api/push/web/unsubscribe"})
 RATE_LIMIT = 120  # so'rov / daqiqa / foydalanuvchi
 
 
@@ -195,6 +196,8 @@ async def logout(request):
         d = {}
     if isinstance(d, dict) and d.get("push_token"):
         await S(request).push.unregister(actor(request), str(d["push_token"]))
+    if isinstance(d, dict) and d.get("web_endpoint"):
+        await S(request).push.web_unsubscribe(actor(request), str(d["web_endpoint"]))
     return web.json_response({"ok": True})
 
 
@@ -203,6 +206,25 @@ async def push_register(request):
     d = await body(request)
     await S(request).push.register(actor(request), str(d.get("token", "")), str(d.get("device", "")))
     return web.json_response({"ok": True, "enabled": S(request).push.enabled})
+
+
+@routes.get("/api/push/web/key")
+async def push_web_key(request):
+    return web.json_response({"key": S(request).push.web_key})
+
+
+@routes.post("/api/push/web/subscribe")
+async def push_web_subscribe(request):
+    d = await body(request)
+    await S(request).push.web_subscribe(actor(request), d.get("subscription"), str(d.get("device", "")))
+    return web.json_response({"ok": True})
+
+
+@routes.post("/api/push/web/unsubscribe")
+async def push_web_unsubscribe(request):
+    d = await body(request)
+    await S(request).push.web_unsubscribe(actor(request), str(d.get("endpoint", "")))
+    return web.json_response({"ok": True})
 
 
 @routes.post("/api/push/test")

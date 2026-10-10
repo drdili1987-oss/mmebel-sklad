@@ -100,6 +100,20 @@ def build_app(settings: Settings, services: Services, bot: Bot, dp: Dispatcher, 
         return web.FileResponse(STATIC_DIR / "dashboard.html")
 
     app.router.add_get("/panel/dashboard", dashboard_page)
+
+    async def service_worker(_):
+        # /panel/ ostida bo'lishi shart: SW faqat o'z papkasi va undan pastini boshqaradi
+        resp = web.FileResponse(STATIC_DIR / "sw.js")
+        resp.content_type = "text/javascript"
+        return resp
+
+    async def manifest(_):
+        resp = web.FileResponse(STATIC_DIR / "manifest.webmanifest")
+        resp.content_type = "application/manifest+json"
+        return resp
+
+    app.router.add_get("/panel/sw.js", service_worker)
+    app.router.add_get("/panel/manifest.webmanifest", manifest)
     app.router.add_static("/panel/static/", STATIC_DIR, show_index=False, follow_symlinks=False)
     app.add_routes(api_routes)
     from .web.diller_api import routes as diller_routes
@@ -131,6 +145,10 @@ def assemble(settings: Settings, store: Store):
     from .store import FirebaseStore
     if isinstance(store, FirebaseStore):
         services.push.sender = FCMSender()
+    if settings.vapid_private_key:
+        from .webpush import VapidKey, WebPushSender
+        subject = settings.public_url or "https://mmebel-bot.onrender.com"
+        services.push.web = WebPushSender(VapidKey(settings.vapid_private_key), subject)
     bot = create_bot(settings.api_token)
     notifier = Notifier(bot, services.users, push=services.push)
     events = Events(notifier)

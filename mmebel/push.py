@@ -71,14 +71,19 @@ class FCMSender:
 
 
 class PushService:
-    def __init__(self, store: Store, sender=None):
+    def __init__(self, store: Store, sender=None, web=None):
         self.store = store
-        self.sender = sender
+        self.sender = sender          # FCM (Android ilova)
+        self.web = web                # Web Push (iPhone web-ilova, brauzer)
         self._tasks: set[asyncio.Task] = set()
 
     @property
     def enabled(self) -> bool:
-        return self.sender is not None
+        return self.sender is not None or self.web is not None
+
+    @property
+    def web_key(self) -> str | None:
+        return self.web.vapid.public_b64u if self.web is not None else None
 
     async def register(self, user_id, token: str, device: str = "") -> None:
         token = (token or "").strip()
@@ -107,14 +112,53 @@ class PushService:
 
     async def unregister_user(self, user_id) -> None:
         await self.store.delete(f"push_tokens/{user_id}")
+        await self.store.delete(f"webpush/{user_id}")
+
+    # ---------- Web Push obunalari ----------
+    async def web_subscribe(self, user_id, sub: dict, device: str = "") -> None:
+        from .services import ServiceError
+        from .webpush import is_allowed_endpoint, valid_keys
+        if not isinstance(sub, dict):
+            raise ServiceError("Obuna noto'g'ri.")
+        endpoint = str(sub.get("endpoint") or "")
+        keys = sub.get("keys") if isinstance(sub.get("keys"), dict) else {}
+        p256dh, auth = str(keys.get("p256dh") or ""), str(keys.get("auth") or "")
+        if not is_allowed_endpoint(endpoint) or not valid_keys(p256dh, auth):
+            raise ServiceError("Obuna noto'g'ri.")
+        uid = str(user_id)
+        key = _key(endpoint)
+        all_subs = await self.store.get("webpush") or {}
+        updates = {f"{other}/{key}": None for other, recs in all_subs.items()
+                   if other != uid and isinstance(recs, dict) and key in recs}
+        updates[f"{uid}/{key}"] = {"endpoint": endpoint, "p256dh": p256dh, "auth": auth,
+                                   "device": clean_text(device, 120), "updated": now_str()}
+        recs = sorted(iter_records(all_subs.get(uid) or {}), key=lambda kv: kv[1].get("updated", ""))
+        recs = [kv for kv in recs if kv[0] != key]
+        while len(recs) >= MAX_TOKENS_PER_USER:
+            updates[f"{uid}/{recs.pop(0)[0]}"] = None
+        await self.store.update("webpush", updates)
+
+    async def web_unsubscribe(self, user_id, endpoint: str) -> None:
+        if endpoint:
+            await self.store.delete(f"webpush/{user_id}/{_key(str(endpoint))}")
+
+    async def web_subs_for(self, user_id) -> list[dict]:
+        raw = await self.store.get(f"webpush/{user_id}") or {}
+        return [r for _, r in iter_records(raw) if r.get("endpoint") and r.get("p256dh") and r.get("auth")]
 
     async def tokens_for(self, user_id) -> list[str]:
         raw = await self.store.get(f"push_tokens/{user_id}") or {}
         return [r["token"] for _, r in iter_records(raw) if r.get("token")]
 
     async def notify(self, user_id, title: str, body: str, sound: str | None = None) -> int:
-        if not self.enabled:
-            return 0
+        sent = 0
+        if self.sender is not None:
+            sent += await self._notify_fcm(user_id, title, body, sound)
+        if self.web is not None:
+            sent += await self._notify_web(user_id, title, body, sound)
+        return sent
+
+    async def _notify_fcm(self, user_id, title, body, sound) -> int:
         tokens = await self.tokens_for(user_id)
         if not tokens:
             return 0
@@ -126,6 +170,19 @@ class PushService:
         for t in dead:
             await self.unregister(user_id, t)
         return len(tokens) - len(dead)
+
+    async def _notify_web(self, user_id, title, body, sound) -> int:
+        subs = await self.web_subs_for(user_id)
+        if not subs:
+            return 0
+        try:
+            dead = await self.web.send(subs, {"title": title, "body": body, "kind": sound or ""})
+        except Exception as e:  # noqa: BLE001
+            log.warning("Web push xatosi (%s): %s", user_id, e)
+            return 0
+        for ep in dead:
+            await self.web_unsubscribe(user_id, ep)
+        return len(subs) - len(dead)
 
     def notify_later(self, user_id, title: str, body: str, sound: str | None = None) -> None:
         """Fon vazifasi sifatida yuborish — bot javobini sekinlashtirmaydi."""
