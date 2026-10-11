@@ -244,3 +244,34 @@ async def test_admin_custom_product_via_bot(h):
     assert "Buyurtma qabul qilindi" in r[0].text and "&lt;maxsus&gt;" in r[0].text
     o = next(iter((await h.services.orders.all()).values()))
     assert o["product_id"] == "Kuxnya 2.5m (yong'oq rang) <maxsus>" and o["total_price"] == 780
+
+
+async def test_admin_order_with_variant(h):
+    await h.text(ADMIN, "📝 Yangi buyurtma")
+    await h.text(ADMIN, "Umid")
+    r = await h.text(ADMIN, "BF 07")
+    assert ("⚙️ Tanlang · Bazoviy", "av:open") in h.buttons(r[-1])
+    await h.press(ADMIN, "av:open")
+    await h.press(ADMIN, "av:t:1")       # Kapotli
+    await h.press(ADMIN, "av:t:0")       # Matrasli
+    await h.press(ADMIN, "av:t:1")       # Kapotli qayta o'chirildi
+    await h.press(ADMIN, "av:done")
+    await h.text(ADMIN, "2")
+    await h.text(ADMIN, due())
+    r = await h.text(ADMIN, "⏩ O'tkazib yuborish")
+    assert "BF07 · Matrasli" in r[0].text
+    o = next(iter((await h.services.orders.all()).values()))
+    assert o["variant"] == "Matrasli"
+    plan = await h.services.reports.production_plan()
+    assert any(p["product_id"] == "BF07 · Matrasli" for p in plan)
+
+
+async def test_admin_order_without_variant_is_base(h):
+    await h.text(ADMIN, "📝 Yangi buyurtma")
+    await h.text(ADMIN, "Umid")
+    await h.text(ADMIN, "BF 07")
+    await h.text(ADMIN, "1")
+    await h.text(ADMIN, due())
+    await h.text(ADMIN, "⏩ O'tkazib yuborish")
+    o = next(iter((await h.services.orders.all()).values()))
+    assert "variant" not in o

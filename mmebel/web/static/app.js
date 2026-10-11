@@ -2,6 +2,8 @@
    Xavfsizlik: barcha ma'lumotlar DOM ga faqat textContent orqali yoziladi (innerHTML yo'q).
    Har bir API so'rovi Telegram imzosi (initData) bilan yuboriladi; server rolni o'zi aniqlaydi. */
 "use strict";
+/* Mebel nomi + variant (Matrasli/Kapotli). Variantsiz — bazoviy. */
+const plabel = (o) => (o && o.variant ? `${o.product_id} · ${o.variant}` : (o && o.product_id) || "");
 
 const tg = window.Telegram && window.Telegram.WebApp;
 const IN_TELEGRAM = !!(tg && tg.initData);
@@ -264,7 +266,7 @@ async function viewOrders() {
   const draw = () => {
     const q = search.value.trim().toLowerCase();
     S.ordersQuery = search.value;
-    const items = data.items.filter((o) => !q || `${o.client_name} ${o.product_id} ${o.id} ${o.comment || ""}`.toLowerCase().includes(q));
+    const items = data.items.filter((o) => !q || `${o.client_name} ${plabel(o)} ${o.id} ${o.comment || ""}`.toLowerCase().includes(q));
     clear(box);
     if (!items.length) { box.appendChild(empty(q ? "Hech narsa topilmadi." : "Bu ro'yxatda buyurtma yo'q.")); return; }
     if (scope === "active" || scope === "overdue") {
@@ -289,7 +291,7 @@ async function viewOrders() {
 
 function orderCard(o, showStatus) {
   return el("button", { type: "button", class: `order ${edgeClass(o.status)}${o.overdue ? " late" : ""}`, on: { click: () => orderSheet(o.id) } },
-    el("div", {}, el("span", { class: "code" }, o.product_id), el("span", { class: "qty" }, `× ${o.amount}`),
+    el("div", {}, el("span", { class: "code" }, plabel(o)), el("span", { class: "qty" }, `× ${o.amount}`),
       o.status !== "Tayyorlanmoqda" || showStatus ? el("span", { style: "margin-left:8px" }, el("span", { class: `badge ${edgeClass(o.status)}` }, o.status)) : null),
     el("div", { class: "line2" }, el("span", { class: "client" }, o.client_name || "—"),
       el("span", { class: "due" }, showStatus ? fdate(o.delivered_at || o.created_at) : fdate(o.due_date))),
@@ -330,12 +332,12 @@ async function orderSheet(id) {
         el("button", { class: "btn", type: "button", on: { click: () => deliverSheet(o, true, done) } }, "🏠 O'zi olib ketdi")));
       if (role === "admin") actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => editOrderSheet(o, done) } }, "✏️ O'zgartirish"));
       actions.appendChild(el("button", { class: "btn danger", type: "button", on: { click: async (e) => {
-        if (!(await confirmDlg(`${o.product_id} × ${o.amount} (${o.client_name}) bekor qilinsinmi? Ombordan ayirilgani qaytariladi.`))) return;
+        if (!(await confirmDlg(`${plabel(o)} × ${o.amount} (${o.client_name}) bekor qilinsinmi? Ombordan ayirilgani qaytariladi.`))) return;
         const r = await act(e.target, () => api("POST", `/api/orders/${encodeURIComponent(o.id)}/cancel`), "Buyurtma bekor qilindi");
         if (r) done();
       } } }, "Buyurtmani bekor qilish"));
     }
-    return el("div", {}, el("div", { class: "code-big" }, `${o.product_id} × ${o.amount}`), kv, actions);
+    return el("div", {}, el("div", { class: "code-big" }, `${plabel(o)} × ${o.amount}`), kv, actions);
   });
 }
 
@@ -359,7 +361,7 @@ function deliverSheet(o, pickup, onDone) {
     });
     return el("div", {},
       el("h2", {}, pickup ? "Diller o'zi olib ketdi" : "Biz yetkazib berdik"),
-      el("p", { class: "muted small" }, `${o.product_id} × ${o.amount} · ${o.client_name}`),
+      el("p", { class: "muted small" }, `${plabel(o)} × ${o.amount} · ${o.client_name}`),
       pickup ? null : field("Haydovchi", el("div", {}, chips(m.drivers, null, (v) => { driver = v; customDriver.value = ""; }), customDriver)),
       field(pickup ? "Chegirma ($) — qarzdan ayiriladi" : "Dostavka narxi ($) — haydovchi balansiga yoziladi",
         el("div", {}, chips(presets, null, (v) => { price = Number(v); priceInput.value = ""; }, (v) => `${v}$`), priceInput)),
@@ -382,7 +384,7 @@ function editOrderSheet(o, onDone) {
       const r = await act(btn, () => api("PATCH", `/api/orders/${encodeURIComponent(o.id)}`, body), "Saqlandi. Dillerga xabar yuborildi.");
       if (r) { close(); onDone(); }
     });
-    return el("div", {}, el("h2", {}, `${o.product_id} — o'zgartirish`),
+    return el("div", {}, el("h2", {}, `${plabel(o)} — o'zgartirish`),
       field("Soni", amount), field("Muddat", due), field("Izoh", comment),
       el("p", { class: "muted small" }, "Soni o'zgarsa, ombor qoldig'i avtomatik to'g'rilanadi."),
       el("div", { class: "actions" }, btn));
@@ -406,6 +408,21 @@ function newOrderSheet() {
       price.placeholder = custom ? "Narxi ($) — majburiy" : "Bo'sh qoldirsangiz — ombordagi narx";
     });
     const dl = el("datalist", { id: "models-dl" }, m.models.map((x) => el("option", { value: x })));
+    // Variant: «Tanlang» bosilganda Matrasli / Kapotli chiqadi; hech biri tanlanmasa — bazoviy
+    const chosen = new Set();
+    const variantLabel = el("span", {}, "Bazoviy");
+    const chips = el("div", { class: "chips hidden" }, (m.variants || []).map((v) => {
+      const c = el("button", { class: "chip", type: "button", "aria-pressed": "false" }, v);
+      c.addEventListener("click", () => {
+        if (chosen.has(v)) chosen.delete(v); else chosen.add(v);
+        c.setAttribute("aria-pressed", String(chosen.has(v)));
+        c.classList.toggle("on", chosen.has(v));
+        variantLabel.textContent = chosen.size ? (m.variants || []).filter((x) => chosen.has(x)).join(", ") : "Bazoviy";
+      });
+      return c;
+    }));
+    const variantBtn = el("button", { class: "btn ghost variant-btn", type: "button" }, "Tanlang ▾ · ", variantLabel);
+    variantBtn.addEventListener("click", () => chips.classList.toggle("hidden"));
     const amount = el("input", { type: "number", min: "1", max: "10000", value: "1", inputmode: "numeric" });
     const price = el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", placeholder: "Bo'sh qoldirsangiz — ombordagi narx" });
     const due = el("input", { type: "date", value: isoToday(2), min: isoToday() });
@@ -417,13 +434,14 @@ function newOrderSheet() {
       if (!client) { toast("Dillerni tanlang.", true); return; }
       if (!product.value.trim()) { toast("Mebelni kiriting.", true); return; }
       const body = { client_name: client, product: product.value.trim(), amount: Number(amount.value), due_date: due.value,
-        comment: comment.value, new_client: isNew };
+        comment: comment.value, new_client: isNew, variant: [...chosen] };
       if (price.value !== "") body.price = Number(price.value);
       const r = await act(btn, () => api("POST", "/api/orders", body), "Buyurtma yaratildi");
       if (r) { close(); S.ordersScope = "active"; go("orders"); }
     });
     return el("div", {}, el("h2", {}, "Yangi buyurtma"),
       field("Diller", el("div", {}, clientSel, newClient)), field("Mebel", el("div", {}, product, dl, productHint)),
+      (m.variants || []).length ? field("Variant", el("div", {}, variantBtn, chips)) : "",
       el("div", { class: "actions two", style: "margin-top:0" }, field("Soni", amount), field("Muddat", due)),
       field("1 dona narxi ($)", price), field("Izoh", comment), el("div", { class: "actions" }, btn));
   });
@@ -551,7 +569,7 @@ async function viewDeliveries(target) {
   holder.appendChild(el("div", { class: "section-title" }, "Ro'yxat"));
   if (!data.items.length) { holder.appendChild(empty("Bu oyda yetkazish yo'q.")); return; }
   holder.appendChild(el("div", { class: "list" }, data.items.map((r) => el("div", { class: "row" },
-    el("div", { class: "grow" }, el("div", {}, el("b", {}, r.product_id), ` × ${r.amount || 1} — ${r.client || "—"}`),
+    el("div", { class: "grow" }, el("div", {}, el("b", {}, plabel(r)), ` × ${r.amount || 1} — ${r.client || "—"}`),
       el("div", { class: "sub" }, `${r.driver || "—"} · ${r.price || "0"}${r.comment ? " · " + r.comment : ""}`)),
     el("div", { class: "end small muted" }, fdate(r.timestamp))))));
 }
@@ -626,7 +644,7 @@ async function accountSheet(client) {
     else box.appendChild(el("div", { class: "list" }, a.unsettled.map((r) => {
       const left = Math.max(0, r.net - r.paid_partial);
       const row = el("div", { class: "row", style: "flex-wrap:wrap" },
-        el("div", { class: "grow" }, el("div", {}, el("b", {}, r.product_id), ` × ${r.amount}`),
+        el("div", { class: "grow" }, el("div", {}, el("b", {}, plabel(r)), ` × ${r.amount}`),
           el("div", { class: "sub" }, `${fdate(r.delivered_at)} · ${money(r.gross)}${r.discount ? " − " + money(r.discount) + " chegirma" : ""}${r.paid_partial ? " − " + money(r.paid_partial) + " to'langan" : ""}`)),
         el("div", { class: "end" }, el("b", {}, money(left))));
       row.appendChild(el("div", { class: "actions two", style: "width:100%;margin-top:6px" },
@@ -640,13 +658,13 @@ async function accountSheet(client) {
     if (a.pending.length) {
       box.appendChild(el("div", { class: "section-title" }, `Tayyorlanmoqda (qarzga kirmagan) — ${a.pending.length} ta`));
       box.appendChild(el("div", { class: "list" }, a.pending.map((r) => el("div", { class: "row" },
-        el("div", { class: "grow" }, el("b", {}, r.product_id), ` × ${r.amount}`, el("div", { class: "sub" }, `${r.status} · ${fdate(r.due_date)}`)),
+        el("div", { class: "grow" }, el("b", {}, plabel(r)), ` × ${r.amount}`, el("div", { class: "sub" }, `${r.status} · ${fdate(r.due_date)}`)),
         el("div", { class: "end" }, money(r.gross))))));
     }
     box.appendChild(el("div", { class: "section-title" }, "Hisob-kitob tarixi"));
     if (!a.history.length) box.appendChild(empty("Tarix bo'sh."));
     else box.appendChild(el("div", { class: "list" }, a.history.slice(0, 60).map((h) => el("div", { class: "row" },
-      el("div", { class: "grow" }, h.accounting_type === "toliq" ? `✅ ${h.product_id || ""} × ${h.amount || ""}` : `💰 Qisman to'lov${h.product_id ? " · " + h.product_id : ""}`,
+      el("div", { class: "grow" }, h.accounting_type === "toliq" ? `✅ ${plabel(h) || ""} × ${h.amount || ""}` : `💰 Qisman to'lov${plabel(h) ? " · " + plabel(h) : ""}`,
         el("div", { class: "sub" }, `${fdate(h.accounting_date)}${h.note ? " · " + h.note : ""}${h.settled ? " · yopilgan" : ""}`)),
       el("div", { class: "end" }, money(h.accounting_type === "toliq" ? h.total_price : h.partial_payment))))));
     return box;
@@ -666,7 +684,7 @@ function partialSheet(client, row, onDone) {
       if (r) { close(); onDone(); }
     });
     return el("div", {}, el("h2", {}, "To'lov qabul qilish"),
-      el("p", { class: "muted small" }, row ? `${client} · ${row.product_id} × ${row.amount}` : `${client} · umumiy to'lov (qarzdan ayiriladi)`),
+      el("p", { class: "muted small" }, row ? `${client} · ${plabel(row)} × ${row.amount}` : `${client} · umumiy to'lov (qarzdan ayiriladi)`),
       field("Summa ($)", amount), field("Izoh", note), el("div", { class: "actions" }, btn));
   });
 }
@@ -717,7 +735,7 @@ async function viewMoreSection() {
       const max = Math.max(1, ...m.items.map((i) => i.count));
       holder.appendChild(el("div", { class: "section-title" }, `${m.month} — ${m.total} ta · ${money(m.revenue)}`));
       holder.appendChild(el("div", { class: "list" }, m.items.slice(0, 10).map((i) => el("div", { class: "row" },
-        el("div", { class: "grow" }, el("b", {}, i.product_id), el("div", { class: "bar" }, el("i", { style: `width:${Math.round(i.count / max * 100)}%` }))),
+        el("div", { class: "grow" }, el("b", {}, plabel(i)), el("div", { class: "bar" }, el("i", { style: `width:${Math.round(i.count / max * 100)}%` }))),
         el("div", { class: "end" }, `${i.count} ta`)))));
     });
   } else if (S.moreSeg === "users") { await usersSection(holder); }
@@ -787,13 +805,14 @@ async function settingsSection(holder) {
   holder.appendChild(block("clients", "Dillerlar ro'yxati", "Har qatorda bitta nom. Botdagi tanlov tugmalari shu ro'yxatdan olinadi."));
   holder.appendChild(block("drivers", "Haydovchilar", "Har qatorda bitta ism."));
   holder.appendChild(block("models", "Mebel modellari", "Botdagi tanlov tugmalari tartibi."));
+  holder.appendChild(block("variants", "Buyurtma variantlari", "Yangi buyurtmada «Tanlang» tugmasi ostidagi variantlar (masalan: Matrasli, Kapotli). Tanlanmasa — bazoviy."));
 }
 
 /* ================= DILLER PANELI ================= */
 function dOrderCard(o) {
   const done = !ACTIVE.includes(o.status);
   return el("button", { type: "button", class: `order ${edgeClass(o.status)}${o.overdue ? " late" : ""}`, on: { click: () => dOrderSheet(o) } },
-    el("div", {}, el("span", { class: "code" }, o.product_id), el("span", { class: "qty" }, `× ${o.amount}`),
+    el("div", {}, el("span", { class: "code" }, plabel(o)), el("span", { class: "qty" }, `× ${o.amount}`),
       el("span", { style: "margin-left:8px" }, el("span", { class: `badge ${edgeClass(o.status)}` }, o.status))),
     el("div", { class: "line2" },
       el("span", { class: "client" }, o.total_price ? money(o.total_price) : (o.own ? "Siz bergansiz" : "Zavod yaratgan")),
@@ -816,14 +835,14 @@ function dOrderSheet(o) {
     const actions = el("div", { class: "actions" });
     if (o.can_cancel) {
       actions.appendChild(el("button", { class: "btn danger", type: "button", on: { click: async (e) => {
-        if (!(await confirmDlg(`${o.product_id} × ${o.amount} zakazini bekor qilasizmi?`))) return;
+        if (!(await confirmDlg(`${plabel(o)} × ${o.amount} zakazini bekor qilasizmi?`))) return;
         const r = await act(e.target, () => api("POST", `/api/d/orders/${encodeURIComponent(o.id)}/cancel`), "Zakaz bekor qilindi");
         if (r) { close(); refresh(); }
       } } }, "Zakazni bekor qilish"));
     } else if (o.status === "Tayyorlanmoqda" && !o.own) {
       actions.appendChild(el("p", { class: "muted small" }, "Bu buyurtmani zavod yaratgan — bekor qilish uchun admin bilan bog'laning."));
     }
-    return el("div", {}, el("div", { class: "code-big" }, `${o.product_id} × ${o.amount}`), kv, actions);
+    return el("div", {}, el("div", { class: "code-big" }, `${plabel(o)} × ${o.amount}`), kv, actions);
   });
 }
 
@@ -931,7 +950,7 @@ async function viewDAccount() {
   view.appendChild(el("div", { class: "section-title" }, `To'lanmagan (olingan) mebellar — ${a.unsettled.length} ta`));
   if (!a.unsettled.length) view.appendChild(empty("Hammasi to'langan."));
   else view.appendChild(el("div", { class: "list" }, a.unsettled.map((r) => el("div", { class: "row" },
-    el("div", { class: "grow" }, el("b", {}, r.product_id), ` × ${r.amount}`,
+    el("div", { class: "grow" }, el("b", {}, plabel(r)), ` × ${r.amount}`,
       el("div", { class: "sub" }, `${fdate(r.delivered_at)}${r.discount ? " · chegirma " + money(r.discount) : ""}${r.paid_partial ? " · to'langan " + money(r.paid_partial) : ""}`)),
     el("div", { class: "end" }, el("b", {}, money(Math.max(0, r.net - r.paid_partial))))))));
   if (a.pending_orders) view.appendChild(el("p", { class: "muted small", style: "margin:8px 4px" },

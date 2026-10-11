@@ -285,7 +285,7 @@ async def me(request):
         meta.update(drivers=s["drivers"], delivery_prices=s["delivery_prices"],
                     pickup_discounts=s["pickup_discounts"], self_pickup=SELF_PICKUP_DRIVER)
     if role == ROLE_ADMIN:
-        meta.update(clients=s["clients"], months=last_months(12), roles=ROLE_LABELS)
+        meta.update(clients=s["clients"], months=last_months(12), roles=ROLE_LABELS, variants=s["variants"])
     elif role == ROLE_OMBORCHI:
         meta.update(months=last_months(12))
     elif role == ROLE_DILLER:
@@ -351,7 +351,7 @@ async def order_create(request):
     o = await S(request).orders.create(
         actor(request), client_name=d.get("client_name", ""), product=d.get("product", ""),
         amount=d.get("amount"), due_date=d.get("due_date", ""), comment=d.get("comment", ""),
-        source="admin", custom_price=d.get("price"),
+        source="admin", custom_price=d.get("price"), variant=d.get("variant"),
     )
     if d.get("new_client"):
         await S(request).catalog.add_client_if_missing(o["client_name"])

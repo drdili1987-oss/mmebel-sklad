@@ -5,7 +5,7 @@ from collections import OrderedDict
 from datetime import date
 
 from ..constants import ACTIVE_STATUSES, ST_CANCELLED, ST_PREPARING, ST_READY, ST_SENT
-from ..utils import fmt_money, format_date, h, has_comment, human_date, is_overdue, parse_date
+from ..utils import fmt_money, format_date, h, has_comment, human_date, is_overdue, parse_date, product_label
 
 STATUS_ICONS = {
     ST_PREPARING: "🔧",
@@ -28,7 +28,7 @@ def order_card(oid: str, o: dict, *, show_price: bool = False, title: str = "") 
     lines += [
         f"🆔 <code>{h(oid)}</code>",
         f"🧑 Diller: {h(o.get('client_name') or o.get('client') or '—')}",
-        f"📦 Mebel: <b>{h(o.get('product_id', '—'))}</b> — {h(o.get('amount', 1))} ta",
+        f"📦 Mebel: <b>{h(product_label(o))}</b> — {h(o.get('amount', 1))} ta",
         f"📅 Muddat: {h(format_date(o.get('due_date')))}",
     ]
     if show_price and (o.get("total_price") or o.get("price")):
@@ -53,7 +53,7 @@ def grouped_by_due(rows: list[tuple[str, dict]], *, show_status: bool = True) ->
         overdue = is_overdue(d, ST_PREPARING, ACTIVE_STATUSES)
         parts.append(f"{'🔴' if overdue else '🗓'} <b>{h(human_date(d))}</b>")
         for oid, o in items:
-            line = f"{icon(o.get('status', ''))} <b>{h(o.get('product_id', ''))}</b> × {h(o.get('amount', 1))}" \
+            line = f"{icon(o.get('status', ''))} <b>{h(product_label(o))}</b> × {h(o.get('amount', 1))}" \
                    f" — {h(o.get('client_name', ''))}"
             if show_status and o.get("status") != ST_PREPARING:
                 line += f" <i>({h(o.get('status', ''))})</i>"
@@ -66,5 +66,5 @@ def grouped_by_due(rows: list[tuple[str, dict]], *, show_status: bool = True) ->
 
 
 def short_btn(oid: str, o: dict) -> str:
-    return f"{icon(o.get('status', ''))} {o.get('product_id', '')} ×{o.get('amount', 1)} · " \
+    return f"{icon(o.get('status', ''))} {product_label(o)} ×{o.get('amount', 1)} · " \
            f"{str(o.get('client_name', ''))[:14]} · {format_date(o.get('due_date'))[:5]}"

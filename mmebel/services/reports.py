@@ -12,7 +12,7 @@ from ..constants import (
     ST_SETTLED,
 )
 from ..store import Store
-from ..utils import is_overdue, iter_records, money, now, parse_date, parse_number
+from ..utils import is_overdue, iter_records, money, now, parse_date, parse_number, product_label
 from .finance import order_amount, order_client, order_gross
 
 
@@ -73,7 +73,7 @@ class ReportService:
             if oid in seen or o.get("month") != month or o.get("status") not in DELIVERED_STATUSES:
                 continue
             rows.append({
-                "id": oid, "order_id": oid, "client": order_client(o), "product_id": o.get("product_id", ""),
+                "id": oid, "order_id": oid, "client": order_client(o), "product_id": o.get("product_id", ""), "variant": o.get("variant", ""),
                 "amount": o.get("amount", 1), "driver": o.get("driver") or "O'zi olib ketdi",
                 "price": o.get("delivery_price", "0"), "comment": o.get("comment", ""),
                 "timestamp": o.get("delivered_at") or o.get("created_at", ""),
@@ -139,7 +139,7 @@ class ReportService:
         for o in (await self._orders()).values():
             if o.get("status") != ST_PREPARING:
                 continue
-            pid = o.get("product_id", "—")
+            pid = product_label(o) or "—"  # Matrasli/Kapotli alohida ishlab chiqariladi
             a = agg.setdefault(pid, {"product_id": pid, "count": 0, "orders": 0, "nearest": None, "overdue": 0})
             a["count"] += order_amount(o)
             a["orders"] += 1
@@ -202,13 +202,13 @@ async def admin_dashboard(services) -> dict:
             per_day[d.isoformat()]["count"] += 1
             per_day[d.isoformat()]["items"] += order_amount(r)
     recent = [{"date": format_date(r.get("timestamp")), "client": r.get("client", ""),
-               "product_id": r.get("product_id", ""), "amount": order_amount(r), "driver": r.get("driver", "")}
+               "product_id": r.get("product_id", ""), "variant": r.get("variant", ""), "amount": order_amount(r), "driver": r.get("driver", "")}
               for r in deliveries[:8]]
 
     debts = [d for d in await finance.all_debts() if d["debt"] > 0]
 
     def short(oid, o):
-        return {"id": oid, "client": order_client(o), "product_id": o.get("product_id", ""),
+        return {"id": oid, "client": order_client(o), "product_id": o.get("product_id", ""), "variant": o.get("variant", ""),
                 "amount": order_amount(o), "due_date": format_date(o.get("due_date")), "status": o.get("status", "")}
 
     due = await reports.due_orders(until_today=True)

@@ -30,6 +30,7 @@ def d_order(oid: str, o: dict, me: int) -> dict:
     return {
         "id": oid,
         "product_id": o.get("product_id", ""),
+        "variant": o.get("variant", ""),
         "amount": to_int(o.get("amount"), 1),
         "status": st,
         "due_date": o.get("due_date", ""),

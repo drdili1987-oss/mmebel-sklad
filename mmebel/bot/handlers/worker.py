@@ -5,7 +5,7 @@ from aiogram import F, Router
 from aiogram.types import Message
 
 from ...constants import ROLE_ADMIN, ROLE_OMBORCHI, ROLE_XODIM, ST_PREPARING
-from ...utils import chunk_text, h
+from ...utils import chunk_text, h, product_label
 from .. import keyboards as kb
 from ..middlewares import Role
 from ..texts import grouped_by_due
@@ -24,7 +24,7 @@ async def active_orders(message: Message, services):
     head = [f"🔨 <b>Tayyorlanishi kerak ({len(rows)} ta buyurtma)</b>\n", "<b>Jami modellar bo'yicha:</b>"]
     for p in plan:
         warn = f" · 🔴 {p['overdue']} ta kechikkan" if p["overdue"] else ""
-        head.append(f"  • <b>{h(p['product_id'])}</b> — {p['count']} ta (eng yaqin: {p['nearest']}){warn}")
+        head.append(f"  • <b>{h(product_label(p))}</b> — {p['count']} ta (eng yaqin: {p['nearest']}){warn}")
     text = "\n".join(head) + "\n\n" + grouped_by_due(rows, show_status=False)
     for chunk in chunk_text(text):
         await message.answer(chunk)

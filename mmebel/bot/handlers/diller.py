@@ -18,7 +18,7 @@ from ...constants import (
 )
 from ...services import ServiceError
 from ...services.finance import order_client
-from ...utils import chunk_text, fmt_money, format_date, h, parse_positive_int, product_key, to_int
+from ...utils import chunk_text, fmt_money, format_date, h, parse_positive_int, product_key, to_int, product_label
 from .. import keyboards as kb
 from ..middlewares import Role
 from ..texts import icon
@@ -113,7 +113,7 @@ async def order_due(message: Message, state: FSMContext, services, events):
     await state.clear()
     price = f"\n💰 {fmt_money(o['price'])} × {o['amount']} = <b>{fmt_money(o['total_price'])}</b>" if o["price"] else ""
     await message.answer(f"✅ Zakaz qabul qilindi!\n🆔 <code>{o['order_id']}</code>\n"
-                         f"📦 {h(o['product_id'])} — {o['amount']} ta\n📅 Muddat: {o['due_date']}{price}",
+                         f"📦 {h(product_label(o))} — {o['amount']} ta\n📅 Muddat: {o['due_date']}{price}",
                          reply_markup=kb.main_menu(ROLE_DILLER))
     await events.order_created(o, message.from_user.id, by_diller=True)
 
@@ -131,13 +131,13 @@ async def history(message: Message, services):
     if active:
         lines.append(f"⏳ <b>Tayyorlanayotgan — {len(active)} ta:</b>")
         for _, o in active:
-            lines.append(f"  {icon(o.get('status'))} {h(o.get('product_id'))} — {h(o.get('amount'))} ta · "
+            lines.append(f"  {icon(o.get('status'))} {h(product_label(o))} — {h(o.get('amount'))} ta · "
                          f"📅 {format_date(o.get('due_date'))} · {h(o.get('status'))}")
         lines.append("")
     if done:
         lines.append(f"✅ <b>Olingan — {len(done)} ta:</b>")
         for _, o in done[:25]:
-            lines.append(f"  📦 {h(o.get('product_id'))} — {h(o.get('amount'))} ta · "
+            lines.append(f"  📦 {h(product_label(o))} — {h(o.get('amount'))} ta · "
                          f"{format_date(o.get('delivered_at') or o.get('due_date'))}")
     for chunk in chunk_text("\n".join(lines)):
         await message.answer(chunk)
@@ -159,7 +159,7 @@ async def status(message: Message, services):
         for _, o in pending:
             src = "👤" if o["_own"] else "🏷"
             total = f" · 💰 {fmt_money(o.get('total_price'))}" if o.get("total_price") else ""
-            lines.append(f"  {src} {icon(o.get('status'))} <b>{h(o.get('product_id'))}</b> — {h(o.get('amount'))} ta"
+            lines.append(f"  {src} {icon(o.get('status'))} <b>{h(product_label(o))}</b> — {h(o.get('amount'))} ta"
                          f" · 📅 {format_date(o.get('due_date'))}{total}")
         lines.append("")
     if delivered:
@@ -167,7 +167,7 @@ async def status(message: Message, services):
         for _, o in delivered[:30]:
             src = "👤" if o["_own"] else "🏷"
             drv = f" · 🚚 {h(o.get('driver'))}" if o.get("driver") else ""
-            lines.append(f"  {src} 📦 <b>{h(o.get('product_id'))}</b> — {h(o.get('amount'))} ta · "
+            lines.append(f"  {src} 📦 <b>{h(product_label(o))}</b> — {h(o.get('amount'))} ta · "
                          f"{fmt_money(o.get('total_price') or 0)} · {format_date(o.get('delivered_at'))}{drv}")
         if len(delivered) > 30:
             lines.append(f"  <i>...va yana {len(delivered) - 30} ta</i>")
@@ -190,7 +190,7 @@ async def cancel_start(message: Message, services):
         await message.answer("❌ Bekor qilish mumkin bo'lgan zakaz yo'q.\n"
                              "<i>Faqat siz bergan va «Tayyorlanmoqda» holatidagi zakazlar bekor qilinadi.</i>")
         return
-    buttons = [[(f"🚫 {o.get('product_id')} — {o.get('amount')} ta · {format_date(o.get('due_date'))}",
+    buttons = [[(f"🚫 {product_label(o)} — {o.get('amount')} ta · {format_date(o.get('due_date'))}",
                  f"dc:{k}")] for k, o in rows[:30]]
     await message.answer("Qaysi zakazni bekor qilmoqchisiz?", reply_markup=kb.inline(buttons + [[("Yopish", "close")]]))
 
@@ -204,7 +204,7 @@ async def cancel_pick(cb: CallbackQuery, services):
         await cb.answer(str(e), show_alert=True)
         return
     await cb.message.edit_text(
-        f"⚠️ <b>{h(o.get('product_id'))}</b> — {h(o.get('amount'))} ta zakazni bekor qilasizmi?\n"
+        f"⚠️ <b>{h(product_label(o))}</b> — {h(o.get('amount'))} ta zakazni bekor qilasizmi?\n"
         f"📅 Muddat: {format_date(o.get('due_date'))}",
         reply_markup=kb.inline([[("✅ Ha, bekor qil", f"dcy:{oid}"), ("🔙 Yo'q", "close")]]))
     await cb.answer()
@@ -218,7 +218,7 @@ async def cancel_confirm(cb: CallbackQuery, services, events):
     except ServiceError as e:
         await cb.answer(str(e), show_alert=True)
         return
-    await cb.message.edit_text(f"✅ Zakaz bekor qilindi: <b>{h(o.get('product_id'))}</b> — {h(o.get('amount'))} ta")
+    await cb.message.edit_text(f"✅ Zakaz bekor qilindi: <b>{h(product_label(o))}</b> — {h(o.get('amount'))} ta")
     await cb.answer()
     await events.order_cancelled(oid, o, cb.from_user.id, by_diller=True)
 
@@ -271,7 +271,7 @@ async def change_answer(cb: CallbackQuery, services, notifier):
     await cb.answer()
     await notifier.to_admins(
         f"{'✅' if ok else '❌'} Diller ({h(client)}) o'zgarishni <b>{'TASDIQLADI' if ok else 'RAD ETDI'}</b>\n"
-        f"🆔 <code>{h(oid)}</code> · {h(o.get('product_id'))}" + ("" if ok else "\nIltimos, diller bilan bog'laning!")
+        f"🆔 <code>{h(oid)}</code> · {h(product_label(o))}" + ("" if ok else "\nIltimos, diller bilan bog'laning!")
     )
 
 

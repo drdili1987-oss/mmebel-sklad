@@ -11,6 +11,7 @@ from ..constants import (
     DEFAULT_MODELS,
     DEFAULT_PICKUP_DISCOUNTS,
     DEFAULT_PRICE_CHANNEL,
+    DEFAULT_VARIANTS,
     LEGACY_DILLERS,
     LEGACY_ROLE_IDS,
     ROLE_DILLER,
@@ -21,11 +22,12 @@ from .errors import ServiceError
 
 log = logging.getLogger(__name__)
 
-LIST_KEYS = ("clients", "drivers", "models")
+LIST_KEYS = ("clients", "drivers", "models", "variants")
 _DEFAULTS = {
     "clients": DEFAULT_CLIENTS,
     "drivers": DEFAULT_DRIVERS,
     "models": DEFAULT_MODELS,
+    "variants": DEFAULT_VARIANTS,
 }
 _TTL = 60.0
 
@@ -58,13 +60,30 @@ class CatalogService:
     async def models(self) -> list[str]:
         return (await self.settings())["models"]
 
+    async def variants(self) -> list[str]:
+        return (await self.settings())["variants"]
+
+    async def normalize_variant(self, value) -> str:
+        """['Kapotli','Matrasli'] / 'Kapotli' -> 'Matrasli, Kapotli' (sozlamadagi tartibda). Bo'sh = bazoviy."""
+        if value in (None, "", []):
+            return ""
+        items = value if isinstance(value, list) else str(value).split(",")
+        chosen = {str(x).strip().lower() for x in items if str(x).strip()}
+        allowed = await self.variants()
+        unknown = chosen - {v.lower() for v in allowed}
+        if unknown:
+            raise ServiceError(f"Noma'lum variant: {', '.join(sorted(unknown))}")
+        return ", ".join(v for v in allowed if v.lower() in chosen)
+
     async def set_list(self, key: str, items: list[str], actor_id) -> list[str]:
         if key not in LIST_KEYS:
             raise ServiceError("Noma'lum ro'yxat.")
         cleaned: list[str] = []
         seen: set[str] = set()
         for item in items or []:
-            s = clean_text(item, 60)
+            s = clean_text(item, 30 if key == "variants" else 60)
+            if key == "variants" and "," in s:
+                raise ServiceError("Variant nomida vergul bo'lmasin.")
             if not s:
                 continue
             if key in ("clients", "drivers") and not is_valid_key(s):

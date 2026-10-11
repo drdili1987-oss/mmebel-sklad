@@ -14,6 +14,7 @@ from ...constants import (
 )
 from ...services import ServiceError
 from ...utils import (
+    product_label,
     chunk_text,
     fmt_money,
     format_date,
@@ -403,7 +404,7 @@ async def report_show(message: Message, state: FSMContext, services, role):
     lines = [f"{'📊' if kind == 'report' else '🕰'} <b>{month} — yetkazib berishlar ({len(rows)} ta)</b>\n"]
     for r in rows:
         lines.append(f"📅 {format_date(r.get('timestamp'))} · 🧑 {h(r.get('client'))}\n"
-                     f"📦 {h(r.get('product_id'))} ({h(r.get('amount', 1))} ta) · 🚚 {h(r.get('driver'))} ({h(r.get('price'))})")
+                     f"📦 {h(product_label(r))} ({h(r.get('amount', 1))} ta) · 🚚 {h(r.get('driver'))} ({h(r.get('price'))})")
         if kind == "report":
             lines.append(f"🆔 <code>{h(r.get('order_id'))}</code> · buyurtma: {format_date(r.get('order_created'))}")
         if has_comment(r.get("comment")):

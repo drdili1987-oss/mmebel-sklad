@@ -401,3 +401,19 @@ async def test_auth_limits_by_client_ip(client):
     assert codes[:10] == [200] * 10 and codes[10] == 429
     # boshqa mijoz (IP) bloklanmaydi — avval hammasi bitta proksi IP si ostida edi
     assert (await client.post("/api/auth/start", headers=hdrs("2.2.2.2"), json={})).status == 200
+
+
+async def test_order_variant_api(client):
+    due = (now() + timedelta(days=2)).strftime("%Y-%m-%d")
+    me = await (await client.get("/api/me", headers=hdr(ADMIN))).json()
+    assert me["meta"]["variants"] == ["Matrasli", "Kapotli"]
+    r = await client.post("/api/orders", headers=hdr(ADMIN), json={"client_name": "Umid", "product": "BF07", "amount": 1,
+                                                                  "due_date": due, "variant": ["kapotli", "Matrasli"]})
+    o = await r.json()
+    assert r.status == 201 and o["variant"] == "Matrasli, Kapotli"
+    bad = await client.post("/api/orders", headers=hdr(ADMIN), json={"client_name": "Umid", "product": "BF07", "amount": 1,
+                                                                    "due_date": due, "variant": ["Oltin"]})
+    assert bad.status == 400
+    d = await client.post("/api/d/orders", headers=hdr(DILLER), json={"product": "BF07", "amount": 1,
+                                                                     "due_date": due, "variant": ["Matrasli"]})
+    assert d.status == 201 and (await d.json())["variant"] == ""   # diller API variantni qabul qilmaydi

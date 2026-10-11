@@ -178,6 +178,13 @@ def has_comment(value) -> bool:
     return bool(value) and str(value).strip().lower() not in ("", "yoq", "yo'q", "yoʻq", "-")
 
 
+def product_label(o: dict) -> str:
+    """Buyurtmadagi mebel nomi + variant: 'BF07 · Matrasli'. Variantsiz — bazoviy (faqat nom)."""
+    pid = str(o.get("product_id") or "")
+    v = str(o.get("variant") or "").strip()
+    return f"{pid} · {v}" if v else pid
+
+
 def product_key(name: str) -> str:
     """'BF 54-41' -> 'BF5441' (eski kod bilan bir xil kalit)."""
     return str(name or "").replace(" ", "").replace("-", "").upper()

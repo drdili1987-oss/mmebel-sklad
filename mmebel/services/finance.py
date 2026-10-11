@@ -16,7 +16,7 @@ from ..constants import (
     ST_SETTLED,
 )
 from ..store import Store
-from ..utils import clean_text, is_valid_key, iter_records, money, now_str, parse_number, product_key
+from ..utils import clean_text, is_valid_key, iter_records, money, now_str, parse_number, product_key, product_label
 from .errors import Conflict, NotFound, ServiceError, run_tx
 
 MAX_PAYMENT = 10_000_000
@@ -104,7 +104,7 @@ def compute_account(client: str, orders: dict, history: dict | None, products: d
         status = o.get("status", "")
         row = {
             "order_id": oid,
-            "product_id": o.get("product_id", ""),
+            "product_id": o.get("product_id", ""), "variant": o.get("variant", ""),
             "amount": order_amount(o),
             "status": status,
             "due_date": o.get("due_date", ""),
@@ -202,7 +202,8 @@ class FinanceService:
         ts = now_str()
         await self.store.push(f"accounting_history/{client}", {
             "order_id": order_id, "client_name": client,
-            "product_id": order.get("product_id", ""), "amount": order.get("amount", "1"),
+            "product_id": order.get("product_id", ""), "variant": order.get("variant", ""),
+            "amount": order.get("amount", "1"),
             "due_date": order.get("due_date", ""), "price": order.get("price", 0),
             "total_price": order.get("total_price", 0), "comment": order.get("comment", ""),
             "accounting_type": "toliq", "accounting_date": ts, "status": ST_SETTLED,
@@ -212,7 +213,7 @@ class FinanceService:
         if received > 0:
             await self.store.push(f"transactions/clients/{client}", {
                 "type": "Kirim", "amount": received, "timestamp": ts,
-                "note": f"Hisob kitob qilindi: {order_id} ({order.get('product_id', '')})",
+                "note": f"Hisob kitob qilindi: {order_id} ({product_label(order)})",
             })
         new_debt = await self.recalc(client)
         return {"order_id": order_id, "net": row["net"], "received": received, "debt": new_debt}
@@ -231,7 +232,8 @@ class FinanceService:
         ts = now_str()
         await self.store.push(f"accounting_history/{client}", {
             "order_id": order_id or "", "client_name": client,
-            "product_id": order.get("product_id", ""), "amount": order.get("amount", ""),
+            "product_id": order.get("product_id", ""), "variant": order.get("variant", ""),
+            "amount": order.get("amount", ""),
             "due_date": order.get("due_date", ""), "partial_payment": amt,
             "comment": clean_text(note, 200) or order.get("comment", ""),
             "accounting_type": "qisman", "accounting_date": ts, "status": "Qisman to'ladi",
@@ -239,7 +241,7 @@ class FinanceService:
         })
         await self.store.push(f"transactions/clients/{client}", {
             "type": "Kirim", "amount": amt, "timestamp": ts,
-            "note": f"Qisman to'lov: {order_id or 'umumiy'}" + (f" ({order.get('product_id')})" if order else ""),
+            "note": f"Qisman to'lov: {order_id or 'umumiy'}" + (f" ({product_label(order)})" if order else ""),
         })
         return await self.recalc(client)
 
@@ -253,7 +255,7 @@ class FinanceService:
             oid = row["order_id"]
             key = self.store.new_key(f"accounting_history/{client}")
             updates[f"accounting_history/{client}/{key}"] = {
-                "order_id": oid, "client_name": client, "product_id": row["product_id"],
+                "order_id": oid, "client_name": client, "product_id": row["product_id"], "variant": row.get("variant", ""),
                 "amount": row["amount"], "due_date": row["due_date"], "total_price": row["gross"],
                 "comment": row["comment"], "accounting_type": "toliq", "accounting_date": ts,
                 "status": ST_SETTLED, "note": "Barchasini hisob kitob qilish", "by": str(actor_id),

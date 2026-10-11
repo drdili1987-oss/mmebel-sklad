@@ -10,6 +10,7 @@ from aiogram.types import CallbackQuery, Message
 from ...constants import ROLE_ADMIN, ST_READY
 from ...services import ServiceError
 from ...utils import (
+    product_label,
     chunk_text,
     fmt_money,
     format_date,
@@ -122,20 +123,52 @@ async def _set_product(message: Message, state: FSMContext, services, name: str,
         await message.answer("Bu mebelning narxi bazada yo'q. 1 dona narxini kiriting ($):", reply_markup=kb.back_kb())
         return
     stock = int(parse_number(p.get("soni"), 0) or 0)
+    await _ask_amount(message, state, services, f"📦 {h(name)} — narxi {fmt_money(price)}, omborda {stock} ta.\nNechta?")
+
+
+# ---------- variant (Matrasli / Kapotli): «Tanlang» tugmasi; tanlanmasa — bazoviy ----------
+def _variant_kb(variants: list[str], chosen: list[str], open_: bool):
+    label = ", ".join(v for v in variants if v in chosen) or "Bazoviy"
+    if not open_:
+        return kb.inline([[(f"⚙️ Tanlang · {label}", "av:open")]])
+    rows = [[(("✅ " if v in chosen else "▫️ ") + v, f"av:t:{i}")] for i, v in enumerate(variants)]
+    rows.append([("✔️ Tayyor", "av:done")])
+    return kb.inline(rows)
+
+
+async def _ask_amount(message: Message, state: FSMContext, services, text: str):
     await state.set_state(AOrder.amount)
-    await message.answer(f"📦 {h(name)} — narxi {fmt_money(price)}, omborda {stock} ta.\nNechta?",
-                         reply_markup=kb.back_kb())
+    await state.update_data(variant=[])
+    variants = await services.catalog.variants()
+    await message.answer(text, reply_markup=kb.back_kb())
+    if variants:
+        await message.answer("Variant (ixtiyoriy):", reply_markup=_variant_kb(variants, [], False))
+
+
+@router.callback_query(AOrder.amount, F.data.startswith("av:"))
+async def av_toggle(cb: CallbackQuery, state: FSMContext, services):
+    variants = await services.catalog.variants()
+    chosen = list((await state.get_data()).get("variant") or [])
+    parts = cb.data.split(":")
+    open_ = True
+    if parts[1] == "t" and len(parts) == 3 and parts[2].isdigit() and int(parts[2]) < len(variants):
+        v = variants[int(parts[2])]
+        chosen = [x for x in chosen if x != v] if v in chosen else chosen + [v]
+        await state.update_data(variant=chosen)
+    elif parts[1] == "done":
+        open_ = False
+    await cb.message.edit_reply_markup(reply_markup=_variant_kb(variants, chosen, open_))
+    await cb.answer()
 
 
 @router.message(AOrder.price)
-async def no_price(message: Message, state: FSMContext):
+async def no_price(message: Message, state: FSMContext, services):
     p = parse_number(message.text)
     if p is None or p < 0:
         await message.answer("❌ Narxni raqam bilan kiriting (masalan: 340).")
         return
     await state.update_data(custom_price=p)
-    await state.set_state(AOrder.amount)
-    await message.answer("Nechta?", reply_markup=kb.back_kb())
+    await _ask_amount(message, state, services, "Nechta?")
 
 
 @router.message(AOrder.amount)
@@ -167,7 +200,8 @@ async def no_finish(message: Message, state: FSMContext, services, events):
     try:
         o = await services.orders.create(message.from_user.id, client_name=data["client"], product=data["product"],
                                          amount=data["amount"], due_date=data["due"], comment=comment,
-                                         source="admin", custom_price=data.get("custom_price"))
+                                         source="admin", custom_price=data.get("custom_price"),
+                                         variant=data.get("variant") or None)
     except ServiceError as e:
         await message.answer(f"❌ {h(e)}")
         return
@@ -288,13 +322,13 @@ async def _show_account(message: Message, services, client: str, edit: bool = Fa
     if acc.pending:
         lines.append(f"\n⏳ <b>Tayyorlanmoqda (qarzga kirmagan) — {len(acc.pending)} ta:</b>")
         for r in acc.pending[:20]:
-            lines.append(f"  {'✅' if r['status'] == ST_READY else '🔧'} {h(r['product_id'])} — "
+            lines.append(f"  {'✅' if r['status'] == ST_READY else '🔧'} {h(product_label(r))} — "
                          f"{r['amount']} ta · {fmt_money(r['gross'])} · 📅 {format_date(r['due_date'])}")
     if acc.unsettled:
         lines.append(f"\n📦 <b>Olib ketilgan, to'lanmagan — {len(acc.unsettled)} ta.</b> Tanlang:")
     else:
         lines.append("\n✅ Hisob-kitob qilinadigan buyurtma yo'q.")
-    buttons = [[(f"🚛 {r['product_id']} ×{r['amount']} · {fmt_money(r['net'])} · {format_date(r['delivered_at'])[:5]}",
+    buttons = [[(f"🚛 {product_label(r)} ×{r['amount']} · {fmt_money(r['net'])} · {format_date(r['delivered_at'])[:5]}",
                  f"as:{r['order_id']}")] for r in acc.unsettled[:25]]
     if len(acc.unsettled) > 25:
         lines.append("<i>Faqat oxirgi 25 tasi ko'rsatildi. To'liq ro'yxat — panelda.</i>")
@@ -330,7 +364,7 @@ async def acc_order(cb: CallbackQuery, state: FSMContext, services):
     if not r:
         await cb.answer("Bu buyurtma allaqachon yopilgan.", show_alert=True)
         return
-    lines = [f"🚛 <b>{h(r['product_id'])}</b> — {r['amount']} ta", f"📅 Yetkazilgan: {format_date(r['delivered_at'])}",
+    lines = [f"🚛 <b>{h(product_label(r))}</b> — {r['amount']} ta", f"📅 Yetkazilgan: {format_date(r['delivered_at'])}",
              f"💰 Narxi: {fmt_money(r['gross'])}"]
     if r["discount"]:
         lines.append(f"💸 Chegirma (o'zi olib ketdi): −{fmt_money(r['discount'])}")
@@ -423,12 +457,12 @@ async def acc_history(cb: CallbackQuery, state: FSMContext, services):
     lines = [f"📜 <b>{h(client)} — hisob-kitob tarixi</b>\n"]
     for r in rows[:60]:
         if r.get("accounting_type") == "toliq":
-            lines.append(f"✅ {format_date(r.get('accounting_date'))} · <b>{h(r.get('product_id'))}</b> ×{h(r.get('amount'))}"
+            lines.append(f"✅ {format_date(r.get('accounting_date'))} · <b>{h(product_label(r))}</b> ×{h(r.get('amount'))}"
                          f" · {fmt_money(r.get('total_price') or 0)}")
         else:
             settled = " <i>(yopilgan)</i>" if r.get("settled") else ""
             lines.append(f"💰 {format_date(r.get('accounting_date'))} · qisman <b>{fmt_money(r.get('partial_payment'))}</b>"
-                         f"{' · ' + h(r.get('product_id')) if r.get('product_id') else ''}{settled}")
+                         f"{' · ' + h(product_label(r)) if product_label(r) else ''}{settled}")
     for chunk in chunk_text("\n".join(lines)):
         await cb.message.answer(chunk)
     await cb.answer()
@@ -558,7 +592,7 @@ async def driver_deliveries(cb: CallbackQuery, state: FSMContext, services):
     for month, items in data.items():
         lines.append(f"📅 <b>{month}</b> — {len(items)} ta")
         for d in items:
-            lines.append(f"  ▪️ {format_date(d.get('timestamp'))} · {h(d.get('client'))}: {h(d.get('product_id'))} ({h(d.get('price'))})")
+            lines.append(f"  ▪️ {format_date(d.get('timestamp'))} · {h(d.get('client'))}: {h(product_label(d))} ({h(d.get('price'))})")
         lines.append("")
     for chunk in chunk_text("\n".join(lines)):
         await cb.message.answer(chunk)
@@ -576,7 +610,7 @@ async def sales(message: Message, services):
     for m in data:
         lines.append(f"📅 <b>{m['month']}</b> — {m['total']} ta · {fmt_money(m['revenue'])}")
         for i, it in enumerate(m["items"][:15], 1):
-            lines.append(f"  {i}. {h(it['product_id'])} — {it['count']} ta")
+            lines.append(f"  {i}. {h(product_label(it))} — {it['count']} ta")
         lines.append("")
     for chunk in chunk_text("\n".join(lines)):
         await message.answer(chunk)

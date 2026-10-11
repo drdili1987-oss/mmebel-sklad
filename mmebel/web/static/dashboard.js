@@ -1,6 +1,8 @@
 /* Munosib Mebel — admin dashboard (katta ekran). Ma'lumotlar har 60 soniyada yangilanadi.
    Xavfsizlik: DOM faqat textContent orqali to'ldiriladi; kirish — panel bilan umumiy sessiya tokeni. */
 "use strict";
+/* Mebel nomi + variant (Matrasli/Kapotli). Variantsiz — bazoviy. */
+const plabel = (o) => (o && o.variant ? `${o.product_id} · ${o.variant}` : (o && o.product_id) || "");
 
 const REFRESH_MS = 60000;
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -195,7 +197,7 @@ function render() {
     el("div", { class: "card-head" }, el("div", {}, el("h2", {}, "Muddati o'tgan buyurtmalar"),
       el("div", { class: "sub" }, d.overdue.length ? `${d.overdue.length} ta — eng eskisi tepada` : "Kechikkan buyurtma yo'q"))),
     d.overdue.length ? table(["Mebel", "Diller", "Muddat"], d.overdue.map((o) => [
-      el("td", { class: "code" }, `${o.product_id} ×${o.amount}`), el("td", {}, o.client), el("td", { class: "n late" }, o.due_date)]))
+      el("td", { class: "code" }, `${plabel(o)} ×${o.amount}`), el("td", {}, o.client), el("td", { class: "n late" }, o.due_date)]))
       : el("div", { class: "empty-s" }, "Hammasi o'z vaqtida."));
 
   const dueRows = [...d.due_today.map((o) => ({ ...o, when: "Bugun" })), ...d.tomorrow.map((o) => ({ ...o, when: "Ertaga" }))];
@@ -203,7 +205,7 @@ function render() {
     el("div", { class: "card-head" }, el("div", {}, el("h2", {}, "Bugun va ertaga topshiriladi"),
       el("div", { class: "sub" }, `${d.due_today.length} ta bugun · ${d.tomorrow.length} ta ertaga`))),
     dueRows.length ? table(["Mebel", "Diller", "Qachon"], dueRows.map((o) => [
-      el("td", { class: "code" }, `${o.product_id} ×${o.amount}`), el("td", {}, o.client),
+      el("td", { class: "code" }, `${plabel(o)} ×${o.amount}`), el("td", {}, o.client),
       el("td", { class: "n" }, `${o.when} · ${o.status === "Tayyorlanmoqda" ? "tayyorlanmoqda" : "tayyor"}`)]))
       : el("div", { class: "empty-s" }, "Yaqin kunlarda topshiriladigan buyurtma yo'q."));
 
@@ -216,7 +218,7 @@ function render() {
   const recentCard = el("section", { class: "card span-8" },
     el("div", { class: "card-head" }, el("div", {}, el("h2", {}, "So'nggi yetkazishlar"))),
     d.recent.length ? table(["Sana", "Mebel", "Diller", "Haydovchi"], d.recent.map((r) => [
-      el("td", {}, r.date), el("td", { class: "code" }, `${r.product_id} ×${r.amount}`), el("td", {}, r.client), el("td", { class: "n" }, r.driver)]))
+      el("td", {}, r.date), el("td", { class: "code" }, `${plabel(r)} ×${r.amount}`), el("td", {}, r.client), el("td", { class: "n" }, r.driver)]))
       : el("div", { class: "empty-s" }, "Hali yetkazish yo'q."));
 
   const all = [...cards, ...second, revCard, stCard, delCard, topCard, debtCard, lateCard, dueCard, stockCard, recentCard];

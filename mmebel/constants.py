@@ -58,6 +58,8 @@ DEFAULT_CLIENTS = [
 
 DEFAULT_DRIVERS = ["Dilmurod", "Bahodir aka", "Javxar", "Baxrom"]
 
+DEFAULT_VARIANTS = ["Matrasli", "Kapotli"]  # tanlanmasa — bazoviy
+
 DEFAULT_MODELS = [
     "BF 06", "BF 07", "BF 09",
     "BF 12", "BF 14", "BF 15", "BF 18",

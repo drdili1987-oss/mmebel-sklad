@@ -18,7 +18,7 @@ import aiohttp
 from aiogram.types import FSInputFile
 
 from .constants import ROLE_ADMIN, ROLE_OMBORCHI, ROLE_XODIM, ST_PREPARING, ST_READY
-from .utils import format_date, h, has_comment, now, now_str
+from .utils import format_date, h, has_comment, now, now_str, product_label
 
 BACKUP_EXCLUDE = ("fsm", "sessions", "app_login", "push_tokens", "webpush")
 log = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ class Scheduler:
         for i, (_, o) in enumerate(rows, 1):
             st = o.get("status")
             ic = "🔧" if st == ST_PREPARING else "✅" if st == ST_READY else "🚛"
-            lines.append(f"{i}. {ic} <b>{h(o.get('client_name', '?'))}</b> — {h(o.get('product_id', '?'))} "
+            lines.append(f"{i}. {ic} <b>{h(o.get('client_name', '?'))}</b> — {h(product_label(o))} "
                          f"({h(o.get('amount', '?'))} ta)\n   📅 {format_date(o.get('due_date'))} · {h(st)}")
             if has_comment(o.get("comment")):
                 lines.append(f"   📝 {h(o.get('comment'))}")
@@ -88,7 +88,7 @@ class Scheduler:
             return f"📢 <b>ERTANGI ZAKAZLAR ({d})</b>\n\n✅ Ertaga yetkaziladigan zakaz yo'q."
         lines = [f"📢 <b>ERTANGI ZAKAZLAR ({d})</b>\n"]
         for i, (_, o) in enumerate(rows, 1):
-            lines.append(f"{i}. 👤 <b>{h(o.get('client_name', '?'))}</b> — {h(o.get('product_id', '?'))} "
+            lines.append(f"{i}. 👤 <b>{h(o.get('client_name', '?'))}</b> — {h(product_label(o))} "
                          f"({h(o.get('amount', '?'))} ta) · {h(o.get('status'))}")
             if has_comment(o.get("comment")):
                 lines.append(f"   📝 {h(o.get('comment'))}")

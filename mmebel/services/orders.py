@@ -29,6 +29,7 @@ from ..utils import (
     parse_date,
     parse_number,
     product_key,
+    product_label,
 )
 from .errors import Conflict, NotFound, ServiceError, run_tx
 from .finance import order_amount, order_client, order_gross, order_net
@@ -98,7 +99,7 @@ class OrderService:
 
     async def create(self, actor_id, *, client_name: str, product: str, amount, due_date: str,
                      comment: str = "", source: str = "admin", client_tg_id=None,
-                     custom_price=None, allow_past: bool = False) -> dict:
+                     custom_price=None, allow_past: bool = False, variant=None) -> dict:
         client_name = clean_text(client_name, 80)
         if not client_name or not is_valid_key(client_name):
             raise ServiceError("Mijoz nomi bo'sh yoki unda . $ # [ ] / belgilari bor.")
@@ -131,6 +132,9 @@ class OrderService:
         else:
             unit = self.inventory.unit_price(product_rec)
 
+        variant_txt = await self.finance.catalog.normalize_variant(variant)
+        if variant_txt and source == "diller":
+            raise ServiceError("Variantni faqat admin tanlaydi.")
         oid = await self._new_id(pid)
         deducted = await self.inventory.reserve(pid, qty)
         ts = now_str()
@@ -150,6 +154,8 @@ class OrderService:
             "total_price": money(unit * qty),
             "deducted_qty": deducted,
         }
+        if variant_txt:
+            record["variant"] = variant_txt
         if client_tg_id is not None:
             record["client_tg_id"] = str(client_tg_id)
         try:
@@ -230,7 +236,8 @@ class OrderService:
         client = order_client(order)
         await self.store.push(f"deliveries/{month_key()}", {
             "order_id": order_id, "client": client, "driver": driver, "price": price_label,
-            "product_id": order.get("product_id", ""), "amount": order.get("amount", 1),
+            "product_id": order.get("product_id", ""), "variant": order.get("variant", ""),
+            "amount": order.get("amount", 1),
             "timestamp": ts, "comment": order.get("comment", ""),
         })
         updated = dict(order, status=to, driver=driver, delivery_price=price_label,
@@ -238,7 +245,7 @@ class OrderService:
         net = order_net(updated)
         if net > 0 and client and is_valid_key(client):
             note = (f"Olib ketdi (chegirma: {fee:g}$): " if pickup and fee else "Yetkazildi: ") + \
-                   f"{order.get('product_id', '')} ({order_amount(order)} ta) (Buyurtma: {order_id})"
+                   f"{product_label(order)} ({order_amount(order)} ta) (Buyurtma: {order_id})"
             await self.store.push(f"transactions/clients/{client}", {
                 "type": "Chiqim", "amount": net, "timestamp": ts, "note": note,
             })
