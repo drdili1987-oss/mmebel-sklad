@@ -14,6 +14,7 @@ from ..constants import (
     APP_ROLES,
     ROLE_DILLER,
     ROLE_ADMIN,
+    ROLE_MIJOZ,
     ROLE_LABELS,
     ROLE_OMBORCHI,
     ROLE_XODIM,
@@ -30,6 +31,7 @@ log = logging.getLogger(__name__)
 routes = web.RouteTableDef()
 
 PRICE_FIELDS = ("price", "total_price")
+MIJOZ_PATHS = frozenset({"/api/me", "/api/logout", "/api/m/catalog"})
 DILLER_COMMON_PATHS = frozenset({"/api/me", "/api/logout", "/api/push/register", "/api/push/test",
                                  "/api/push/web/key", "/api/push/web/subscribe", "/api/push/web/unsubscribe"})
 RATE_LIMIT = 120  # so'rov / daqiqa / foydalanuvchi
@@ -97,7 +99,7 @@ async def api_middleware(request: web.Request, handler):
     settings = request.app["settings"]
     if request.path.startswith("/api/auth/"):
         # Ochiq endpointlar (ilovaga kirish) — mijoz IP si bo'yicha va umumiy cheklov
-        kind = "poll" if request.path == "/api/auth/poll" else "start"
+        kind = "poll" if request.path in ("/api/auth/poll", "/api/auth/phone/verify") else "start"
         if not (request.app["auth_global"].allow("all")
                 and request.app["auth_limiter"].allow((kind, client_ip(request)))):
             return _json_error(429, "Juda ko'p urinish. Bir daqiqadan so'ng qayta urinib ko'ring.")
@@ -121,6 +123,12 @@ async def api_middleware(request: web.Request, handler):
     if not request.app["limiter"].allow(user.id):
         return _json_error(429, "Juda ko'p so'rov. Bir daqiqadan so'ng urinib ko'ring.")
     role = await services.users.role(user.id)
+    if role == ROLE_MIJOZ:
+        # Rol berilmagan foydalanuvchi: faqat sotuvdagi mebellar ko'rinadi
+        if request.path not in MIJOZ_PATHS:
+            return _json_error(403, "Bu bo'lim uchun ruxsat yo'q. Rol olish uchun adminga murojaat qiling.")
+        request["user"], request["role"] = user, role
+        return await _guarded(request, handler)
     if role not in APP_ROLES:
         log.info("API 403 user=%s role=%s %s", user.id, role, request.path)
         return _json_error(403, "Ilova faqat zavod xodimlari va dillerlar uchun. Adminga murojaat qiling.")
@@ -213,6 +221,35 @@ async def auth_start(request):
     return web.json_response(res)
 
 
+@routes.post("/api/auth/phone/start")
+async def auth_phone_start(request):
+    d = await body(request)
+    res = await S(request).sessions.phone_start(str(d.get("phone", "")), device=str(d.get("device", ""))[:120])
+    username = await request.app["bot_username"]()
+    if res["user_id"]:
+        from ..bot.handlers.common import describe_device
+        text = (f"🔐 <b>Munosib Mebel ilovasiga kirish kodi:</b>\n\n<code>{res['code']}</code>\n\n"
+                f"📱 Qurilma: {describe_device(str(d.get('device', '')))}\n⏱ Kod 5 daqiqa amal qiladi.\n\n"
+                "⚠️ Kodni <b>hech kimga bermang</b> — zavod xodimlari ham so'ramaydi. "
+                "Agar siz so'ramagan bo'lsangiz, e'tibor bermang.")
+        await request.app["events"].n.send(int(res["user_id"]), text, push=False)
+        log.info("phone login code sent: user=%s", res["user_id"])
+    else:
+        log.info("phone login: raqam ro'yxatda yo'q")
+    # Raqam ro'yxatda bor-yo'qligi oshkor qilinmaydi (javob bir xil)
+    return web.json_response({"request_id": res["request_id"], "expires_in": res["expires_in"],
+                              "bot_link": f"https://t.me/{username}?start=phone",
+                              "tg_link": f"tg://resolve?domain={username}&start=phone"})
+
+
+@routes.post("/api/auth/phone/verify")
+async def auth_phone_verify(request):
+    d = await body(request)
+    res = await S(request).sessions.phone_verify(str(d.get("request_id", "")), str(d.get("code", "")))
+    log.info("phone login approved: user=%s", res["user_id"])
+    return web.json_response(res)
+
+
 @routes.post("/api/auth/poll")
 async def auth_poll(request):
     d = await body(request)
@@ -272,6 +309,17 @@ async def push_test(request):
     sent = await S(request).push.notify(actor(request), titles.get(sound, "Munosib Mebel"),
                                         "Bildirishnomalar ishlayapti ✅", sound)
     return web.json_response({"sent": sent, "enabled": S(request).push.enabled})
+
+
+# ================= mijoz (rol berilmagan) =================
+@routes.get("/api/m/catalog")
+async def m_catalog(request):
+    s = await S(request).catalog.settings()
+    items = [{"id": pid, "name": p.get("nomi", pid), "model": p.get("modeli", ""), "qty": to_int(p.get("soni")),
+              "image": p.get("rasm", "")}
+             for pid, p in (await S(request).inventory.all()).items() if to_int(p.get("soni")) > 0]
+    items.sort(key=lambda r: r["name"])
+    return web.json_response({"items": items, "price_channel": s["price_channel"]})
 
 
 # ================= umumiy =================

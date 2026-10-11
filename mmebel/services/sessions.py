@@ -17,9 +17,13 @@ import time
 
 from ..store import Store
 from ..utils import clean_text, iter_records
-from .errors import Conflict, NotFound, run_tx
+from .errors import Conflict, NotFound, ServiceError, run_tx
 
 LOGIN_TTL = 5 * 60
+CODE_TTL = 5 * 60
+CODE_ATTEMPTS = 5            # bitta kod uchun noto'g'ri urinishlar
+PHONE_RESEND = 60            # bir raqamga kod qayta yuborish oralig'i (soniya)
+PHONE_PER_HOUR = 5           # bir raqamga soatiga kodlar soni
 SESSION_TTL = 60 * 24 * 3600  # oxirgi foydalanishdan boshlab (faol xodim chiqarib yuborilmaydi)
 TOUCH_EVERY = 3600
 _CACHE_TTL = 60.0
@@ -27,6 +31,16 @@ _CACHE_TTL = 60.0
 
 def _h(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def normalize_phone(raw: str) -> str | None:
+    """'+998 90 123-45-67' / '901234567' -> '998901234567'. Noto'g'ri bo'lsa None."""
+    digits = "".join(c for c in str(raw or "") if c.isdigit())
+    if len(digits) == 9:            # O'zbekiston: operator kodi + raqam
+        digits = "998" + digits
+    if not 10 <= len(digits) <= 15:
+        return None
+    return digits
 
 
 class SessionService:
@@ -86,11 +100,81 @@ class SessionService:
         await self.store.delete(f"app_login/{code}")  # bir martalik
         if status != "approved":
             return {"status": "rejected"}
+        token = await self._issue(rec["user_id"], rec.get("device", ""))
+        return {"status": "approved", "token": token, "user_id": rec["user_id"]}
+
+    async def _issue(self, user_id, device: str) -> str:
         token = secrets.token_urlsafe(32)
         now = int(time.time())
         await self.store.set(f"sessions/{_h(token)}", {
-            "user_id": rec["user_id"], "created": now, "last_used": now, "device": rec.get("device", ""),
+            "user_id": str(user_id), "created": now, "last_used": now, "device": clean_text(device, 120),
         })
+        return token
+
+    # ---------- telefon raqam + botga kod ----------
+    async def phone_start(self, phone: str, device: str = "") -> dict:
+        """Kod yaratadi. Natija: request_id (ilovaga), user_id va code (botga yuborish uchun; raqam
+        ro'yxatda bo'lmasa user_id=None). Raqam bor-yo'qligi ilovaga oshkor qilinmaydi."""
+        digits = normalize_phone(phone)
+        if not digits:
+            raise ServiceError("Telefon raqamini to'liq kiriting, masalan: +998 90 123 45 67")
+        now = time.time()
+        rate = {}
+
+        def tx(cur):
+            recent = [t for t in (cur or []) if isinstance(t, (int, float)) and now - t < 3600]
+            if recent and now - max(recent) < PHONE_RESEND:
+                rate["wait"] = int(PHONE_RESEND - (now - max(recent))) + 1
+                return recent
+            if len(recent) >= PHONE_PER_HOUR:
+                rate["wait"] = int(3600 - (now - min(recent))) + 1
+                return recent
+            return recent + [int(now)]
+
+        await self.store.transaction(f"phone_rate/{digits}", tx)
+        if rate.get("wait"):
+            raise Conflict(f"Kod yaqinda yuborilgan. {rate['wait']} soniyadan so'ng qayta urinib ko'ring.")
+        uid = await self.store.get(f"phones/{digits}")
+        rid = secrets.token_urlsafe(24)
+        code = f"{secrets.randbelow(10**6):06d}"
+        await self.store.set(f"phone_login/{rid}", {
+            "user_id": str(uid) if uid else "", "code_hash": _h(rid + code), "created": int(now),
+            "attempts": 0, "device": clean_text(device, 120),
+        })
+        return {"request_id": rid, "expires_in": CODE_TTL, "user_id": str(uid) if uid else None, "code": code}
+
+    async def phone_verify(self, request_id: str, code: str) -> dict:
+        rid = str(request_id or "")
+        if not rid or len(rid) > 64 or not rid.replace("-", "").replace("_", "").isalnum():
+            raise NotFound("Kirish so'rovi topilmadi. Qaytadan kod oling.")
+        rec = await self.store.get(f"phone_login/{rid}")
+        if not isinstance(rec, dict):
+            raise NotFound("Kirish so'rovi topilmadi. Qaytadan kod oling.")
+        if time.time() - float(rec.get("created", 0)) > CODE_TTL:
+            await self.store.delete(f"phone_login/{rid}")
+            raise Conflict("Kod muddati tugadi. Qaytadan kod oling.")
+        left = {}
+
+        def tx(cur):
+            if not isinstance(cur, dict):
+                raise NotFound("Kirish so'rovi topilmadi. Qaytadan kod oling.")
+            n = int(cur.get("attempts", 0)) + 1
+            if n > CODE_ATTEMPTS:
+                raise Conflict("Urinishlar tugadi. Qaytadan kod oling.")
+            cur["attempts"] = n
+            left["n"] = CODE_ATTEMPTS - n
+            return cur
+
+        await run_tx(self.store, f"phone_login/{rid}", tx)   # urinish avval sanaladi (parallel taxminga qarshi)
+        code = "".join(c for c in str(code or "") if c.isdigit())
+        ok = bool(rec.get("user_id")) and hmac.compare_digest(rec.get("code_hash", ""), _h(rid + code))
+        if not ok:
+            if left["n"] <= 0:
+                await self.store.delete(f"phone_login/{rid}")
+            raise Conflict(f"Kod noto'g'ri. Qolgan urinishlar: {left['n']}." if left["n"] > 0
+                           else "Kod noto'g'ri. Urinishlar tugadi — qaytadan kod oling.")
+        await self.store.delete(f"phone_login/{rid}")   # bir martalik
+        token = await self._issue(rec["user_id"], rec.get("device", ""))
         return {"status": "approved", "token": token, "user_id": rec["user_id"]}
 
     # ---------- sessiyalar ----------
@@ -139,6 +223,10 @@ class SessionService:
         for code, rec in iter_records(await self.store.get("app_login") or {}):
             if now - float(rec.get("created", 0) or 0) > LOGIN_TTL:
                 await self.store.delete(f"app_login/{code}")
+                logins += 1
+        for rid, rec in iter_records(await self.store.get("phone_login") or {}):
+            if now - float(rec.get("created", 0) or 0) > CODE_TTL:
+                await self.store.delete(f"phone_login/{rid}")
                 logins += 1
         for key, rec in iter_records(await self.store.get("sessions") or {}):
             if now - float(rec.get("last_used") or rec.get("created", 0) or 0) > SESSION_TTL:

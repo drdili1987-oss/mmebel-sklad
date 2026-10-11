@@ -46,7 +46,7 @@ async def app_login(message: Message, command: CommandObject, state: FSMContext,
     from ...services import ServiceError
     await state.clear()
     code = (command.args or "")[6:]
-    allowed = role in APP_ROLES
+    allowed = True  # rol berilmaganlar ham kiradi — ilovada "Mijoz" sifatida (faqat sotuvdagi mebellar)
     log.info("app login: user=%s role=%s code=%s… allowed=%s", message.from_user.id, role, code[:6], allowed)
     if not allowed:
         try:
@@ -76,7 +76,7 @@ async def app_login(message: Message, command: CommandObject, state: FSMContext,
 async def app_login_confirm(cb: CallbackQuery, role: str, services):
     from ...services import ServiceError
     _, answer, code = (cb.data.split(":", 2) + ["", ""])[:3]
-    approve = answer == "y" and role in APP_ROLES
+    approve = answer == "y"
     try:
         await services.sessions.approve(code, cb.from_user.id, approve=approve)
     except ServiceError as e:
@@ -91,13 +91,39 @@ async def app_login_confirm(cb: CallbackQuery, role: str, services):
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext, role: str, settings):
+async def cmd_start(message: Message, state: FSMContext, role: str, settings, services):
     await state.clear()
     await sync_menu_button(message.bot, message.chat.id, role, settings)
     await message.answer(
         f"Assalomu alaykum, {h(message.from_user.first_name)}!\nRolingiz: <b>{ROLE_LABELS.get(role, role)}</b>",
         reply_markup=kb.main_menu(role),
     )
+    if not await services.users.has_phone(message.from_user.id):
+        await message.answer("📱 Mobil ilovaga telefon raqamingiz bilan kirish uchun pastdagi "
+                             f"«{kb.B_SHARE_PHONE}» tugmasini bosing.", reply_markup=kb.phone_kb())
+
+
+@router.message(Command("phone"))
+async def cmd_phone(message: Message):
+    await message.answer(f"Raqamingizni yangilash uchun «{kb.B_SHARE_PHONE}» ni bosing.", reply_markup=kb.phone_kb())
+
+
+@router.message(F.contact)
+async def got_contact(message: Message, role: str, services):
+    c = message.contact
+    if not c or c.user_id != message.from_user.id:
+        await message.answer("❌ Faqat o'zingizning raqamingizni tugma orqali ulashing.", reply_markup=kb.phone_kb())
+        return
+    from ...services import ServiceError
+    try:
+        digits = await services.users.set_phone(message.from_user.id, c.phone_number)
+    except ServiceError as e:
+        await message.answer(f"❌ {h(e)}", reply_markup=kb.main_menu(role))
+        return
+    log.info("phone linked: user=%s", message.from_user.id)
+    await message.answer(f"✅ Raqamingiz saqlandi: <b>+{h(digits)}</b>\n"
+                         "Endi ilovaga shu raqam bilan kirishingiz mumkin — kod shu botga keladi.",
+                         reply_markup=kb.main_menu(role))
 
 
 @router.message(Command("id"))

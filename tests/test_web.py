@@ -81,9 +81,15 @@ async def test_api_requires_auth(client):
     assert r.status == 401
 
 
-async def test_non_staff_forbidden(client):
-    r = await client.get("/api/me", headers=hdr(STRANGER))   # roli yo'q foydalanuvchi
-    assert r.status == 403
+async def test_mijoz_limited_access(client):
+    r = await client.get("/api/me", headers=hdr(STRANGER))   # roli yo'q foydalanuvchi — mijoz
+    assert r.status == 200 and (await r.json())["role"] == "mijoz"
+    cat = await (await client.get("/api/m/catalog", headers=hdr(STRANGER))).json()
+    assert cat["items"] and all("price" not in i for i in cat["items"]) and all(i["qty"] > 0 for i in cat["items"])
+    for path in ("/api/orders", "/api/products", "/api/d/orders", "/api/dashboard", "/api/users", "/api/push/test"):
+        method = client.post if path == "/api/push/test" else client.get
+        assert (await method(path, headers=hdr(STRANGER))).status == 403, path
+    assert (await client.get("/api/m/catalog", headers=hdr(OMBOR))).status == 200  # xodim ham ko'ra oladi
 
 
 async def test_role_permissions(client):
@@ -417,3 +423,40 @@ async def test_order_variant_api(client):
     d = await client.post("/api/d/orders", headers=hdr(DILLER), json={"product": "BF07", "amount": 1,
                                                                      "due_date": due, "variant": ["Matrasli"]})
     assert d.status == 201 and (await d.json())["variant"] == ""   # diller API variantni qabul qilmaydi
+
+
+async def test_phone_login_flow(client):
+    services = client.server.app["services"]
+    sent = client.sent
+    await services.users.set_phone(OMBOR, "+998901234567")
+    hd = {"X-Forwarded-For": "5.5.5.5"}
+    r = await client.post("/api/auth/phone/start", headers=hd, json={"phone": "90 123 45 67", "device": "iPhone Safari"})
+    d = await r.json()
+    assert r.status == 200 and d["request_id"] and "t.me/" in d["bot_link"]
+    msg = next(t for cid, t in sent if cid == OMBOR and "kirish kodi" in t)
+    code = msg.split("<code>")[1].split("</code>")[0]
+    # qayta yuborish 60 soniyadan oldin — rad
+    assert (await client.post("/api/auth/phone/start", headers=hd, json={"phone": "+998901234567"})).status == 409
+    bad = await client.post("/api/auth/phone/verify", headers=hd, json={"request_id": d["request_id"], "code": "000000"
+                                                                         if code != "000000" else "111111"})
+    assert bad.status == 409 and "Qolgan urinishlar: 4" in (await bad.json())["error"]
+    ok = await client.post("/api/auth/phone/verify", headers=hd, json={"request_id": d["request_id"], "code": code})
+    tok = (await ok.json())["token"]
+    me = await client.get("/api/me", headers={"Authorization": f"Bearer {tok}"})
+    assert (await me.json())["role"] == "omborchi"
+    # kod bir martalik
+    assert (await client.post("/api/auth/phone/verify", headers=hd,
+                              json={"request_id": d["request_id"], "code": code})).status == 404
+
+
+async def test_phone_login_unknown_number_and_bruteforce(client):
+    hd = {"X-Forwarded-For": "6.6.6.6"}
+    r = await client.post("/api/auth/phone/start", headers=hd, json={"phone": "+998935550000"})
+    assert r.status == 200                                     # ro'yxatda yo'q raqam ham bir xil javob oladi
+    rid = (await r.json())["request_id"]
+    codes = []
+    for i in range(6):
+        x = await client.post("/api/auth/phone/verify", headers=hd, json={"request_id": rid, "code": f"{i:06d}"})
+        codes.append(x.status)
+    assert 200 not in codes and codes[-1] in (404, 409)
+    assert (await client.post("/api/auth/phone/start", headers=hd, json={"phone": "123"})).status == 400

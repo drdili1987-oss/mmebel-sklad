@@ -194,7 +194,8 @@ main { padding: 4px 12px 24px; max-width: 760px; margin: 0 auto; }
 
 /* Buyurtma varianti (Matrasli / Kapotli) */
 .variant-btn { width: 100%; text-align: left; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.chip { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px;
-  padding: 8px 16px; font: inherit; cursor: pointer; }
-.chip.on { background: var(--accent, #3d8b2a); border-color: transparent; color: #fff; }
+.variant-chips button { padding: 9px 16px; font-size: 15px; }
+/* Kirish: telefon va kod */
+.login-form { max-width: 360px; margin: 0 auto; text-align: left; }
+.otp { letter-spacing: 0.4em; font-size: 22px; text-align: center; }
+.otp::placeholder { letter-spacing: normal; font-size: 16px; }

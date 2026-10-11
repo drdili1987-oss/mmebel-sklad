@@ -20,7 +20,7 @@ from aiogram.types import FSInputFile
 from .constants import ROLE_ADMIN, ROLE_OMBORCHI, ROLE_XODIM, ST_PREPARING, ST_READY
 from .utils import format_date, h, has_comment, now, now_str, product_label
 
-BACKUP_EXCLUDE = ("fsm", "sessions", "app_login", "push_tokens", "webpush")
+BACKUP_EXCLUDE = ("fsm", "sessions", "app_login", "phone_login", "phone_rate", "push_tokens", "webpush")
 log = logging.getLogger(__name__)
 
 

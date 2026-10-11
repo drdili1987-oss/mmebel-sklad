@@ -81,12 +81,32 @@ class UserService:
                 "role": self.normalize_role(u.get("role")),
                 "client_name": u.get("client_name") or "",
                 "last_seen": u.get("last_seen") or "",
+                "phone": u.get("phone") or "",
                 "owner": uid in self.owner_ids,
             })
         out.sort(key=lambda x: (ALL_ROLES.index(x["role"]), x["name"].lower()))
         return out
 
     # --- yozish ---
+    async def set_phone(self, user_id, phone: str) -> str:
+        """Telegram tasdiqlagan raqamni bog'laydi (bot `contact` orqali, faqat o'z raqami)."""
+        from .sessions import normalize_phone
+        digits = normalize_phone(phone)
+        if not digits:
+            raise ServiceError("Telefon raqami noto'g'ri.")
+        uid = str(user_id)
+        old = (await self.get(uid) or {}).get("phone")
+        updates = {f"phones/{digits}": uid, f"users/{uid}/phone": digits}
+        if old and old != digits and await self.store.get(f"phones/{old}") == uid:
+            updates[f"phones/{old}"] = None
+        await self.store.update("", updates)
+        if self._cache is not None:
+            self._cache.setdefault(uid, {})["phone"] = digits
+        return digits
+
+    async def has_phone(self, user_id) -> bool:
+        return bool((await self.get(str(user_id)) or {}).get("phone"))
+
     async def touch(self, user_id, full_name: str | None, username: str | None) -> None:
         """Foydalanuvchi ismini yangilaydi (admin rol berishi uchun ro'yxatda ko'rinadi)."""
         uid = str(user_id)

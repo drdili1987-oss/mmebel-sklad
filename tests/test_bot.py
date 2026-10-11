@@ -213,10 +213,9 @@ async def test_bot_approves_app_login(h):
     assert (await h.services.sessions.poll(s2["code"], s2["poll_secret"]))["status"] == "rejected"
 
     s3 = await h.services.sessions.start()
-    r = await h.text(999, f"/start login_{s3['code']}")
-    assert "faqat zavod xodimlari va dillerlar" in r[0].text
-    await h.press(999, f"al:y:{s3['code']}")                    # begona tugmani soxtalasa ham — rad
-    assert (await h.services.sessions.poll(s3["code"], s3["poll_secret"]))["status"] != "approved"
+    await h.text(999, f"/start login_{s3['code']}")             # rol berilmagan — mijoz sifatida kiradi
+    await h.press(999, f"al:y:{s3['code']}")
+    assert (await h.services.sessions.poll(s3["code"], s3["poll_secret"]))["status"] == "approved"
     r = await h.text(OMBOR, "/start login_notexist")
     assert "❌" in r[0].text
 
@@ -275,3 +274,27 @@ async def test_admin_order_without_variant_is_base(h):
     await h.text(ADMIN, "⏩ O'tkazib yuborish")
     o = next(iter((await h.services.orders.all()).values()))
     assert "variant" not in o
+
+
+async def test_phone_share_only_own(h):
+    from aiogram.types import Contact
+    r = await h.text(OMBOR, "/start")
+    assert any("Raqamni ulashish" in str(h.buttons(m)) for m in r)
+
+    async def send_contact(uid, owner, phone):
+        h.session.calls.clear()
+        msg = Message(message_id=next(_ids), date=dt.datetime.now(), chat=Chat(id=uid, type="private"),
+                      from_user=h.user(uid), contact=Contact(phone_number=phone, first_name="x", user_id=owner))
+        await h.dp.feed_update(h.bot, Update(update_id=next(_ids), message=msg))
+        return h.replies()
+
+    r = await send_contact(OMBOR, XODIM, "+998901112233")      # boshqaning kontakti — rad
+    assert "o'zingizning" in r[0].text and not await h.store.get("phones/998901112233")
+    r = await send_contact(OMBOR, OMBOR, "+998 90 111 22 33")
+    assert "saqlandi" in r[0].text
+    assert await h.store.get("phones/998901112233") == str(OMBOR)
+    await send_contact(OMBOR, OMBOR, "998901112244")           # raqam almashdi — eski indeks o'chadi
+    assert await h.store.get("phones/998901112233") is None
+    assert await h.store.get("phones/998901112244") == str(OMBOR)
+    r = await h.text(OMBOR, "/start")
+    assert not any("Raqamni ulashish" in str(h.buttons(m)) for m in r)

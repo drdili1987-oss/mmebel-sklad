@@ -71,6 +71,15 @@ def main_menu(role: str) -> ReplyKeyboardMarkup:
     return _kb(rows)
 
 
+B_SHARE_PHONE = "📱 Raqamni ulashish"
+
+
+def phone_kb() -> ReplyKeyboardMarkup:
+    """Telegram raqamni o'zi yuboradi (request_contact) — qo'lda yozilgan raqamga ishonilmaydi."""
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_SHARE_PHONE, request_contact=True)]],
+                               resize_keyboard=True, one_time_keyboard=True)
+
+
 def back_kb() -> ReplyKeyboardMarkup:
     return _kb([[BACK]])
 

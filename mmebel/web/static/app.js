@@ -181,10 +181,11 @@ const TABS = {
   omborchi: [["home", "🏠", "Asosiy"], ["orders", "📋", "Buyurtmalar"], ["stock", "📦", "Ombor"], ["deliveries", "🚚", "Yetkazish"]],
   xodim: [["plan", "🔨", "Ishlab chiqarish"], ["orders", "📋", "Buyurtmalar"]],
   diller: [["d_home", "🏠", "Asosiy"], ["d_catalog", "🛍", "Katalog"], ["d_orders", "📋", "Buyurtmalarim"], ["d_account", "💳", "Hisob"]],
+  mijoz: [["m_catalog", "🛍", "Sotuvda"]],
 };
 const TITLES = { home: "Asosiy", orders: "Buyurtmalar", stock: "Ombor", money: "Moliya", more: "Boshqa",
   deliveries: "Yetkazishlar", plan: "Ishlab chiqarish",
-  d_home: "Asosiy", d_catalog: "Katalog", d_orders: "Buyurtmalarim", d_account: "Hisob" };
+  d_home: "Asosiy", d_catalog: "Katalog", d_orders: "Buyurtmalarim", d_account: "Hisob", m_catalog: "Sotuvdagi mebellar" };
 
 function renderTabs() {
   const nav = clear($("tabs"));
@@ -205,7 +206,7 @@ function go(tab) {
   window.scrollTo(0, 0);
   const fn = { home: viewHome, orders: viewOrders, stock: viewStock, money: viewMoney, more: viewMore,
     deliveries: viewDeliveries, plan: viewPlan,
-    d_home: viewDHome, d_catalog: viewDCatalog, d_orders: viewDOrders, d_account: viewDAccount }[tab];
+    d_home: viewDHome, d_catalog: viewDCatalog, d_orders: viewDOrders, d_account: viewDAccount, m_catalog: viewMCatalog }[tab];
   fn().catch((e) => { clear(view).appendChild(empty(e.message)); });
 }
 function refresh() { go(S.tab); }
@@ -411,18 +412,17 @@ function newOrderSheet() {
     // Variant: «Tanlang» bosilganda Matrasli / Kapotli chiqadi; hech biri tanlanmasa — bazoviy
     const chosen = new Set();
     const variantLabel = el("span", {}, "Bazoviy");
-    const chips = el("div", { class: "chips hidden" }, (m.variants || []).map((v) => {
-      const c = el("button", { class: "chip", type: "button", "aria-pressed": "false" }, v);
+    const variantChips = el("div", { class: "chips variant-chips hidden" }, (m.variants || []).map((v) => {
+      const c = el("button", { type: "button", "aria-pressed": "false" }, v);
       c.addEventListener("click", () => {
         if (chosen.has(v)) chosen.delete(v); else chosen.add(v);
         c.setAttribute("aria-pressed", String(chosen.has(v)));
-        c.classList.toggle("on", chosen.has(v));
         variantLabel.textContent = chosen.size ? (m.variants || []).filter((x) => chosen.has(x)).join(", ") : "Bazoviy";
       });
       return c;
     }));
     const variantBtn = el("button", { class: "btn ghost variant-btn", type: "button" }, "Tanlang ▾ · ", variantLabel);
-    variantBtn.addEventListener("click", () => chips.classList.toggle("hidden"));
+    variantBtn.addEventListener("click", () => variantChips.classList.toggle("hidden"));
     const amount = el("input", { type: "number", min: "1", max: "10000", value: "1", inputmode: "numeric" });
     const price = el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", placeholder: "Bo'sh qoldirsangiz — ombordagi narx" });
     const due = el("input", { type: "date", value: isoToday(2), min: isoToday() });
@@ -441,7 +441,7 @@ function newOrderSheet() {
     });
     return el("div", {}, el("h2", {}, "Yangi buyurtma"),
       field("Diller", el("div", {}, clientSel, newClient)), field("Mebel", el("div", {}, product, dl, productHint)),
-      (m.variants || []).length ? field("Variant", el("div", {}, variantBtn, chips)) : "",
+      (m.variants || []).length ? field("Variant", el("div", {}, variantBtn, variantChips)) : "",
       el("div", { class: "actions two", style: "margin-top:0" }, field("Soni", amount), field("Muddat", due)),
       field("1 dona narxi ($)", price), field("Izoh", comment), el("div", { class: "actions" }, btn));
   });
@@ -885,6 +885,32 @@ async function viewDCatalog() {
   draw();
 }
 
+/* ================= MIJOZ (rol berilmagan) ================= */
+async function viewMCatalog() {
+  const search = el("input", { class: "search", type: "search", placeholder: "Qidirish: model" });
+  $("toolbar").appendChild(search);
+  const data = await api("GET", "/api/m/catalog");
+  const view = clear($("view"));
+  view.appendChild(el("div", { class: "hint", style: "margin:6px 0 12px" },
+    el("b", {}, "Siz mijoz sifatida kirdingiz"),
+    el("p", { class: "muted small", style: "margin:6px 0 0" }, "Bu yerda hozir omborda bor mebellar ko'rinadi. Buyurtma berish yoki diller bo'lish uchun admin bilan bog'laning. ",
+      data.price_channel ? el("a", { href: data.price_channel, on: { click: (e) => { e.preventDefault(); openLinkOut(data.price_channel); } } }, "Rasmlar va narxlar kanali") : null)));
+  const list = el("div", { class: "list" });
+  view.appendChild(list);
+  const draw = () => {
+    const q = search.value.trim().toLowerCase();
+    clear(list);
+    const items = data.items.filter((p) => !q || `${p.name} ${p.model}`.toLowerCase().includes(q));
+    if (!items.length) { list.appendChild(empty(data.items.length ? "Topilmadi." : "Hozircha sotuvda mebel yo'q.")); return; }
+    items.forEach((p) => list.appendChild(el("div", { class: "row" },
+      el("div", { class: "grow" }, el("div", { style: "font-weight:700;font-size:16px" }, p.name),
+        el("div", { class: "sub" }, p.model || " ")),
+      el("div", { class: "end" }, el("b", { class: "neg" }, `✅ ${p.qty} ta`)))));
+  };
+  search.addEventListener("input", draw);
+  draw();
+}
+
 function openLinkOut(url) {
   if (IN_TELEGRAM && tg.openTelegramLink && /^https:\/\/t\.me\//.test(url)) tg.openTelegramLink(url);
   else if (IN_APP) window.location.href = url.replace(/^https:\/\/t\.me\/\+/, "tg://join?invite=");
@@ -1053,40 +1079,98 @@ function showLogin(note) {
   $("title").textContent = "Munosib Mebel";
   $("who").textContent = "Sklad va buyurtmalar";
   const status = el("p", { class: "muted small", role: "status" }, note || "");
-  const btn = el("button", { class: "btn", type: "button" }, "Telegram orqali kirish");
-  btn.addEventListener("click", async () => {
-    btn.disabled = true;
+  const device = navigator.userAgent.slice(0, 110);
+
+  /* ---- 1-usul: telefon raqam + botga keladigan kod ---- */
+  const phone = el("input", { type: "tel", inputmode: "tel", autocomplete: "tel", value: "+998 ", maxlength: "20",
+    placeholder: "+998 90 123 45 67", "aria-label": "Telefon raqam" });
+  const getCode = el("button", { class: "btn", type: "button" }, "Kod olish");
+  const codeBox = el("div", { class: "hidden" });
+  let req = null;
+  let resendTimer = null;
+  const startCooldown = (sec) => {
+    clearInterval(resendTimer);
+    let left = sec;
+    getCode.disabled = true;
+    getCode.textContent = `Qayta yuborish (${left})`;
+    resendTimer = setInterval(() => {
+      left -= 1;
+      if (left <= 0) { clearInterval(resendTimer); getCode.disabled = false; getCode.textContent = "Kodni qayta yuborish"; }
+      else getCode.textContent = `Qayta yuborish (${left})`;
+    }, 1000);
+  };
+  getCode.addEventListener("click", async () => {
+    const digits = phone.value.replace(/\D/g, "");
+    if (digits.length < 9) { status.textContent = "Telefon raqamingizni to'liq kiriting."; phone.focus(); return; }
+    getCode.disabled = true;
+    status.textContent = "Kod yuborilmoqda…";
+    try { req = await api("POST", "/api/auth/phone/start", { phone: phone.value, device }); }
+    catch (e) { status.textContent = e.message; getCode.disabled = false; return; }
+    startCooldown(60);
+    const botHref = (IN_APP || (IS_IOS && IS_STANDALONE)) ? (req.tg_link || req.bot_link) : req.bot_link;
+    clear(status).append(
+      "Kod Telegram'dagi botimizga yuborildi. Botni ochib kodni shu yerga kiriting.",
+      el("div", { class: "actions" }, el("a", { class: "btn ghost", href: botHref,
+        style: "display:block;text-align:center;text-decoration:none" }, "Botni ochish")),
+      el("p", { class: "muted small" }, "Kod kelmadimi? Botga «START» bosing va «📱 Raqamni ulashish» tugmasi orqali raqamingizni yuboring, so'ng kodni qayta oling."));
+    codeBox.classList.remove("hidden");
+    code.value = "";
+    code.focus();
+  });
+  const code = el("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6",
+    placeholder: "6 xonali kod", "aria-label": "Kod", class: "otp" });
+  const enter = el("button", { class: "btn", type: "button" }, "Kirish");
+  const verify = async () => {
+    if (!req) return;
+    const v = code.value.replace(/\D/g, "");
+    if (v.length !== 6) { status.textContent = "Kod 6 ta raqamdan iborat."; return; }
+    enter.disabled = true;
+    try {
+      const r = await api("POST", "/api/auth/phone/verify", { request_id: req.request_id, code: v });
+      setToken(r.token); haptic("success"); clearInterval(resendTimer); boot();
+    } catch (e) { status.textContent = e.message; enter.disabled = false; code.select(); }
+  };
+  enter.addEventListener("click", verify);
+  code.addEventListener("input", () => { code.value = code.value.replace(/\D/g, "").slice(0, 6); if (code.value.length === 6) verify(); });
+  phone.addEventListener("keydown", (e) => { if (e.key === "Enter") getCode.click(); });
+  codeBox.append(field("Telegram'ga kelgan kod", code), el("div", { class: "actions" }, enter));
+
+  /* ---- 2-usul: Telegram tugmasi (avvalgidek) ---- */
+  const tgBtn = el("button", { class: "linkbtn", type: "button", style: "padding:0;font-size:14px" }, "Telegram orqali kirish");
+  tgBtn.addEventListener("click", async () => {
+    tgBtn.disabled = true;
     status.textContent = "Bot ochilmoqda…";
     let s;
-    try { s = await api("POST", "/api/auth/start", { device: navigator.userAgent.slice(0, 110) }); }
-    catch (e) { status.textContent = e.message; btn.disabled = false; return; }
+    try { s = await api("POST", "/api/auth/start", { device }); }
+    catch (e) { status.textContent = e.message; tgBtn.disabled = false; return; }
     openExternal(s);
-    // Avtomatik ochilmasa — foydalanuvchi o'zi bosadigan havola
     clear(status).append(
-      "Telegram'da botni oching va «START» ni bosing, so'ng shu yerga qayting. Kutilmoqda…",
+      "Telegram'da botni oching, «START» va «✅ Ha, men kiryapman» ni bosing, so'ng shu yerga qayting. Kutilmoqda…",
       el("div", { class: "actions" },
         el("a", { class: "btn ghost", href: IN_APP ? (s.tg_link || s.bot_link) : s.bot_link,
-          style: "display:block;text-align:center;text-decoration:none" }, "Telegram ochilmadimi? Shu yerni bosing")),
-      el("p", { class: "muted small" }, "Yoki Telegram'da botga o'zingiz shu matnni yuboring: ",
-        el("b", { style: "user-select:all" }, `/start login_${s.code}`)));
+          style: "display:block;text-align:center;text-decoration:none" }, "Telegram ochilmadimi? Shu yerni bosing")));
     const deadline = Date.now() + s.expires_in * 1000;
     const tick = async () => {
-      if (Date.now() > deadline) { clear(status).append("Vaqt tugadi. Qaytadan bosing."); btn.disabled = false; return; }
+      if (Date.now() > deadline) { clear(status).append("Vaqt tugadi. Qaytadan bosing."); tgBtn.disabled = false; return; }
       try {
         const r = await api("POST", "/api/auth/poll", { code: s.code, poll_secret: s.poll_secret });
         if (r.status === "approved") { setToken(r.token); haptic("success"); boot(); return; }
-        if (r.status === "rejected") { status.textContent = "Ilova faqat zavod xodimlari va dillerlar uchun. Adminga murojaat qiling."; btn.disabled = false; return; }
-        if (r.status === "expired") { status.textContent = "Vaqt tugadi. Qaytadan bosing."; btn.disabled = false; return; }
+        if (r.status === "rejected") { status.textContent = "Kirish rad etildi."; tgBtn.disabled = false; return; }
+        if (r.status === "expired") { status.textContent = "Vaqt tugadi. Qaytadan bosing."; tgBtn.disabled = false; return; }
       } catch (_) { /* tarmoq uzilishi — keyingi urinish */ }
       loginTimer = setTimeout(tick, 2000);
     };
     loginTimer = setTimeout(tick, 2000);
   });
+
   clear($("view")).appendChild(el("div", { class: "gate" },
     el("img", { class: "gate-logo", src: "/panel/static/logo-full.png", alt: "Munosib Mebel" }),
     el("h1", {}, "Hisobingizga kiring"),
-    el("p", { class: "muted" }, "Kirish Telegram bot orqali tasdiqlanadi — parol kerak emas. Ilova zavod xodimlari va dillerlar uchun."),
-    el("div", { class: "actions" }, btn), status, iosInstallHint() || ""));
+    el("p", { class: "muted" }, "Telefon raqamingizni kiriting — kirish kodi Telegram'dagi botimizga keladi."),
+    el("div", { class: "login-form" }, field("Telefon raqam", phone), el("div", { class: "actions" }, getCode), codeBox),
+    status,
+    el("p", { class: "muted small" }, "yoki ", tgBtn),
+    iosInstallHint() || ""));
 }
 
 async function logout() {
@@ -1136,9 +1220,11 @@ async function boot() {
     else if (!r.sent) toast("Bu telefon bildirishnomaga ro'yxatdan o'tmagan. Bildirishnoma ruxsatini bering va qayta oching.", true);
     else toast("Sinov xabari yuborildi");
   } } }, "🔔 Sinov");
-  if (IN_APP) who.appendChild(testBtn());
-  registerPush();
-  if (WEB_PUSH_OK && Notification.permission === "granted") {
+  const canPush = S.me.role !== "mijoz";  // mijozga xabarnoma yuborilmaydi
+  if (IN_APP && canPush) who.appendChild(testBtn());
+  if (canPush) registerPush();
+  if (!canPush) { /* web push ham kerak emas */ }
+  else if (WEB_PUSH_OK && Notification.permission === "granted") {
     webPushSubscribe(false).then((ok) => { if (ok) who.appendChild(testBtn()); }).catch(() => { /* keyingi ochilishda */ });
   } else if (WEB_PUSH_OK && Notification.permission === "default") {
     const enable = el("button", { class: "linkbtn", type: "button" }, "🔔 Xabarnomalarni yoqish");
