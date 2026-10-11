@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 
 from ..constants import ALL_ROLES, ROLE_ADMIN, ROLE_ALIASES, ROLE_DILLER, ROLE_MIJOZ
 from ..store import Store
-from ..utils import clean_text, iter_records, now_str
+from ..utils import clean_text, is_valid_key, iter_records, now, now_str
 from .errors import NotFound, ServiceError
 
 _CACHE_TTL = 30.0
@@ -86,6 +87,29 @@ class UserService:
             })
         out.sort(key=lambda x: (ALL_ROLES.index(x["role"]), x["name"].lower()))
         return out
+
+    # --- o'qilmagan buyurtma xabarlari (ilovada ajralib turadi) ---
+    async def unread(self, user_id) -> dict:
+        raw = await self.store.get(f"unread/{user_id}") or {}
+        return {k: v for k, v in raw.items() if isinstance(v, dict)} if isinstance(raw, dict) else {}
+
+    async def mark_seen(self, user_id, order_ids: list[str] | None = None) -> None:
+        """order_ids=None — hammasi o'qildi."""
+        if order_ids is None:
+            await self.store.delete(f"unread/{user_id}")
+            return
+        updates = {str(o): None for o in order_ids[:500] if is_valid_key(str(o))}
+        if updates:
+            await self.store.update(f"unread/{user_id}", updates)
+
+    async def cleanup_unread(self, days: int = 14) -> int:
+        cutoff = (now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        raw = await self.store.get("unread") or {}
+        updates = {f"{uid}/{oid}": None for uid, recs in raw.items() if isinstance(recs, dict)
+                   for oid, r in recs.items() if not isinstance(r, dict) or str(r.get("at", "")) < cutoff}
+        if updates:
+            await self.store.update("unread", updates)
+        return len(updates)
 
     # --- yozish ---
     async def set_phone(self, user_id, phone: str) -> str:

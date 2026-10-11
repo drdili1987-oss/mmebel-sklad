@@ -33,6 +33,7 @@ routes = web.RouteTableDef()
 PRICE_FIELDS = ("price", "total_price")
 MIJOZ_PATHS = frozenset({"/api/me", "/api/logout", "/api/m/catalog"})
 DILLER_COMMON_PATHS = frozenset({"/api/me", "/api/logout", "/api/push/register", "/api/push/test",
+                                 "/api/unread", "/api/unread/seen",
                                  "/api/push/web/key", "/api/push/web/subscribe", "/api/push/web/unsubscribe"})
 RATE_LIMIT = 120  # so'rov / daqiqa / foydalanuvchi
 
@@ -309,6 +310,25 @@ async def push_test(request):
     sent = await S(request).push.notify(actor(request), titles.get(sound, "Munosib Mebel"),
                                         "Bildirishnomalar ishlayapti ✅", sound)
     return web.json_response({"sent": sent, "enabled": S(request).push.enabled})
+
+
+# ================= o'qilmagan buyurtma xabarlari =================
+@routes.get("/api/unread")
+async def unread(request):
+    return web.json_response({"items": await S(request).users.unread(actor(request))})
+
+
+@routes.post("/api/unread/seen")
+async def unread_seen(request):
+    d = await body(request)
+    ids = d.get("ids")
+    if d.get("all") is True:
+        await S(request).users.mark_seen(actor(request))
+    elif isinstance(ids, list):
+        await S(request).users.mark_seen(actor(request), [str(x) for x in ids])
+    else:
+        raise ServiceError("ids ro'yxati yoki all=true kerak.")
+    return web.json_response({"ok": True})
 
 
 # ================= mijoz (rol berilmagan) =================

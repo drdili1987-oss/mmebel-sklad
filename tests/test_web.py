@@ -460,3 +460,31 @@ async def test_phone_login_unknown_number_and_bruteforce(client):
         codes.append(x.status)
     assert 200 not in codes and codes[-1] in (404, 409)
     assert (await client.post("/api/auth/phone/start", headers=hd, json={"phone": "123"})).status == 400
+
+
+async def test_unread_marks_until_seen(client):
+    services = client.server.app["services"]
+    due = (now() + timedelta(days=2)).strftime("%Y-%m-%d")
+    r = await client.post("/api/orders", headers=hdr(ADMIN), json={"client_name": "Umid", "product": "BF07", "amount": 1,
+                                                                  "due_date": due})
+    oid = (await r.json())["id"]
+    for uid in (OMBOR, XODIM, DILLER):                          # xabar olganlarda ajralib turadi
+        items = (await (await client.get("/api/unread", headers=hdr(uid))).json())["items"]
+        assert items[oid]["kind"] == "new", uid
+    assert oid not in (await (await client.get("/api/unread", headers=hdr(ADMIN))).json())["items"]  # o'zi yaratgan
+    # o'qildi — oddiy ko'rinishga qaytadi
+    await client.post("/api/unread/seen", headers=hdr(OMBOR), json={"ids": [oid]})
+    assert (await (await client.get("/api/unread", headers=hdr(OMBOR))).json())["items"] == {}
+    # tayyor -> yana belgilanadi (yangi hodisa); bekor -> xodimga belgi qo'yilmaydi (u bekorlarni ko'rmaydi)
+    await client.post(f"/api/orders/{oid}/ready", headers=hdr(ADMIN))
+    assert (await services.users.unread(OMBOR))[oid]["kind"] == "ready"
+    await client.post("/api/unread/seen", headers=hdr(XODIM), json={"all": True})
+    await client.post(f"/api/orders/{oid}/cancel", headers=hdr(OMBOR))
+    assert oid not in await services.users.unread(XODIM)
+    assert (await services.users.unread(ADMIN))[oid]["kind"] == "cancel"
+    assert (await services.users.unread(DILLER))[oid]["kind"] == "cancel"
+    assert (await client.post("/api/unread/seen", headers=hdr(DILLER), json={"all": True})).status == 200
+    assert await services.users.unread(DILLER) == {}
+    # eski belgilar tozalanadi
+    await services.store.set(f"unread/{OMBOR}/OLD-1", {"kind": "new", "at": "2020-01-01 00:00:00"})
+    assert await services.users.cleanup_unread() == 1

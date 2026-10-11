@@ -20,30 +20,34 @@ class Events:
             stock = (f"📦 Ombordan ayirildi: {o['deducted_qty']} ta" if o.get("deducted_qty")
                      else "⚠️ Omborda yo'q — ishlab chiqarish kerak")
             await self.n.to_staff(order_card(oid, o, title="🔔 Yangi zakaz (dillerdan)!") + f"\n{stock}",
-                                  sound="new")
+                                  sound="new", mark=(oid, "new"))
             return
-        await self.n.to_staff(order_card(oid, o, title="🔔 Yangi buyurtma!"), exclude=actor_id, sound="new")
+        await self.n.to_staff(order_card(oid, o, title="🔔 Yangi buyurtma!"), exclude=actor_id, sound="new",
+                              mark=(oid, "new"))
         await self.n.to_client(order_client(o), order_card(oid, o, show_price=True,
                                                            title="🎉 Sizga yangi buyurtma shakllantirildi!"),
-                               sound="new")
+                               sound="new", mark=(oid, "new"))
 
     async def order_ready(self, oid: str, o: dict, actor_id: int) -> None:
         text = (f"✅ <b>Mahsulot tayyor bo'ldi!</b>\n🆔 <code>{h(oid)}</code>\n🧑 {h(order_client(o))}\n"
                 f"📦 {h(product_label(o))} — {h(o.get('amount'))} ta")
-        await self.n.to_roles([ROLE_ADMIN, ROLE_XODIM, ROLE_OMBORCHI], text, exclude=actor_id, sound="ready")
+        await self.n.to_roles([ROLE_ADMIN, ROLE_XODIM, ROLE_OMBORCHI], text, exclude=actor_id, sound="ready",
+                              mark=(oid, "ready"))
         await self.n.to_client(order_client(o), f"🎉 <b>Buyurtmangiz tayyor bo'ldi!</b>\n\n📦 <b>{h(product_label(o))}"
                                f"</b> — {h(o.get('amount'))} ta\n📅 Muddat: {format_date(o.get('due_date'))}\n\n"
-                               "Yetkazib berish haqida tez orada xabar beramiz.", sound="ready")
+                               "Yetkazib berish haqida tez orada xabar beramiz.", sound="ready",
+                               mark=(oid, "ready"))
 
     async def order_cancelled(self, oid: str, o: dict, actor_id: int, *, by_diller: bool = False) -> None:
         who = "diller tomonidan" if by_diller else "xodim tomonidan"
         text = (f"❌ <b>Buyurtma bekor qilindi ({who})</b>\n🆔 <code>{h(oid)}</code>\n📦 {h(product_label(o))} — "
                 f"{h(o.get('amount'))} ta\n🧑 {h(order_client(o))}\n↩️ Omborga qaytdi: {o.get('returned_qty', 0)} ta")
-        await self.n.to_staff(text, exclude=actor_id, sound="cancel")
+        await self.n.to_staff(text, exclude=actor_id, sound="cancel", mark=(oid, "cancel"))
         if not by_diller:
             await self.n.to_client(order_client(o), f"❌ <b>Buyurtmangiz bekor qilindi</b>\n🆔 <code>{h(oid)}</code>\n"
                                    f"📦 {h(product_label(o))} — {h(o.get('amount'))} ta\n\n"
-                                   "Batafsil ma'lumot uchun admin bilan bog'laning.", sound="cancel")
+                                   "Batafsil ma'lumot uchun admin bilan bog'laning.", sound="cancel",
+                                   mark=(oid, "cancel"))
 
     async def order_delivered(self, oid: str, o: dict, actor_id: int) -> None:
         driver = o.get("driver", "")
@@ -54,13 +58,13 @@ class Events:
         await self.n.to_admins(
             f"📦 <b>Buyurtma {'olib ketildi' if pickup else 'yetkazildi'}</b>\n🆔 <code>{h(oid)}</code>\n🧑 {h(client)}\n"
             f"📦 {h(product_label(o))} — {h(o.get('amount'))} ta\n🚚 {h(driver)} · {extra}\n"
-            f"💳 Diller qarzi: {fmt_money(o['debt'])}", exclude=actor_id)
+            f"💳 Diller qarzi: {fmt_money(o['debt'])}", exclude=actor_id, mark=(oid, "deliver"))
         await self.n.to_client(client, f"🚚 <b>Mebelingiz {'olib ketildi' if pickup else 'yetkazib berildi'}!</b>\n\n"
                                f"📦 <b>{h(product_label(o))}</b> — {h(o.get('amount'))} ta\n"
                                f"💵 Mebel narxi: {fmt_money(o['gross'])}\n"
                                + (f"💸 Chegirma: {h(o['delivery_price'])}\n" if pickup else
                                   f"🧑 Haydovchi: {h(driver)}\n💰 Dostavka: {h(o['delivery_price'])}\n")
-                               + f"🆔 <code>{h(oid)}</code>")
+                               + f"🆔 <code>{h(oid)}</code>", mark=(oid, "deliver"))
 
     async def order_edited(self, oid: str, o: dict, actor_id: int) -> None:
         changes = o.get("_changes") or {}
@@ -68,11 +72,12 @@ class Events:
             return
         diff = "\n".join(f"🔄 {FIELD_LABELS.get(k, k)}: <b>{h(v)}</b>" for k, v in changes.items())
         await self.n.to_staff(f"✏️ <b>Buyurtma o'zgartirildi</b>\n🆔 <code>{h(oid)}</code>\n📦 {h(product_label(o))}"
-                              f" · 🧑 {h(order_client(o))}\n{diff}", exclude=actor_id)
+                              f" · 🧑 {h(order_client(o))}\n{diff}", exclude=actor_id, mark=(oid, "edit"))
         await self.n.to_client(
             order_client(o),
             order_card(oid, o, show_price=True, title="⚠️ Buyurtmangizda o'zgartirish!") + f"\n{diff}\n\n❓ Siz uchun qabulmi?",
             reply_markup=kb.inline([[("✅ Tasdiqlash", f"diller_confirm:{oid}"), ("❌ Rad etish", f"diller_reject:{oid}")]]),
+            mark=(oid, "edit"),
         )
 
     async def payment_requested(self, pay: dict) -> None:

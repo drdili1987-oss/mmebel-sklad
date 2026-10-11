@@ -187,11 +187,56 @@ const TITLES = { home: "Asosiy", orders: "Buyurtmalar", stock: "Ombor", money: "
   deliveries: "Yetkazishlar", plan: "Ishlab chiqarish",
   d_home: "Asosiy", d_catalog: "Katalog", d_orders: "Buyurtmalarim", d_account: "Hisob", m_catalog: "Sotuvdagi mebellar" };
 
+/* ---------- o'qilmagan buyurtma xabarlari: o'qilmaguncha ajralib turadi ---------- */
+S.unread = {};
+const UNREAD_LABELS = { new: "🆕 Yangi", ready: "✅ Tayyor bo'ldi", cancel: "❌ Bekor qilindi",
+  edit: "✏️ O'zgartirildi", deliver: "🚚 Yetkazildi" };
+const ORDERS_TAB = { admin: "orders", omborchi: "orders", xodim: "orders", diller: "d_orders" };
+async function loadUnread() {
+  if (!S.me || S.me.role === "mijoz") return;
+  try { S.unread = (await api("GET", "/api/unread")).items || {}; } catch (_) { /* belgi muhim emas */ }
+  renderTabs();
+}
+function markSeen(ids) {
+  const list = (ids || Object.keys(S.unread)).filter((id) => S.unread[id]);
+  if (!list.length) return;
+  list.forEach((id) => delete S.unread[id]);
+  renderTabs();
+  api("POST", "/api/unread/seen", ids ? { ids: list } : { all: true }).catch(() => {});
+}
+function unreadTag(o) {
+  const u = S.unread[o.id];
+  return u ? el("span", { class: `newtag k-${u.kind}` }, UNREAD_LABELS[u.kind] || "🔔 Yangi xabar") : null;
+}
+/* Yangi xabarli buyurtmalar ro'yxat tepasida alohida turadi; o'qilgach odatiy joyiga qaytadi */
+function unreadSection(items, card) {
+  const mine = items.filter((o) => S.unread[o.id]);
+  const total = Object.keys(S.unread).length;
+  if (!total) return null;
+  const btn = el("button", { class: "linkbtn", type: "button" }, "Hammasi o'qildi");
+  btn.addEventListener("click", () => { markSeen(); refresh(); });
+  const other = total - mine.length;
+  return el("div", { class: "unread-section" },
+    el("div", { class: "unread-head" }, el("b", {}, `🔔 Yangi xabarlar (${total})`), btn),
+    mine.map((o) => card(o)),
+    other ? el("p", { class: "muted small", style: "margin:2px 4px 0" },
+      `${other} tasi boshqa bo'limda (masalan, «Bekor» yoki «Yetkazilgan»).`) : null);
+}
+
+function unreadLink(view, tab) {
+  const n = Object.keys(S.unread).length;
+  if (!n) return;
+  view.appendChild(el("button", { class: "unread-banner", type: "button", on: { click: () => { S.ordersScope = "active"; go(tab); } } },
+    el("b", {}, `🔔 ${n} ta yangi xabar`), el("span", {}, " — ko'rish uchun bosing")));
+}
+
 function renderTabs() {
   const nav = clear($("tabs"));
+  const n = Object.keys(S.unread).length;
   TABS[S.me.role].forEach(([key, ic, label]) => {
+    const badge = n && ORDERS_TAB[S.me.role] === key ? el("span", { class: "tab-badge", "aria-label": `${n} ta yangi` }, n > 99 ? "99+" : String(n)) : null;
     nav.appendChild(el("button", { type: "button", "aria-current": S.tab === key ? "page" : null,
-      on: { click: () => go(key) } }, el("span", { class: "ic", "aria-hidden": "true" }, ic), label));
+      on: { click: () => go(key) } }, el("span", { class: "ic", "aria-hidden": "true" }, ic), badge, label));
   });
   nav.classList.remove("hidden");
 }
@@ -218,8 +263,9 @@ function fab(label, onClick) {
 /* ================= ASOSIY ================= */
 async function viewHome() {
   const isAdmin = S.me.role === "admin";
-  const [d, pay] = await Promise.all([api("GET", "/api/dashboard"), isAdmin ? api("GET", "/api/payments") : null]);
+  const [d, pay] = await Promise.all([api("GET", "/api/dashboard"), isAdmin ? api("GET", "/api/payments") : null, loadUnread()]);
   const view = clear($("view"));
+  unreadLink(view, "orders");
   const stat = (num, label, onClick, cls) => el("button", { class: "stat " + (cls || ""), type: "button", on: { click: onClick } },
     el("b", {}, num), el("span", {}, label));
   const toOrders = (scope) => () => { S.ordersScope = scope; go("orders"); };
@@ -260,16 +306,19 @@ async function viewOrders() {
   const search = el("input", { class: "search", type: "search", placeholder: "Qidirish: diller, mebel, ID", value: S.ordersQuery });
   tb.appendChild(search);
   const scope = role === "xodim" ? "active" : S.ordersScope;
-  const data = await api("GET", `/api/orders?scope=${scope}`);
+  const [data] = await Promise.all([api("GET", `/api/orders?scope=${scope}`), loadUnread()]);
   const view = clear($("view"));
   const box = el("div");
   view.appendChild(box);
   const draw = () => {
     const q = search.value.trim().toLowerCase();
     S.ordersQuery = search.value;
-    const items = data.items.filter((o) => !q || `${o.client_name} ${plabel(o)} ${o.id} ${o.comment || ""}`.toLowerCase().includes(q));
+    const found = data.items.filter((o) => !q || `${o.client_name} ${plabel(o)} ${o.id} ${o.comment || ""}`.toLowerCase().includes(q));
     clear(box);
-    if (!items.length) { box.appendChild(empty(q ? "Hech narsa topilmadi." : "Bu ro'yxatda buyurtma yo'q.")); return; }
+    const sec = unreadSection(found, (o) => orderCard(o, scope !== "active" && scope !== "overdue"));
+    if (sec) box.appendChild(sec);
+    const items = found.filter((o) => !S.unread[o.id]);
+    if (!items.length) { if (!sec) box.appendChild(empty(q ? "Hech narsa topilmadi." : "Bu ro'yxatda buyurtma yo'q.")); return; }
     if (scope === "active" || scope === "overdue") {
       let lastDay = null;
       items.forEach((o) => {
@@ -291,7 +340,10 @@ async function viewOrders() {
 }
 
 function orderCard(o, showStatus) {
-  return el("button", { type: "button", class: `order ${edgeClass(o.status)}${o.overdue ? " late" : ""}`, on: { click: () => orderSheet(o.id) } },
+  const isNew = !!S.unread[o.id];
+  return el("button", { type: "button", class: `order ${edgeClass(o.status)}${o.overdue ? " late" : ""}${isNew ? " unread" : ""}`,
+    on: { click: (e) => { if (isNew) { markSeen([o.id]); e.currentTarget.classList.remove("unread"); e.currentTarget.querySelector(".newtag")?.remove(); } orderSheet(o.id); } } },
+    unreadTag(o),
     el("div", {}, el("span", { class: "code" }, plabel(o)), el("span", { class: "qty" }, `× ${o.amount}`),
       o.status !== "Tayyorlanmoqda" || showStatus ? el("span", { style: "margin-left:8px" }, el("span", { class: `badge ${edgeClass(o.status)}` }, o.status)) : null),
     el("div", { class: "line2" }, el("span", { class: "client" }, o.client_name || "—"),
@@ -449,8 +501,9 @@ function newOrderSheet() {
 
 /* ================= ISHLAB CHIQARISH (xodim) ================= */
 async function viewPlan() {
-  const [plan, d] = await Promise.all([api("GET", "/api/production"), api("GET", "/api/dashboard")]);
+  const [plan, d] = await Promise.all([api("GET", "/api/production"), api("GET", "/api/dashboard"), loadUnread()]);
   const view = clear($("view"));
+  unreadLink(view, "orders");
   view.appendChild(el("div", { class: "stats" },
     el("div", { class: "stat" + (d.overdue ? " late" : "") }, el("b", {}, d.overdue), el("span", {}, "Muddati o'tgan")),
     el("div", { class: "stat" }, el("b", {}, d.due_today), el("span", {}, "Bugun topshirish"))));
@@ -811,7 +864,10 @@ async function settingsSection(holder) {
 /* ================= DILLER PANELI ================= */
 function dOrderCard(o) {
   const done = !ACTIVE.includes(o.status);
-  return el("button", { type: "button", class: `order ${edgeClass(o.status)}${o.overdue ? " late" : ""}`, on: { click: () => dOrderSheet(o) } },
+  const isNew = !!S.unread[o.id];
+  return el("button", { type: "button", class: `order ${edgeClass(o.status)}${o.overdue ? " late" : ""}${isNew ? " unread" : ""}`,
+    on: { click: (e) => { if (isNew) { markSeen([o.id]); e.currentTarget.classList.remove("unread"); e.currentTarget.querySelector(".newtag")?.remove(); } dOrderSheet(o); } } },
+    unreadTag(o),
     el("div", {}, el("span", { class: "code" }, plabel(o)), el("span", { class: "qty" }, `× ${o.amount}`),
       el("span", { style: "margin-left:8px" }, el("span", { class: `badge ${edgeClass(o.status)}` }, o.status))),
     el("div", { class: "line2" },
@@ -847,8 +903,9 @@ function dOrderSheet(o) {
 }
 
 async function viewDHome() {
-  const d = await api("GET", "/api/d/summary");
+  const [d] = await Promise.all([api("GET", "/api/d/summary"), loadUnread()]);
   const view = clear($("view"));
+  unreadLink(view, "d_orders");
   view.appendChild(el("div", { class: "stats" },
     el("button", { class: "stat wide", type: "button", on: { click: () => go("d_account") } },
       el("b", { class: d.debt > 0 ? "pos" : "" }, money(d.debt)), el("span", {}, d.debt < 0 ? "Oldindan to'langan" : "Joriy qarzingiz")),
@@ -950,13 +1007,16 @@ async function viewDOrders() {
   S.dScope = S.dScope || "active";
   $("toolbar").appendChild(seg([["active", "Jarayonda"], ["done", "Yetkazilgan"], ["cancelled", "Bekor"]], S.dScope,
     (k) => { S.dScope = k; refresh(); }));
-  const data = await api("GET", "/api/d/orders");
+  const [data] = await Promise.all([api("GET", "/api/d/orders"), loadUnread()]);
   const view = clear($("view"));
   const pick = (o) => S.dScope === "active" ? ACTIVE.includes(o.status)
     : S.dScope === "cancelled" ? o.status === "Bekor qilindi" : !ACTIVE.includes(o.status) && o.status !== "Bekor qilindi";
-  const items = data.items.filter(pick);
+  const all = data.items.filter(pick);
+  const sec = unreadSection(all, dOrderCard);
+  if (sec) view.appendChild(sec);
+  const items = all.filter((o) => !S.unread[o.id]);
   if (S.dScope === "active") items.sort((a, b) => (parseDate(a.due_date) || 0) - (parseDate(b.due_date) || 0));
-  if (!items.length) view.appendChild(empty(S.dScope === "active" ? "Jarayondagi buyurtma yo'q." : "Bu ro'yxat bo'sh."));
+  if (!items.length && !sec) view.appendChild(empty(S.dScope === "active" ? "Jarayondagi buyurtma yo'q." : "Bu ro'yxat bo'sh."));
   items.slice(0, 200).forEach((o) => view.appendChild(dOrderCard(o)));
   fab("＋ Zakaz berish", () => go("d_catalog"));
 }
@@ -1246,7 +1306,17 @@ async function boot() {
     return;
   }
   go(TABS[S.me.role][0][0]);
+  loadUnread();
 }
+// Ilovaga qaytilganda (push kelgandan keyin) yangi xabarlar ro'yxatini yangilash
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || !S.me) return;
+  const before = Object.keys(S.unread).length;
+  loadUnread().then(() => {
+    const onOrders = ["orders", "d_orders", "d_home"].includes(S.tab);
+    if (onOrders && Object.keys(S.unread).length !== before && !sheetStack.length) refresh();
+  });
+});
 const PUSH_TEST_SOUNDS = ["new", "ready", "cancel"]; // har bosishda navbatdagi ovoz
 let pushTestIdx = 0;
 boot();

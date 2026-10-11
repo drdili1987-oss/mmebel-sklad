@@ -4,7 +4,7 @@
   "use strict";
   function start() {
     var s = document.createElement("script");
-    s.src = "/panel/static/app.js?v=13";
+    s.src = "/panel/static/app.js?v=15";
     document.body.appendChild(s);
   }
   var inTelegram = /tgWebApp/.test(location.hash + location.search) || !!window.TelegramWebviewProxy ||

@@ -131,6 +131,7 @@ class Scheduler:
                     log.info("Arxivga ko'chirildi: %d ta buyurtma", n)
                     logins, sessions = await self.services.sessions.cleanup()
                     log.info("Tozalandi: %d ta eski kirish so'rovi, %d ta eskirgan sessiya", logins, sessions)
+                    await self.services.users.cleanup_unread()
             except Exception:  # noqa: BLE001
                 log.exception("Arxiv xatosi")
         if t >= BACKUP_AT:
