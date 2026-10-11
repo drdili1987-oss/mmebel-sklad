@@ -1119,6 +1119,30 @@ async function webPushSubscribe(ask) {
   WEB_ENDPOINT = sub.endpoint;
   return true;
 }
+/* Kompyuter (Chrome/Edge) va Android brauzer: «O'rnatish» — ilova alohida oynada, ish stolida belgi bilan */
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  installPrompt = e;
+  showInstallButton();
+});
+window.addEventListener("appinstalled", () => { installPrompt = null; document.getElementById("install-btn")?.remove(); });
+function showInstallButton() {
+  if (!installPrompt || IN_APP || IN_TELEGRAM || IS_STANDALONE || document.getElementById("install-btn")) return;
+  const who = $("who");
+  if (!who) return;
+  const btn = el("button", { id: "install-btn", class: "linkbtn", type: "button" }, "💻 O'rnatish");
+  btn.addEventListener("click", async () => {
+    const p = installPrompt;
+    if (!p) return;
+    installPrompt = null;
+    p.prompt();
+    await p.userChoice.catch(() => null);
+    btn.remove();
+  });
+  who.appendChild(btn);
+}
+
 function iosInstallHint() {
   if (!IS_IOS || IS_STANDALONE || IN_TELEGRAM) return null;
   return el("div", { class: "hint" },
@@ -1231,6 +1255,7 @@ function showLogin(note) {
     status,
     el("p", { class: "muted small" }, "yoki ", tgBtn),
     iosInstallHint() || ""));
+  showInstallButton();
 }
 
 async function logout() {
@@ -1298,6 +1323,7 @@ async function boot() {
     });
     who.appendChild(enable);
   }
+  showInstallButton();
   const hint = iosInstallHint();
   if (hint) who.appendChild(el("button", { class: "linkbtn", type: "button",
     on: { click: () => sheet(() => el("div", {}, iosInstallHint())) } }, "📲 O'rnatish"));
