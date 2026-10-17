@@ -100,6 +100,10 @@ class InventoryService:
         await self.store.push("audit_log", {"action": "delete_product", "product_id": pid,
                                             "by": str(actor_id), "at": now_str()})
 
+    async def known_keys(self, catalog) -> set[str]:
+        """Bazada bor mebellar: Sozlamalardagi modellar ro'yxati + omborda yozuvi borlar."""
+        return {product_key(m) for m in await catalog.models()} | set((await self.all()).keys())
+
     async def reserve(self, product_id: str, amount: int) -> int:
         """Ombordan mavjud miqdor qadar ayiradi. Haqiqatda ayirilgan sonni qaytaradi."""
         pid = product_key(product_id)

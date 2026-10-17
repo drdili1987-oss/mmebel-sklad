@@ -298,3 +298,11 @@ async def test_phone_share_only_own(h):
     assert await h.store.get("phones/998901112244") == str(OMBOR)
     r = await h.text(OMBOR, "/start")
     assert not any("Raqamni ulashish" in str(h.buttons(m)) for m in r)
+
+
+async def test_omborchi_bot_new_product_only_known(h):
+    await h.text(OMBOR, "➕ Yangi mebel")
+    r = await h.text(OMBOR, "Mutlaqo Yangi 1")
+    assert "bazada yo'q" in r[0].text
+    r = await h.text(OMBOR, "BF 07")
+    assert "Modeli" in r[0].text

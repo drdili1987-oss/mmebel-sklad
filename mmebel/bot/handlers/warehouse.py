@@ -122,18 +122,22 @@ async def qty_set(message: Message, state: FSMContext, services, role):
 
 
 @router.message(F.text == kb.B_NEW_PRODUCT)
-async def np_start(message: Message, state: FSMContext, services):
+async def np_start(message: Message, state: FSMContext, services, role):
     await state.set_state(NewProduct.name)
-    await message.answer("Qaysi mebelni qo'shasiz? Ro'yxatdan tanlang yoki nomini yozing:",
-                         reply_markup=kb.grid(await services.catalog.models(), 3))
+    hint = ("Ro'yxatdan tanlang yoki nomini yozing:" if role == ROLE_ADMIN
+            else "Ro'yxatdan tanlang (faqat bazada bor mebellar):")
+    await message.answer(f"Qaysi mebelni qo'shasiz? {hint}", reply_markup=kb.grid(await services.catalog.models(), 3))
 
 
 @router.message(NewProduct.name)
-async def np_name(message: Message, state: FSMContext, services):
+async def np_name(message: Message, state: FSMContext, services, role):
     name = (message.text or "").strip()
     pid = product_key(name)
     if not pid or not pid.isalnum() or len(name) > 60:
         await message.answer("❌ Nom faqat harf, raqam, bo'sh joy va '-' dan iborat bo'lsin.")
+        return
+    if role != ROLE_ADMIN and pid not in await services.inventory.known_keys(services.catalog):
+        await message.answer("❌ Bu mebel bazada yo'q. Pastdagi ro'yxatdan tanlang — yangi model qo'shishni admin qiladi.")
         return
     existing = await services.inventory.get(pid)
     await state.update_data(name=name)

@@ -24,7 +24,7 @@ from ..constants import (
 )
 from ..services import Conflict, NotFound, ServiceError
 from ..services.finance import order_client, order_gross
-from ..utils import is_overdue, iter_records, last_months, money, parse_date, to_int
+from ..utils import is_overdue, iter_records, last_months, money, parse_date, product_key, to_int
 from .auth import AuthError, TgUser, validate_init_data
 
 log = logging.getLogger(__name__)
@@ -498,6 +498,10 @@ async def products(request):
 @requires(ROLE_ADMIN, ROLE_OMBORCHI)
 async def product_upsert(request):
     d = await body(request)
+    if request["role"] == ROLE_OMBORCHI:
+        # Omborchi yangi nom o'ylab topa olmaydi — faqat bazada bor mebelni qo'shadi/yangilaydi
+        if product_key(str(d.get("name", ""))) not in await S(request).inventory.known_keys(S(request).catalog):
+            raise ServiceError("Bu mebel bazada yo'q. Ro'yxatdan tanlang; yangi model qo'shishni admin qiladi.")
     price = d.get("price") if request["role"] == ROLE_ADMIN else None
     rec = await S(request).inventory.upsert(actor(request), name=d.get("name", ""), model=d.get("model", ""),
                                             price=price, quantity=d.get("qty"), image=d.get("image", ""))

@@ -577,7 +577,10 @@ function productSheet(p) {
 function productForm(p) {
   const role = S.me.role;
   sheet((close) => {
-    const name = el("input", { type: "text", list: "models-dl2", maxlength: "60", value: p ? p.name : "", placeholder: "Masalan: BF 07", readonly: p ? true : null });
+    // Omborchi faqat bazada bor mebelni tanlaydi; yangi nomni admin qo'shadi
+    const name = (role === "admin" || p)
+      ? el("input", { type: "text", list: "models-dl2", maxlength: "60", value: p ? p.name : "", placeholder: "Masalan: BF 07", readonly: p ? true : null })
+      : el("select", {}, el("option", { value: "" }, "— Mebelni tanlang —"), S.me.meta.models.map((x) => el("option", { value: x }, x)));
     const dl = el("datalist", { id: "models-dl2" }, S.me.meta.models.map((x) => el("option", { value: x })));
     const model = el("input", { type: "text", maxlength: "60", value: p ? p.model : "", placeholder: "Masalan: Spalniy" });
     const qty = el("input", { type: "number", min: "0", value: p ? p.qty : "0", inputmode: "numeric" });

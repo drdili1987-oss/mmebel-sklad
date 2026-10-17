@@ -488,3 +488,14 @@ async def test_unread_marks_until_seen(client):
     # eski belgilar tozalanadi
     await services.store.set(f"unread/{OMBOR}/OLD-1", {"kind": "new", "at": "2020-01-01 00:00:00"})
     assert await services.users.cleanup_unread() == 1
+
+
+async def test_omborchi_adds_only_known_furniture(client):
+    r = await client.post("/api/products", headers=hdr(OMBOR), json={"name": "Yangi Divan X", "qty": 3})
+    assert r.status == 400 and "bazada yo'q" in (await r.json())["error"]
+    r = await client.post("/api/products", headers=hdr(OMBOR), json={"name": "BF 09", "qty": 2})   # modellar ro'yxatida
+    assert r.status == 201
+    r = await client.post("/api/products", headers=hdr(OMBOR), json={"name": "BF 07", "qty": 4})   # omborda bor
+    assert r.status == 201
+    r = await client.post("/api/products", headers=hdr(ADMIN), json={"name": "Yangi Divan X", "qty": 1})
+    assert r.status == 201                                       # admin yangi mebel qo'sha oladi
