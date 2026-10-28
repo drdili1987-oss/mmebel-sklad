@@ -68,7 +68,8 @@ def build_app(settings: Settings, services: Services, bot: Bot, dp: Dispatcher, 
         return web.json_response({"ok": True})
 
     async def root(_):
-        return web.Response(text="MMebel bot ishlayapti")
+        # Asosiy manzil ochilsa — to'g'ridan-to'g'ri ilovaga (holat tekshiruvi: /health)
+        raise web.HTTPFound("/panel/")
 
     async def cron(request: web.Request):
         if not _cron_authorized(request, settings):
