@@ -296,17 +296,25 @@ function openDashboard() {
 }
 
 /* ================= BUYURTMALAR ================= */
+/* Buyurtmalar bo'limlari: admin/omborchida 6 ta, xodimda + Bugun / Ertaga / Indinga */
+const ORDER_SCOPES = [["active", "Faol"], ["changed", "❗️O'zgarishli❗️"], ["overdue", "Muddati o'tgan"],
+  ["ready", "Tayyor mebellar"], ["done", "Yetkazilgan"], ["cancelled", "Bekor qilingan"]];
+const XODIM_DAY_SCOPES = [["today", "Bugun"], ["tomorrow", "Ertaga"], ["after", "Indinga"]];
+
 async function viewOrders() {
   const role = S.me.role;
   const tb = $("toolbar");
-  if (role !== "xodim") {
-    tb.appendChild(seg([["active", "Faol"], ["overdue", "Muddati o'tgan"], ["done", "Yetkazilgan"], ["cancelled", "Bekor"]],
-      S.ordersScope, (k) => { S.ordersScope = k; refresh(); }));
-  }
+  const scopes = role === "xodim" ? ORDER_SCOPES.concat(XODIM_DAY_SCOPES) : ORDER_SCOPES;
+  if (!scopes.some(([k]) => k === S.ordersScope)) S.ordersScope = "active";
+  const segBox = el("div");
+  tb.appendChild(segBox);
   const search = el("input", { class: "search", type: "search", placeholder: "Qidirish: diller, mebel, ID", value: S.ordersQuery });
   tb.appendChild(search);
-  const scope = role === "xodim" ? "active" : S.ordersScope;
-  const [data] = await Promise.all([api("GET", `/api/orders?scope=${scope}`), loadUnread()]);
+  const [data] = await Promise.all([api("GET", `/api/orders?scope=${S.ordersScope}`), loadUnread()]);
+  const scope = data.scope || S.ordersScope;
+  const counts = data.counts || {};
+  segBox.replaceWith(seg(scopes.map(([k, label]) => [k, counts[k] ? `${label} · ${counts[k]}` : label]),
+    scope, (k) => { S.ordersScope = k; refresh(); }));
   const view = clear($("view"));
   const box = el("div");
   view.appendChild(box);
@@ -315,11 +323,12 @@ async function viewOrders() {
     S.ordersQuery = search.value;
     const found = data.items.filter((o) => !q || `${o.client_name} ${plabel(o)} ${o.id} ${o.comment || ""}`.toLowerCase().includes(q));
     clear(box);
-    const sec = unreadSection(found, (o) => orderCard(o, scope !== "active" && scope !== "overdue"));
+    const dated = scope !== "done" && scope !== "cancelled";
+    const sec = unreadSection(found, (o) => orderCard(o, !dated));
     if (sec) box.appendChild(sec);
     const items = found.filter((o) => !S.unread[o.id]);
     if (!items.length) { if (!sec) box.appendChild(empty(q ? "Hech narsa topilmadi." : "Bu ro'yxatda buyurtma yo'q.")); return; }
-    if (scope === "active" || scope === "overdue") {
+    if (dated) {
       let lastDay = null;
       items.forEach((o) => {
         const day = fdate(o.due_date);
@@ -344,6 +353,7 @@ function orderCard(o, showStatus) {
   return el("button", { type: "button", class: `order ${edgeClass(o.status)}${o.overdue ? " late" : ""}${isNew ? " unread" : ""}`,
     on: { click: (e) => { if (isNew) { markSeen([o.id]); e.currentTarget.classList.remove("unread"); e.currentTarget.querySelector(".newtag")?.remove(); } orderSheet(o.id); } } },
     unreadTag(o),
+    o.changed ? el("span", { class: "chgtag" }, "❗️ O'zgarishli") : null,
     el("div", {}, el("span", { class: "code" }, plabel(o)), el("span", { class: "qty" }, `× ${o.amount}`),
       o.status !== "Tayyorlanmoqda" || showStatus ? el("span", { style: "margin-left:8px" }, el("span", { class: `badge ${edgeClass(o.status)}` }, o.status)) : null),
     el("div", { class: "line2" }, el("span", { class: "client" }, o.client_name || "—"),

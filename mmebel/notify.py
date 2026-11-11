@@ -15,8 +15,8 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, Teleg
 from .constants import ROLE_ADMIN, ROLE_OMBORCHI, ROLE_XODIM
 from .utils import chunk_text, now_str
 
-# Bu rollar o'z ilovasida bunday buyurtmani ko'rmaydi — "o'qilmagan" belgisi qo'yilmaydi (aks holda abadiy qoladi)
-MARK_SKIP_ROLES = {"cancel": {ROLE_XODIM}, "deliver": {ROLE_XODIM}}
+# Rol o'z ilovasida bunday buyurtmani ko'rmasa — "o'qilmagan" belgisi qo'yilmasin (aks holda abadiy qoladi)
+MARK_SKIP_ROLES: dict[str, set[str]] = {}  # hozircha hamma rol barcha bo'limlarni ko'radi
 
 log = logging.getLogger(__name__)
 _TAG_RE = re.compile(r"<[^>]+>")

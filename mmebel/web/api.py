@@ -5,6 +5,7 @@ import functools
 import logging
 import time
 from collections import defaultdict, deque
+from datetime import timedelta
 
 from aiohttp import web
 
@@ -20,11 +21,12 @@ from ..constants import (
     ROLE_XODIM,
     SELF_PICKUP_DRIVER,
     ST_CANCELLED,
+    ST_READY,
     ST_SETTLED,
 )
 from ..services import Conflict, NotFound, ServiceError
 from ..services.finance import order_client, order_gross
-from ..utils import is_overdue, iter_records, last_months, money, parse_date, product_key, to_int
+from ..utils import is_overdue, iter_records, last_months, money, now, parse_date, product_key, to_int
 from .auth import AuthError, TgUser, validate_init_data
 
 log = logging.getLogger(__name__)
@@ -373,42 +375,74 @@ async def dashboard(request):
 
 
 # ================= buyurtmalar =================
+# Buyurtmalar bo'limlari. Xodimga qo'shimcha: Bugun / Ertaga / Indinga (topshirish sanasi bo'yicha).
+STAFF_SCOPES = ("active", "changed", "overdue", "ready", "done", "cancelled")
+XODIM_SCOPES = STAFF_SCOPES + ("today", "tomorrow", "after")
+DAY_SCOPES = {"today": 0, "tomorrow": 1, "after": 2}
+
+
+def _order_scopes(o: dict, changed: bool, today) -> set[str]:
+    """Buyurtma qaysi bo'limlarga tushadi."""
+    st = o.get("status", "")
+    out: set[str] = set()
+    if st in ACTIVE_STATUSES:
+        out.add("active")
+        if changed:
+            out.add("changed")
+        if st == ST_READY:
+            out.add("ready")
+        if is_overdue(o.get("due_date"), st, ACTIVE_STATUSES):
+            out.add("overdue")
+        due = parse_date(o.get("due_date"))
+        if due is not None:
+            for name, shift in DAY_SCOPES.items():
+                if due == today + timedelta(days=shift):
+                    out.add(name)
+    elif st in DELIVERED_STATUSES or st == ST_SETTLED:
+        out.add("done")
+    elif st == ST_CANCELLED:
+        out.add("cancelled")
+    return out
+
+
 @routes.get("/api/orders")
 async def orders_list(request):
     role = request["role"]
+    allowed = XODIM_SCOPES if role == ROLE_XODIM else STAFF_SCOPES
     scope = request.query.get("scope", "active")
-    month = request.query.get("month", "")
-    if role == ROLE_XODIM:
+    if scope not in allowed:
         scope = "active"
+    month = request.query.get("month", "")
     rows = await S(request).orders.all()
+    # «O'zgarishli»: variant tanlangan (Matrasli/Kapotli) yoki shablonda yo'q mebel
+    known = await S(request).inventory.known_keys(S(request).catalog)
+    today = now().date()
+    counts = dict.fromkeys(allowed, 0)
     out = []
     for oid, o in rows.items():
-        st = o.get("status", "")
-        if scope == "active" and st not in ACTIVE_STATUSES:
-            continue
-        if scope == "done" and st not in DELIVERED_STATUSES and st != ST_SETTLED:
-            continue
-        if scope == "cancelled" and st != ST_CANCELLED:
-            continue
-        if scope == "overdue" and not is_overdue(o.get("due_date"), st, ACTIVE_STATUSES):
+        changed = bool(o.get("variant")) or product_key(str(o.get("product_id", ""))) not in known
+        scopes = _order_scopes(o, changed, today)
+        for sc in scopes & set(allowed):
+            counts[sc] += 1
+        if scope not in scopes:
             continue
         if month and not str(o.get("created_at", "")).startswith(month):
             continue
-        out.append(order_out(oid, o, role))
-    if scope in ("active", "overdue"):
-        out.sort(key=lambda r: (parse_date(r.get("due_date")) or parse_date("01.01.2100"), r.get("created_at", "")))
-    else:
+        item = order_out(oid, o, role)
+        item["changed"] = changed
+        out.append(item)
+    if scope in ("done", "cancelled"):
         out.sort(key=lambda r: r.get("delivered_at") or r.get("created_at", ""), reverse=True)
+    else:
+        out.sort(key=lambda r: (parse_date(r.get("due_date")) or parse_date("01.01.2100"), r.get("created_at", "")))
     limit = min(to_int(request.query.get("limit"), 500) or 500, 2000)
-    return web.json_response({"items": out[:limit], "total": len(out)})
+    return web.json_response({"items": out[:limit], "total": len(out), "scope": scope, "counts": counts})
 
 
 @routes.get("/api/orders/{oid}")
 async def order_get(request):
     oid = request.match_info["oid"]
     o = await S(request).orders.get(oid)
-    if request["role"] == ROLE_XODIM and o.get("status") not in ACTIVE_STATUSES:
-        raise NotFound("Buyurtma topilmadi.")
     return web.json_response(order_out(oid, o, request["role"]))
 
 

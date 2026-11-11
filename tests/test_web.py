@@ -475,12 +475,12 @@ async def test_unread_marks_until_seen(client):
     # o'qildi — oddiy ko'rinishga qaytadi
     await client.post("/api/unread/seen", headers=hdr(OMBOR), json={"ids": [oid]})
     assert (await (await client.get("/api/unread", headers=hdr(OMBOR))).json())["items"] == {}
-    # tayyor -> yana belgilanadi (yangi hodisa); bekor -> xodimga belgi qo'yilmaydi (u bekorlarni ko'rmaydi)
+    # tayyor -> yana belgilanadi (yangi hodisa); bekor -> xodimga ham (endi «Bekor qilingan» bo'limini ko'radi)
     await client.post(f"/api/orders/{oid}/ready", headers=hdr(ADMIN))
     assert (await services.users.unread(OMBOR))[oid]["kind"] == "ready"
     await client.post("/api/unread/seen", headers=hdr(XODIM), json={"all": True})
     await client.post(f"/api/orders/{oid}/cancel", headers=hdr(OMBOR))
-    assert oid not in await services.users.unread(XODIM)
+    assert (await services.users.unread(XODIM))[oid]["kind"] == "cancel"
     assert (await services.users.unread(ADMIN))[oid]["kind"] == "cancel"
     assert (await services.users.unread(DILLER))[oid]["kind"] == "cancel"
     assert (await client.post("/api/unread/seen", headers=hdr(DILLER), json={"all": True})).status == 200
@@ -499,3 +499,36 @@ async def test_omborchi_adds_only_known_furniture(client):
     assert r.status == 201
     r = await client.post("/api/products", headers=hdr(ADMIN), json={"name": "Yangi Divan X", "qty": 1})
     assert r.status == 201                                       # admin yangi mebel qo'sha oladi
+
+
+async def test_order_sections_by_role(client):
+    from mmebel.utils import now as _now
+    services = client.server.app["services"]
+    d = lambda n: (_now() + timedelta(days=n)).strftime("%d.%m.%Y")  # noqa: E731
+    mk = lambda **kw: services.orders.create(ADMIN, client_name="Umid", amount=1, **kw)  # noqa: E731
+    o_today = await mk(product="BF07", due_date=d(0))
+    o_tom = await mk(product="BF07", due_date=d(1), variant=["Matrasli"])
+    o_after = await mk(product="Maxsus divan (oq)", due_date=d(2), custom_price=100)
+    o_ready = await mk(product="BF07", due_date=d(5))
+    o_cancel = await mk(product="BF07", due_date=d(5))
+    await services.orders.set_ready(ADMIN, o_ready["order_id"])
+    await services.orders.cancel(ADMIN, o_cancel["order_id"])
+
+    async def ids(uid, scope):
+        r = await (await client.get(f"/api/orders?scope={scope}", headers=hdr(uid))).json()
+        return {o["id"] for o in r["items"]}, r
+
+    changed, r = await ids(XODIM, "changed")                   # variant yoki shablondan tashqari mebel
+    assert changed == {o_tom["order_id"], o_after["order_id"]}
+    assert r["counts"]["changed"] == 2 and set(r["counts"]) >= {"today", "tomorrow", "after"}
+    assert (await ids(XODIM, "today"))[0] == {o_today["order_id"]}
+    assert (await ids(XODIM, "tomorrow"))[0] == {o_tom["order_id"]}
+    assert (await ids(XODIM, "after"))[0] == {o_after["order_id"]}
+    assert (await ids(XODIM, "ready"))[0] == {o_ready["order_id"]}
+    cancelled, r = await ids(XODIM, "cancelled")               # xodim endi bekorlarni ham ko'radi
+    assert cancelled == {o_cancel["order_id"]} and all("total_price" not in o for o in r["items"])
+    assert (await client.get(f"/api/orders/{o_cancel['order_id']}", headers=hdr(XODIM))).status == 200
+    # admin/omborchida kunlik bo'limlar yo'q — so'ralsa «Faol» qaytadi
+    _, r = await ids(OMBOR, "today")
+    assert r["scope"] == "active" and "today" not in r["counts"]
+    assert (await ids(OMBOR, "changed"))[0] == changed

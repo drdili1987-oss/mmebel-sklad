@@ -247,3 +247,7 @@ button.unread-banner { width: 100%; text-align: left; cursor: pointer; color: va
 @media (hover: hover) {
   .order:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, .08); }
 }
+
+/* O'zgarishli buyurtma (variant yoki shablonda yo'q mebel) */
+.chgtag { display: inline-block; margin: 0 6px 6px 0; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: color-mix(in srgb, var(--st-late, #c2412f) 14%, transparent); color: var(--st-late, #c2412f); }
