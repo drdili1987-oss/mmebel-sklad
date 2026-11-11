@@ -117,7 +117,9 @@ async def _set_product(message: Message, state: FSMContext, services, name: str,
         return
     p = await services.inventory.get(pid)
     price = services.inventory.unit_price(p)
-    await state.update_data(product=name.strip(), custom_price=None)
+    known = p is not None or pid in {product_key(m) for m in await services.catalog.models()}
+    # Shablonda yo'q mebel — odatda o'zgarishli; admin keyin tugma bilan o'chirib qo'yishi mumkin
+    await state.update_data(product=name.strip(), custom_price=None, changed=force_price or not known)
     if force_price or not price:
         await state.set_state(AOrder.price)
         await message.answer("Bu mebelning narxi bazada yo'q. 1 dona narxini kiriting ($):", reply_markup=kb.back_kb())
@@ -136,6 +138,10 @@ def _variant_kb(variants: list[str], chosen: list[str], open_: bool):
     return kb.inline(rows)
 
 
+def _changed_kb(on: bool):
+    return kb.inline([[("❗️ O'zgarishli: HA ✅" if on else "❗️ O'zgarishli: yo'q", "ach")]])
+
+
 async def _ask_amount(message: Message, state: FSMContext, services, text: str):
     await state.set_state(AOrder.amount)
     await state.update_data(variant=[])
@@ -143,6 +149,17 @@ async def _ask_amount(message: Message, state: FSMContext, services, text: str):
     await message.answer(text, reply_markup=kb.back_kb())
     if variants:
         await message.answer("Variant (ixtiyoriy):", reply_markup=_variant_kb(variants, [], False))
+    changed = bool((await state.get_data()).get("changed"))
+    await message.answer("Mebel o'zgarishlimi? (o'lchami, rangi va h.k. boshqacha — izohga yozing)",
+                         reply_markup=_changed_kb(changed))
+
+
+@router.callback_query(AOrder.amount, F.data == "ach")
+async def ach_toggle(cb: CallbackQuery, state: FSMContext):
+    on = not bool((await state.get_data()).get("changed"))
+    await state.update_data(changed=on)
+    await cb.message.edit_reply_markup(reply_markup=_changed_kb(on))
+    await cb.answer("O'zgarishli deb belgilandi" if on else "Oddiy (bazoviy) buyurtma")
 
 
 @router.callback_query(AOrder.amount, F.data.startswith("av:"))
@@ -201,7 +218,7 @@ async def no_finish(message: Message, state: FSMContext, services, events):
         o = await services.orders.create(message.from_user.id, client_name=data["client"], product=data["product"],
                                          amount=data["amount"], due_date=data["due"], comment=comment,
                                          source="admin", custom_price=data.get("custom_price"),
-                                         variant=data.get("variant") or None)
+                                         variant=data.get("variant") or None, changed=data.get("changed") is True)
     except ServiceError as e:
         await message.answer(f"❌ {h(e)}")
         return

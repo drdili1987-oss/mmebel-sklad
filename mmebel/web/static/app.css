@@ -251,3 +251,6 @@ button.unread-banner { width: 100%; text-align: left; cursor: pointer; color: va
 /* O'zgarishli buyurtma (variant yoki shablonda yo'q mebel) */
 .chgtag { display: inline-block; margin: 0 6px 6px 0; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700;
   background: color-mix(in srgb, var(--st-late, #c2412f) 14%, transparent); color: var(--st-late, #c2412f); }
+.changed-btn { width: 100%; text-align: left; }
+.changed-btn[aria-pressed="true"] { background: color-mix(in srgb, var(--st-late, #c2412f) 14%, transparent);
+  border-color: var(--st-late, #c2412f); color: var(--st-late, #c2412f); font-weight: 700; }

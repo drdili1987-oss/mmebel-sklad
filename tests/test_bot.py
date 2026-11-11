@@ -249,7 +249,8 @@ async def test_admin_order_with_variant(h):
     await h.text(ADMIN, "📝 Yangi buyurtma")
     await h.text(ADMIN, "Umid")
     r = await h.text(ADMIN, "BF 07")
-    assert ("⚙️ Tanlang · Bazoviy", "av:open") in h.buttons(r[-1])
+    assert any(("⚙️ Tanlang · Bazoviy", "av:open") in h.buttons(m) for m in r)
+    assert any(("❗️ O'zgarishli: yo'q", "ach") in h.buttons(m) for m in r)
     await h.press(ADMIN, "av:open")
     await h.press(ADMIN, "av:t:1")       # Kapotli
     await h.press(ADMIN, "av:t:0")       # Matrasli
@@ -306,3 +307,29 @@ async def test_omborchi_bot_new_product_only_known(h):
     assert "bazada yo'q" in r[0].text
     r = await h.text(OMBOR, "BF 07")
     assert "Modeli" in r[0].text
+
+
+async def test_admin_bot_order_changed_toggle(h):
+    await h.text(ADMIN, "📝 Yangi buyurtma")
+    await h.text(ADMIN, "Umid")
+    await h.text(ADMIN, "BF 07")
+    await h.press(ADMIN, "ach")                                # o'zgarishli: HA
+    await h.text(ADMIN, "1")
+    await h.text(ADMIN, due())
+    r = await h.text(ADMIN, "eni 160 sm")
+    o = next(iter((await h.services.orders.all()).values()))
+    assert o.get("changed") is True
+    assert any("O'ZGARISHLI" in m.text for m in r if m.chat_id in (OMBOR, XODIM))
+
+
+async def test_admin_bot_new_product_requires_price(h):
+    await h.text(ADMIN, "➕ Yangi mebel")
+    await h.text(ADMIN, "Yangi Shkaf 9")
+    r = await h.text(ADMIN, "⏩ O'tkazib yuborish")            # modeli
+    assert "Narxini" in r[0].text and "O'tkazib" not in str(h.buttons(r[0]))
+    r = await h.text(ADMIN, "⏩ O'tkazib yuborish")            # narxni o'tkazib bo'lmaydi
+    assert "narxini kiriting" in r[0].text
+    await h.text(ADMIN, "390")
+    await h.text(ADMIN, "2")
+    await h.text(ADMIN, "⏩ Rasmsiz saqlash")
+    assert (await h.services.inventory.get("YANGISHKAF9"))["narxi"] == 390

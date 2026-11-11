@@ -498,7 +498,9 @@ async def test_omborchi_adds_only_known_furniture(client):
     r = await client.post("/api/products", headers=hdr(OMBOR), json={"name": "BF 07", "qty": 4})   # omborda bor
     assert r.status == 201
     r = await client.post("/api/products", headers=hdr(ADMIN), json={"name": "Yangi Divan X", "qty": 1})
-    assert r.status == 201                                       # admin yangi mebel qo'sha oladi
+    assert r.status == 400 and "narx" in (await r.json())["error"]  # admin: narxsiz saqlanmaydi
+    r = await client.post("/api/products", headers=hdr(ADMIN), json={"name": "Yangi Divan X", "qty": 1, "price": 250})
+    assert r.status == 201 and (await r.json())["narxi"] == 250  # admin yangi mebel qo'sha oladi
 
 
 async def test_order_sections_by_role(client):
@@ -507,8 +509,9 @@ async def test_order_sections_by_role(client):
     d = lambda n: (_now() + timedelta(days=n)).strftime("%d.%m.%Y")  # noqa: E731
     mk = lambda **kw: services.orders.create(ADMIN, client_name="Umid", amount=1, **kw)  # noqa: E731
     o_today = await mk(product="BF07", due_date=d(0))
-    o_tom = await mk(product="BF07", due_date=d(1), variant=["Matrasli"])
-    o_after = await mk(product="Maxsus divan (oq)", due_date=d(2), custom_price=100)
+    o_tom = await mk(product="BF07", due_date=d(1), variant=["Matrasli"], changed=True)
+    o_after = await mk(product="Maxsus divan (oq)", due_date=d(2), custom_price=100, changed=True)
+    await mk(product="BF07", due_date=d(3), variant=["Kapotli"])        # variant o'zi «o'zgarishli» emas
     o_ready = await mk(product="BF07", due_date=d(5))
     o_cancel = await mk(product="BF07", due_date=d(5))
     await services.orders.set_ready(ADMIN, o_ready["order_id"])
@@ -518,7 +521,7 @@ async def test_order_sections_by_role(client):
         r = await (await client.get(f"/api/orders?scope={scope}", headers=hdr(uid))).json()
         return {o["id"] for o in r["items"]}, r
 
-    changed, r = await ids(XODIM, "changed")                   # variant yoki shablondan tashqari mebel
+    changed, r = await ids(XODIM, "changed")                   # faqat admin belgilaganlar
     assert changed == {o_tom["order_id"], o_after["order_id"]}
     assert r["counts"]["changed"] == 2 and set(r["counts"]) >= {"today", "tomorrow", "after"}
     assert (await ids(XODIM, "today"))[0] == {o_today["order_id"]}
@@ -532,3 +535,41 @@ async def test_order_sections_by_role(client):
     _, r = await ids(OMBOR, "today")
     assert r["scope"] == "active" and "today" not in r["counts"]
     assert (await ids(OMBOR, "changed"))[0] == changed
+
+
+async def test_changed_flag_create_and_edit(client):
+    services = client.server.app["services"]
+    due = (now() + timedelta(days=2)).strftime("%Y-%m-%d")
+    r = await client.post("/api/orders", headers=hdr(ADMIN), json={"client_name": "Umid", "product": "BF07", "amount": 1,
+                                                                  "due_date": due, "changed": True,
+                                                                  "comment": "eni 160 sm"})
+    o = await r.json()
+    assert o["changed"] is True
+    msgs = [t for cid, t in client.sent if cid in (OMBOR, XODIM)]
+    assert any("O'ZGARISHLI" in t for t in msgs)              # omborchi/xodim xabarida ajralib turadi
+    ids = lambda r: {x["id"] for x in r["items"]}  # noqa: E731
+    got = await (await client.get("/api/orders?scope=changed", headers=hdr(OMBOR))).json()
+    assert o["id"] in ids(got)
+    client.sent.clear()
+    await client.patch(f"/api/orders/{o['id']}", headers=hdr(ADMIN), json={"changed": False})
+    got = await (await client.get("/api/orders?scope=changed", headers=hdr(XODIM))).json()
+    assert o["id"] not in ids(got)
+    assert not any(cid == DILLER for cid, _ in client.sent)   # ichki belgi dillerga yuborilmaydi
+    # diller o'zgarishli deb belgilay olmaydi
+    d = await (await client.post("/api/d/orders", headers=hdr(DILLER), json={"product": "BF07", "amount": 1,
+                                                                            "due_date": due, "changed": True})).json()
+    assert not (await services.orders.get(d["id"])).get("changed")
+
+
+async def test_new_model_in_settings_needs_price(client):
+    services = client.server.app["services"]
+    models = await services.catalog.models()
+    r = await client.put("/api/settings/models", headers=hdr(ADMIN), json={"items": models + ["Yangi Model 1"]})
+    assert r.status == 400 and "Yangi Model 1" in (await r.json())["error"]
+    r = await client.put("/api/settings/models", headers=hdr(ADMIN),
+                         json={"items": models + ["Yangi Model 1"], "prices": {"Yangi Model 1": 420}})
+    assert r.status == 200
+    p = await services.inventory.get("YANGIMODEL1")
+    assert p["narxi"] == 420 and p["soni"] == 0
+    # eski (narxsiz) modellarni qayta saqlash bloklanmaydi
+    assert (await client.put("/api/settings/models", headers=hdr(ADMIN), json={"items": models})).status == 200

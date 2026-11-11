@@ -373,6 +373,7 @@ async function orderSheet(id) {
       el("dt", {}, "Soni"), el("dd", {}, `${o.amount} ta`),
       el("dt", {}, "Muddat"), el("dd", { class: o.overdue ? "pos" : "" }, `${fdate(o.due_date)}${o.overdue ? " (kechikkan)" : ""}`),
       el("dt", {}, "Holati"), el("dd", {}, el("span", { class: `badge ${edgeClass(o.status)}` }, o.status)),
+      o.changed ? [el("dt", {}, "Turi"), el("dd", {}, el("span", { class: "chgtag", style: "margin:0" }, "❗️ O'zgarishli mebel"))] : null,
       o.comment ? [el("dt", {}, "Izoh"), el("dd", {}, o.comment)] : null,
       role === "admin" && o.total_price ? [el("dt", {}, "Narxi"), el("dd", {}, `${money(o.price)} × ${o.amount} = ${money(o.total_price)}`)] : null,
       o.driver ? [el("dt", {}, "Haydovchi"), el("dd", {}, `${o.driver}${o.delivery_price ? " · " + o.delivery_price : ""}`)] : null,
@@ -437,18 +438,21 @@ function editOrderSheet(o, onDone) {
     const amount = el("input", { type: "number", min: "1", max: "10000", value: o.amount, inputmode: "numeric" });
     const due = el("input", { type: "date", value: toIso(o.due_date), min: isoToday() });
     const comment = el("textarea", { maxlength: "500" }, o.comment || "");
+    const chg = el("select", {}, el("option", { value: "0" }, "Yo'q (bazoviy)"), el("option", { value: "1" }, "❗️ Ha — o'zgarishli"));
+    chg.value = o.changed ? "1" : "0";
     const btn = el("button", { class: "btn", type: "button" }, "O'zgarishlarni saqlash");
     btn.addEventListener("click", async () => {
       const body = {};
       if (Number(amount.value) !== Number(o.amount)) body.amount = Number(amount.value);
       if (due.value && due.value !== toIso(o.due_date)) body.due_date = due.value;
       if (comment.value !== (o.comment || "")) body.comment = comment.value;
+      if ((chg.value === "1") !== !!o.changed) body.changed = chg.value === "1";
       if (!Object.keys(body).length) { close(); return; }
       const r = await act(btn, () => api("PATCH", `/api/orders/${encodeURIComponent(o.id)}`, body), "Saqlandi. Dillerga xabar yuborildi.");
       if (r) { close(); onDone(); }
     });
     return el("div", {}, el("h2", {}, `${plabel(o)} — o'zgartirish`),
-      field("Soni", amount), field("Muddat", due), field("Izoh", comment),
+      field("Soni", amount), field("Muddat", due), field("Izoh", comment), field("O'zgarishli mebelmi?", chg),
       el("p", { class: "muted small" }, "Soni o'zgarsa, ombor qoldig'i avtomatik to'g'rilanadi."),
       el("div", { class: "actions" }, btn));
   });
@@ -468,6 +472,7 @@ function newOrderSheet() {
       const v = product.value.trim();
       const custom = v && !known.has(v.replace(/[\s-]/g, "").toUpperCase());
       productHint.textContent = custom ? "Shablonda yo'q mebel — narxini albatta kiriting." : "";
+      if (!changedTouched) setChanged(!!custom);  // shablonda yo'q mebel odatda o'zgarishli
       price.placeholder = custom ? "Narxi ($) — majburiy" : "Bo'sh qoldirsangiz — ombordagi narx";
     });
     const dl = el("datalist", { id: "models-dl" }, m.models.map((x) => el("option", { value: x })));
@@ -484,6 +489,17 @@ function newOrderSheet() {
       return c;
     }));
     const variantBtn = el("button", { class: "btn ghost variant-btn", type: "button" }, "Tanlang ▾ · ", variantLabel);
+    // «O'zgarishli»: omborchi va xodimda alohida bo'limga tushadi
+    let changed = false;
+    let changedTouched = false;
+    const changedBtn = el("button", { class: "btn ghost changed-btn", type: "button", "aria-pressed": "false" });
+    const setChanged = (on) => {
+      changed = on;
+      changedBtn.setAttribute("aria-pressed", String(on));
+      changedBtn.textContent = on ? "❗️ O'zgarishli — HA" : "O'zgarishli emas (bazoviy)";
+    };
+    setChanged(false);
+    changedBtn.addEventListener("click", () => { changedTouched = true; setChanged(!changed); });
     variantBtn.addEventListener("click", () => variantChips.classList.toggle("hidden"));
     const amount = el("input", { type: "number", min: "1", max: "10000", value: "1", inputmode: "numeric" });
     const price = el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", placeholder: "Bo'sh qoldirsangiz — ombordagi narx" });
@@ -496,7 +512,8 @@ function newOrderSheet() {
       if (!client) { toast("Dillerni tanlang.", true); return; }
       if (!product.value.trim()) { toast("Mebelni kiriting.", true); return; }
       const body = { client_name: client, product: product.value.trim(), amount: Number(amount.value), due_date: due.value,
-        comment: comment.value, new_client: isNew, variant: [...chosen] };
+        comment: comment.value, new_client: isNew, variant: [...chosen], changed };
+      if (changed && !comment.value.trim()) { toast("O'zgarishli mebel uchun izohga nimasi o'zgarganini yozing.", true); comment.focus(); return; }
       if (price.value !== "") body.price = Number(price.value);
       const r = await act(btn, () => api("POST", "/api/orders", body), "Buyurtma yaratildi");
       if (r) { close(); S.ordersScope = "active"; go("orders"); }
@@ -504,6 +521,8 @@ function newOrderSheet() {
     return el("div", {}, el("h2", {}, "Yangi buyurtma"),
       field("Diller", el("div", {}, clientSel, newClient)), field("Mebel", el("div", {}, product, dl, productHint)),
       (m.variants || []).length ? field("Variant", el("div", {}, variantBtn, variantChips)) : "",
+      field("O'zgarishli mebelmi?", el("div", {}, changedBtn,
+        el("p", { class: "muted small", style: "margin:4px 2px 0" }, "HA bo'lsa — buyurtma omborchi va xodimda «❗️O'zgarishli❗️» bo'limiga tushadi. Nimasi o'zgarganini izohga yozing."))),
       el("div", { class: "actions two", style: "margin-top:0" }, field("Soni", amount), field("Muddat", due)),
       field("1 dona narxi ($)", price), field("Izoh", comment), el("div", { class: "actions" }, btn));
   });
@@ -600,13 +619,16 @@ function productForm(p) {
     btn.addEventListener("click", async () => {
       if (!name.value.trim()) { toast("Mebel nomini kiriting.", true); return; }
       const body = { name: name.value.trim(), model: model.value, qty: Number(qty.value || 0), image: image.value.trim() };
-      if (role === "admin" && price.value !== "") body.price = Number(price.value);
+      if (role === "admin") {
+        if (!(Number(price.value) > 0) && !(p && p.price)) { toast("Mebel narxini kiriting ($).", true); price.focus(); return; }
+        if (price.value !== "") body.price = Number(price.value);
+      }
       const r = await act(btn, () => api("POST", "/api/products", body), "Mebel saqlandi");
       if (r) { close(); refresh(); }
     });
     return el("div", {}, el("h2", {}, p ? "Mebelni tahrirlash" : "Yangi mebel"),
       field("Nomi", el("div", {}, name, dl)), field("Modeli / turi", model), field("Omborda soni", qty),
-      role === "admin" ? field("1 dona narxi ($)", price) : null, field("Rasm manzili (ixtiyoriy)", image),
+      role === "admin" ? field("1 dona narxi ($) *", price) : null, field("Rasm manzili (ixtiyoriy)", image),
       el("div", { class: "actions" }, btn));
   });
 }
@@ -862,8 +884,32 @@ async function settingsSection(holder) {
     const btn = el("button", { class: "btn ghost", type: "button" }, "Saqlash");
     btn.addEventListener("click", async () => {
       const items = ta.value.split("\n").map((x) => x.trim()).filter(Boolean);
-      const r = await act(btn, () => api("PUT", `/api/settings/${key}`, { items }), `${title}: saqlandi`);
-      if (r) { S.me = await api("GET", "/api/me"); }
+      const save = async (extra) => {
+        const r = await act(btn, () => api("PUT", `/api/settings/${key}`, { items, ...extra }), `${title}: saqlandi`);
+        if (r) { s[key] = r.items; S.me = await api("GET", "/api/me"); }
+        return r;
+      };
+      if (key !== "models") { await save({}); return; }
+      // Yangi model narxsiz saqlanmaydi: har biriga narx so'raymiz
+      const norm = (x) => x.replace(/[\s-]/g, "").toUpperCase();
+      const old = new Set((s.models || []).map(norm));
+      const fresh = items.filter((x) => !old.has(norm(x)));
+      if (!fresh.length) { await save({}); return; }
+      sheet((close) => {
+        const inputs = fresh.map((name) => [name, el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", placeholder: "Narxi, $" })]);
+        const ok = el("button", { class: "btn", type: "button" }, "Narxlar bilan saqlash");
+        ok.addEventListener("click", async () => {
+          const prices = {};
+          for (const [name, inp] of inputs) {
+            if (!(Number(inp.value) > 0)) { toast(`${name}: narxini kiriting.`, true); inp.focus(); return; }
+            prices[name] = Number(inp.value);
+          }
+          if (await save({ prices })) close();
+        });
+        return el("div", {}, el("h2", {}, "Yangi model narxi"),
+          el("p", { class: "muted small" }, "Yangi mebel modeli narxsiz saqlanmaydi. 1 dona narxini kiriting."),
+          inputs.map(([name, inp]) => field(name, inp)), el("div", { class: "actions" }, ok));
+      });
     });
     return el("div", {}, el("div", { class: "section-title" }, title), el("p", { class: "muted small", style: "margin:0 4px 6px" }, hint),
       ta, el("div", { class: "actions" }, btn));

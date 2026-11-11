@@ -414,13 +414,11 @@ async def orders_list(request):
         scope = "active"
     month = request.query.get("month", "")
     rows = await S(request).orders.all()
-    # «O'zgarishli»: variant tanlangan (Matrasli/Kapotli) yoki shablonda yo'q mebel
-    known = await S(request).inventory.known_keys(S(request).catalog)
     today = now().date()
     counts = dict.fromkeys(allowed, 0)
     out = []
     for oid, o in rows.items():
-        changed = bool(o.get("variant")) or product_key(str(o.get("product_id", ""))) not in known
+        changed = bool(o.get("changed"))  # admin buyurtma berishda «O'zgarishli» deb belgilagan
         scopes = _order_scopes(o, changed, today)
         for sc in scopes & set(allowed):
             counts[sc] += 1
@@ -453,7 +451,7 @@ async def order_create(request):
     o = await S(request).orders.create(
         actor(request), client_name=d.get("client_name", ""), product=d.get("product", ""),
         amount=d.get("amount"), due_date=d.get("due_date", ""), comment=d.get("comment", ""),
-        source="admin", custom_price=d.get("price"), variant=d.get("variant"),
+        source="admin", custom_price=d.get("price"), variant=d.get("variant"), changed=d.get("changed") is True,
     )
     if d.get("new_client"):
         await S(request).catalog.add_client_if_missing(o["client_name"])
@@ -467,7 +465,8 @@ async def order_edit(request):
     oid = request.match_info["oid"]
     d = await body(request)
     o = await S(request).orders.edit(actor(request), oid, amount=d.get("amount"), due_date=d.get("due_date"),
-                                     comment=d.get("comment"))
+                                     comment=d.get("comment"),
+                                     changed=d.get("changed") if isinstance(d.get("changed"), bool) else None)
     await E(request).order_edited(oid, o, actor(request))
     return web.json_response(order_out(oid, o, request["role"]))
 
@@ -536,9 +535,11 @@ async def product_upsert(request):
         # Omborchi yangi nom o'ylab topa olmaydi — faqat bazada bor mebelni qo'shadi/yangilaydi
         if product_key(str(d.get("name", ""))) not in await S(request).inventory.known_keys(S(request).catalog):
             raise ServiceError("Bu mebel bazada yo'q. Ro'yxatdan tanlang; yangi model qo'shishni admin qiladi.")
-    price = d.get("price") if request["role"] == ROLE_ADMIN else None
+    is_admin = request["role"] == ROLE_ADMIN
+    price = d.get("price") if is_admin else None
     rec = await S(request).inventory.upsert(actor(request), name=d.get("name", ""), model=d.get("model", ""),
-                                            price=price, quantity=d.get("qty"), image=d.get("image", ""))
+                                            price=price, quantity=d.get("qty"), image=d.get("image", ""),
+                                            require_price=is_admin)
     if request["role"] != ROLE_ADMIN:
         rec.pop("narxi", None)
     return web.json_response(rec, status=201)
@@ -724,7 +725,20 @@ async def settings_put(request):
     items = d.get("items")
     if not isinstance(items, list):
         raise ServiceError("items ro'yxat bo'lishi kerak.")
-    saved = await S(request).catalog.set_list(request.match_info["key"], [str(x) for x in items], actor(request))
+    key = request.match_info["key"]
+    prices = d.get("prices") if isinstance(d.get("prices"), dict) else {}
+    if key == "models":
+        # Yangi qo'shilgan model narxsiz saqlanmasin: narx omborga (0 dona) yoziladi
+        old = {product_key(m) for m in await S(request).catalog.models()}
+        inv = await S(request).inventory.all()
+        need = [str(x).strip() for x in items if str(x).strip() and product_key(str(x)) not in old
+                and not to_int((inv.get(product_key(str(x))) or {}).get("narxi"))]
+        missing = [m for m in need if str(prices.get(m, "")).strip() in ("", "0")]
+        if missing:
+            raise ServiceError("Yangi model(lar) uchun narx kiriting: " + ", ".join(missing))
+        for m in need:
+            await S(request).inventory.upsert(actor(request), name=m, price=prices[m], require_price=True)
+    saved = await S(request).catalog.set_list(key, [str(x) for x in items], actor(request))
     return web.json_response({"items": saved})
 
 

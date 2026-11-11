@@ -140,7 +140,7 @@ async def np_name(message: Message, state: FSMContext, services, role):
         await message.answer("❌ Bu mebel bazada yo'q. Pastdagi ro'yxatdan tanlang — yangi model qo'shishni admin qiladi.")
         return
     existing = await services.inventory.get(pid)
-    await state.update_data(name=name)
+    await state.update_data(name=name, has_price=bool(existing and to_int(existing.get("narxi"))))
     note = f"\n<i>Bu mebel bazada bor ({to_int(existing.get('soni'))} ta) — ma'lumotlari yangilanadi.</i>" if existing else ""
     await state.set_state(NewProduct.model)
     await message.answer(f"Modeli/turi (masalan: Spalniy):{note}", reply_markup=kb.grid([kb.SKIP], 1))
@@ -151,7 +151,10 @@ async def np_model(message: Message, state: FSMContext, role):
     await state.update_data(model="" if message.text == kb.SKIP else (message.text or "")[:60])
     if role == ROLE_ADMIN:
         await state.set_state(NewProduct.price)
-        await message.answer("Narxini kiriting ($, masalan: 340):", reply_markup=kb.grid([kb.SKIP], 1))
+        # Narxi yo'q mebel narxsiz saqlanmaydi; bor bo'lsa — o'tkazib yuborsa eski narx qoladi
+        has_price = (await state.get_data()).get("has_price")
+        await message.answer("Narxini kiriting ($, masalan: 340):",
+                             reply_markup=kb.grid([kb.SKIP], 1) if has_price else kb.back_kb())
     else:
         await state.set_state(NewProduct.qty)
         await message.answer("Omborda nechta bor?", reply_markup=kb.back_kb())
@@ -159,9 +162,12 @@ async def np_model(message: Message, state: FSMContext, role):
 
 @router.message(NewProduct.price)
 async def np_price(message: Message, state: FSMContext):
+    if message.text == kb.SKIP and not (await state.get_data()).get("has_price"):
+        await message.answer("❌ Bu mebelning narxi yo'q — narxini kiriting (masalan: 340).")
+        return
     if message.text != kb.SKIP:
         p = parse_number(message.text)
-        if p is None or p < 0:
+        if p is None or p <= 0:
             await message.answer("❌ Narxni raqam bilan kiriting (masalan: 340).")
             return
         await state.update_data(price=p)
@@ -186,7 +192,8 @@ async def np_save(message: Message, state: FSMContext, services, role):
     image = "" if message.text == kb.NO_IMAGE else (message.text or "").strip()
     try:
         rec = await services.inventory.upsert(message.from_user.id, name=data["name"], model=data.get("model", ""),
-                                              price=data.get("price"), quantity=data["qty"], image=image)
+                                              price=data.get("price"), quantity=data["qty"], image=image,
+                                              require_price=role == ROLE_ADMIN)
     except ServiceError as e:
         await message.answer(f"❌ {h(e)}")
         return

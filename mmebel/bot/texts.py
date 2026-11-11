@@ -29,6 +29,7 @@ def order_card(oid: str, o: dict, *, show_price: bool = False, title: str = "") 
         f"🆔 <code>{h(oid)}</code>",
         f"🧑 Diller: {h(o.get('client_name') or o.get('client') or '—')}",
         f"📦 Mebel: <b>{h(product_label(o))}</b> — {h(o.get('amount', 1))} ta",
+        *(["❗️ <b>O'ZGARISHLI MEBEL</b> — izohni o'qing"] if o.get("changed") else []),
         f"📅 Muddat: {h(format_date(o.get('due_date')))}",
     ]
     if show_price and (o.get("total_price") or o.get("price")):

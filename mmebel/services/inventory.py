@@ -34,7 +34,7 @@ class InventoryService:
         return money(product.get("narxi")) if product else 0.0
 
     async def upsert(self, actor_id, *, name: str, model: str = "", price=None,
-                     quantity=None, image: str = "") -> dict:
+                     quantity=None, image: str = "", require_price: bool = False) -> dict:
         name = clean_text(name, 60)
         pid = product_key(name)
         if not pid or not pid.replace("_", "").isalnum():
@@ -53,6 +53,8 @@ class InventoryService:
             record["narxi"] = money(p)
         elif "narxi" in existing:
             record["narxi"] = existing["narxi"]
+        if require_price and not record.get("narxi"):
+            raise ServiceError("Mebel narxini kiriting ($, 0 dan katta).")
         if quantity is not None and str(quantity).strip() != "":
             q = to_int(quantity, -1)
             if q < 0 or q > MAX_QTY:

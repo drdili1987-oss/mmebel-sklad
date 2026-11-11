@@ -99,7 +99,7 @@ class OrderService:
 
     async def create(self, actor_id, *, client_name: str, product: str, amount, due_date: str,
                      comment: str = "", source: str = "admin", client_tg_id=None,
-                     custom_price=None, allow_past: bool = False, variant=None) -> dict:
+                     custom_price=None, allow_past: bool = False, variant=None, changed: bool = False) -> dict:
         client_name = clean_text(client_name, 80)
         if not client_name or not is_valid_key(client_name):
             raise ServiceError("Mijoz nomi bo'sh yoki unda . $ # [ ] / belgilari bor.")
@@ -156,6 +156,8 @@ class OrderService:
         }
         if variant_txt:
             record["variant"] = variant_txt
+        if changed is True and source != "diller":
+            record["changed"] = True  # admin belgilagan: omborchi/xodimda «O'zgarishli» bo'limiga tushadi
         if client_tg_id is not None:
             record["client_tg_id"] = str(client_tg_id)
         try:
@@ -257,7 +259,7 @@ class OrderService:
         return dict(updated, net=net, gross=order_gross(updated), debt=debt)
 
     # ---------- tahrirlash ----------
-    async def edit(self, actor_id, order_id: str, *, amount=None, due_date=None, comment=None) -> dict:
+    async def edit(self, actor_id, order_id: str, *, amount=None, due_date=None, comment=None, changed=None) -> dict:
         order = await self.get(order_id)
         if order.get("status") not in ACTIVE_STATUSES:
             raise Conflict("Faqat faol buyurtmani o'zgartirish mumkin.")
@@ -291,6 +293,9 @@ class OrderService:
             if c != order.get("comment", ""):
                 updates["comment"] = c
                 changes["comment"] = c
+        if isinstance(changed, bool) and changed != bool(order.get("changed")):
+            updates["changed"] = changed
+            changes["changed"] = "ha" if changed else "yo'q"
         if not updates:
             return dict(order, _changes={})
         updates["updated_at"] = now_str()
