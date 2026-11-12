@@ -287,8 +287,8 @@ async function viewHome() {
       "📊 Katta ekran dashboard")));
     view.appendChild(el("div", { class: "section-title" }, pay.items.length ? `Tasdiqlanmagan to'lovlar (${pay.items.length})` : "Tasdiqlanmagan to'lov yo'q"));
     if (pay.items.length) view.appendChild(paymentsList(pay.items));
+    fab("＋ Yangi buyurtma", newOrderSheet);
   }
-  fab("＋ Yangi buyurtma", newOrderSheet);
 }
 /* Tasdiqlanmagan pul topshirishlar (yig'uvchi/omborchi -> men) */
 async function transfersBanner(view) {
@@ -360,7 +360,7 @@ async function viewOrders() {
   };
   search.addEventListener("input", draw);
   draw();
-  if (role === "admin" || role === "omborchi") fab("＋ Yangi buyurtma", newOrderSheet);
+  if (role === "admin") fab("＋ Yangi buyurtma", newOrderSheet);
 }
 
 function orderCard(o, showStatus) {
@@ -422,13 +422,13 @@ async function orderSheet(id) {
       actions.appendChild(el("div", { class: "actions two", style: "margin-top:0" },
         el("button", { class: "btn", type: "button", on: { click: () => deliverSheet(o, false, done) } }, "🚚 Yetkazildi"),
         el("button", { class: "btn", type: "button", on: { click: () => deliverSheet(o, true, done) } }, "🏠 O'zi olib ketdi")));
-      actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => editOrderSheet(o, done) } }, "✏️ O'zgartirish"));
+      if (role === "admin") actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => editOrderSheet(o, done) } }, "✏️ O'zgartirish"));
       actions.appendChild(el("button", { class: "btn danger", type: "button", on: { click: async (e) => {
         if (!(await confirmDlg(`${plabel(o)} × ${o.amount} (${o.client_name}) bekor qilinsinmi? Ombordan ayirilgani qaytariladi.`))) return;
         const r = await act(e.target, () => api("POST", `/api/orders/${encodeURIComponent(o.id)}/cancel`), "Buyurtma bekor qilindi");
         if (r) done();
       } } }, "Buyurtmani bekor qilish"));
-    } else if (staff && o.status !== "Bekor qilindi") {
+    } else if (role === "admin" && o.status !== "Bekor qilindi") {
       actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => editOrderSheet(o, done, true) } }, "✏️ Tartib raqam / qoldiqni to'g'rilash"));
     }
     const pays = el("div");
@@ -564,10 +564,9 @@ function editOrderSheet(o, onDone, metaOnly) {
 
 function newOrderSheet() {
   const m = S.me.meta;
-  const isAdmin = S.me.role === "admin";  // omborchi: faqat ro'yxatdagi diller va mebel, narxsiz
   sheet((close) => {
     const clientSel = el("select", {}, el("option", { value: "" }, "— Dillerni tanlang —"),
-      (m.clients || []).map((c) => el("option", { value: c }, c)), isAdmin ? el("option", { value: "__new" }, "+ Yangi diller") : null);
+      (m.clients || []).map((c) => el("option", { value: c }, c)), el("option", { value: "__new" }, "+ Yangi diller"));
     // Tartib raqam qo'lda kiritiladi (avtomatik berilmaydi); bitta diller ichida takrorlanmaydi
     const serial = el("input", { type: "text", maxlength: "20", placeholder: "Masalan: 001", autocomplete: "off" });
     const collect = el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", placeholder: "Masalan: 150 — yig'uvchi shu summani oladi" });
@@ -579,7 +578,7 @@ function newOrderSheet() {
     product.addEventListener("input", () => {
       const v = product.value.trim();
       const custom = v && !known.has(v.replace(/[\s-]/g, "").toUpperCase());
-      productHint.textContent = custom ? (isAdmin ? "Shablonda yo'q mebel — narxini albatta kiriting." : "Faqat ro'yxatdagi mebelni tanlang.") : "";
+      productHint.textContent = custom ? "Shablonda yo'q mebel — narxini albatta kiriting." : "";
       if (!changedTouched) setChanged(!!custom);  // shablonda yo'q mebel odatda o'zgarishli
       price.placeholder = custom ? "Narxi ($) — majburiy" : "Bo'sh qoldirsangiz — ombordagi narx";
     });
@@ -624,7 +623,7 @@ function newOrderSheet() {
         comment: comment.value, new_client: isNew, variant: [...chosen], changed };
       if (collect.value !== "") body.collect = Number(collect.value);
       if (changed && !comment.value.trim()) { toast("O'zgarishli mebel uchun izohga nimasi o'zgarganini yozing.", true); comment.focus(); return; }
-      if (isAdmin && price.value !== "") body.price = Number(price.value);
+      if (price.value !== "") body.price = Number(price.value);
       const r = await act(btn, () => api("POST", "/api/orders", body), "Buyurtma yaratildi");
       if (r) { close(); S.ordersScope = "active"; go("orders"); }
     });
@@ -635,7 +634,7 @@ function newOrderSheet() {
       field("O'zgarishli mebelmi?", el("div", {}, changedBtn,
         el("p", { class: "muted small", style: "margin:4px 2px 0" }, "HA bo'lsa — buyurtma omborchi va xodimda «❗️O'zgarishli❗️» bo'limiga tushadi. Nimasi o'zgarganini izohga yozing."))),
       el("div", { class: "actions two", style: "margin-top:0" }, field("Soni", amount), field("Muddat", due)),
-      isAdmin ? field("1 dona narxi ($)", price) : null,
+      field("1 dona narxi ($)", price),
       field("Mijozdan olinadigan qoldiq ($)", collect), field("Izoh", comment), el("div", { class: "actions" }, btn));
   });
 }

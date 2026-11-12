@@ -65,17 +65,25 @@ async def test_serial_required_and_unique_per_diller(client):  # noqa: F811
     assert "collect" not in ox
 
 
-async def test_omborchi_creates_order_without_price_override(client):  # noqa: F811
-    r = await new_order(client, "010", who=OMBOR, price=1)
-    assert r.status == 201, await r.text()
-    o = (await (await client.get(f"/api/orders/{(await r.json())['id']}", headers=hdr(ADMIN))).json())
-    assert o["price"] == 340                            # omborchi narxni o'zgartira olmaydi
-    r = await client.post("/api/orders", headers=hdr(OMBOR), json={"serial": "011", "client_name": "Umid",
-                          "product": "Yangi divan", "amount": 1, "due_date": DUE, "price": 100})
-    assert r.status == 400                              # shablonda yo'q mebel — faqat admin
-    r = await client.post("/api/orders", headers=hdr(OMBOR), json={"serial": "012", "client_name": "Yangi firma",
-                          "new_client": True, "product": "BF 07", "amount": 1, "due_date": DUE})
-    assert r.status == 400                              # yangi dillerni admin qo'shadi
+async def test_omborchi_no_orders_no_new_models_no_prices(client):  # noqa: F811
+    # zakaz ochmaydi va o'zgartirmaydi
+    assert (await new_order(client, "010", who=OMBOR)).status == 403
+    oid = (await (await new_order(client, "011")).json())["id"]
+    r = await client.patch(f"/api/orders/{oid}", headers=hdr(OMBOR), json={"serial": "012"})
+    assert r.status == 403
+    # narxlarni ko'rmaydi
+    o = await (await client.get(f"/api/orders/{oid}", headers=hdr(OMBOR))).json()
+    assert "price" not in o and "total_price" not in o
+    items = (await (await client.get("/api/products", headers=hdr(OMBOR))).json())["items"]
+    assert items and all("price" not in p for p in items)
+    me = await (await client.get("/api/me", headers=hdr(OMBOR))).json()
+    assert "clients" not in me["meta"]
+    # mavjud mebelni omborga qo'sha oladi, yangi modelni qo'sha olmaydi; narx yuborsa ham e'tiborsiz
+    r = await client.post("/api/products", headers=hdr(OMBOR), json={"name": "BF 07", "qty": 9, "price": 1})
+    assert r.status == 201 and "narxi" not in await r.json()
+    assert (await client.app["services"].inventory.get("BF07"))["narxi"] == 340
+    r = await client.post("/api/products", headers=hdr(OMBOR), json={"name": "Yangi model X", "qty": 1})
+    assert r.status == 400
 
 
 async def test_worker_profile_links_by_phone_and_access_rules(client):  # noqa: F811

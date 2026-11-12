@@ -364,7 +364,7 @@ async def me(request):
     if role == ROLE_ADMIN:
         meta.update(clients=s["clients"], months=last_months(12), roles=ROLE_LABELS, variants=s["variants"])
     elif role == ROLE_OMBORCHI:
-        meta.update(months=last_months(12), clients=s["clients"], variants=s["variants"])
+        meta.update(months=last_months(12))
     elif role == ROLE_YIGUVCHI:
         meta = {}
     elif role == ROLE_DILLER:
@@ -457,31 +457,26 @@ async def order_get(request):
 
 
 @routes.post("/api/orders")
-@requires(ROLE_ADMIN, ROLE_OMBORCHI)
+@requires(ROLE_ADMIN)
 async def order_create(request):
+    """Zakazni faqat admin ochadi (omborchi zakaz ochmaydi va narxlarni ko'rmaydi)."""
     d = await body(request)
-    is_admin = request["role"] == ROLE_ADMIN
-    if not is_admin:
-        # Omborchi: faqat ro'yxatdagi diller va bazadagi mebel, narx katalogdan (o'zgartira olmaydi)
-        if d.get("new_client") or str(d.get("client_name", "")) not in (await S(request).catalog.settings())["clients"]:
-            raise ServiceError("Dillerni ro'yxatdan tanlang. Yangi dillerni admin qo'shadi.")
     if not str(d.get("serial", "")).strip():
         raise ServiceError("Tartib raqamini kiriting (masalan: 001).")
     o = await S(request).orders.create(
         actor(request), client_name=d.get("client_name", ""), product=d.get("product", ""),
         amount=d.get("amount"), due_date=d.get("due_date", ""), comment=d.get("comment", ""),
-        source="admin" if is_admin else "omborchi", custom_price=d.get("price") if is_admin else None,
-        variant=d.get("variant"), changed=d.get("changed") is True, serial=d.get("serial"), collect=d.get("collect"),
-        known_only=not is_admin,
+        source="admin", custom_price=d.get("price"), variant=d.get("variant"), changed=d.get("changed") is True,
+        serial=d.get("serial"), collect=d.get("collect"),
     )
-    if d.get("new_client") and is_admin:
+    if d.get("new_client"):
         await S(request).catalog.add_client_if_missing(o["client_name"])
     await E(request).order_created(o, actor(request))
     return web.json_response(order_out(o["order_id"], o, request["role"]), status=201)
 
 
 @routes.patch("/api/orders/{oid}")
-@requires(ROLE_ADMIN, ROLE_OMBORCHI)
+@requires(ROLE_ADMIN)
 async def order_edit(request):
     oid = request.match_info["oid"]
     d = await body(request)
