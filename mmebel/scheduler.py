@@ -132,6 +132,9 @@ class Scheduler:
                     logins, sessions = await self.services.sessions.cleanup()
                     log.info("Tozalandi: %d ta eski kirish so'rovi, %d ta eskirgan sessiya", logins, sessions)
                     await self.services.users.cleanup_unread()
+                    from .web.reports_api import cleanup_links
+                    await cleanup_links(self.services.store)
+                    await self.services.workers.cleanup_uploads()
             except Exception:  # noqa: BLE001
                 log.exception("Arxiv xatosi")
         if t >= BACKUP_AT:

@@ -99,10 +99,13 @@ class OrderService:
 
     async def create(self, actor_id, *, client_name: str, product: str, amount, due_date: str,
                      comment: str = "", source: str = "admin", client_tg_id=None,
-                     custom_price=None, allow_past: bool = False, variant=None, changed: bool = False) -> dict:
+                     custom_price=None, allow_past: bool = False, variant=None, changed: bool = False,
+                     serial=None, collect=None, known_only: bool = False) -> dict:
         client_name = clean_text(client_name, 80)
         if not client_name or not is_valid_key(client_name):
             raise ServiceError("Mijoz nomi bo'sh yoki unda . $ # [ ] / belgilari bor.")
+        serial_txt = await self._check_serial(serial, client_name)
+        collect_v = self._parse_collect(collect)
         name = clean_text(product, 60)
         pid = product_key(name)
         if not pid or not any(c.isalnum() for c in pid) or any(ord(c) < 32 for c in name):
@@ -120,7 +123,7 @@ class OrderService:
         if not known:
             # Shablonda yo'q / o'zgartirilgan mebel: nomi qanday yozilgan bo'lsa shunday saqlanadi,
             # narxi bazada yo'q — shuning uchun qo'lda kiritilishi shart (aks holda qarz 0 bo'lib qoladi)
-            if source == "diller":
+            if source == "diller" or known_only:
                 raise ServiceError("Bu mebel katalogda yo'q. Ro'yxatdan tanlang.")
             if custom_price in (None, ""):
                 raise ServiceError("Bu mebel shablonda yo'q — 1 dona narxini kiriting.")
@@ -156,6 +159,10 @@ class OrderService:
         }
         if variant_txt:
             record["variant"] = variant_txt
+        if serial_txt:
+            record["serial"] = serial_txt
+        if collect_v is not None:
+            record["collect"] = collect_v
         if changed is True and source != "diller":
             record["changed"] = True  # admin belgilagan: omborchi/xodimda «O'zgarishli» bo'limiga tushadi
         if client_tg_id is not None:
@@ -168,6 +175,32 @@ class OrderService:
         await self._audit(actor_id, oid, "create", {"amount": qty, "client": client_name})
         return dict(record, product_name=(product_rec or {}).get("nomi", pid),
                     product_model=(product_rec or {}).get("modeli", ""))
+
+    @staticmethod
+    def _parse_collect(collect) -> float | None:
+        """Mijozdan olinadigan qoldiq ($): bo'sh bo'lsa — belgilanmagan."""
+        if collect in (None, ""):
+            return None
+        v = parse_number(collect)
+        if v is None or v < 0 or v > 10_000_000:
+            raise ServiceError("Mijozdan olinadigan qoldiq summasi noto'g'ri.")
+        return money(v)
+
+    async def _check_serial(self, serial, client_name: str, exclude_id: str | None = None) -> str:
+        """Tartib raqam qo'lda kiritiladi; bitta diller ichida takrorlanmaydi."""
+        if serial in (None, ""):
+            return ""
+        txt = clean_text(str(serial), 20)
+        if not txt or any(c in txt for c in ".$#[]/"):
+            raise ServiceError("Tartib raqam noto'g'ri (masalan: 001).")
+        target = client_name.strip().lower()
+        for oid, o in (await self.all()).items():
+            if oid == exclude_id or o.get("status") == ST_CANCELLED:
+                continue
+            if str(o.get("serial", "")).strip().lower() == txt.lower() and order_client(o).lower() == target:
+                raise Conflict(f"«{txt}» tartib raqami {order_client(o)} uchun allaqachon bor ({product_label(o)}, "
+                               f"ID {oid}). Boshqa raqam kiriting.")
+        return txt
 
     # ---------- status ----------
     async def _transition(self, order_id: str, allowed_from: set[str] | frozenset, to: str) -> str:
@@ -259,12 +292,25 @@ class OrderService:
         return dict(updated, net=net, gross=order_gross(updated), debt=debt)
 
     # ---------- tahrirlash ----------
-    async def edit(self, actor_id, order_id: str, *, amount=None, due_date=None, comment=None, changed=None) -> dict:
+    async def edit(self, actor_id, order_id: str, *, amount=None, due_date=None, comment=None, changed=None,
+                   serial=None, collect=None) -> dict:
         order = await self.get(order_id)
-        if order.get("status") not in ACTIVE_STATUSES:
-            raise Conflict("Faqat faol buyurtmani o'zgartirish mumkin.")
         updates: dict = {}
         changes: dict = {}
+        # Tartib raqam va qoldiq summani yetkazilgandan keyin ham to'g'rilash mumkin (PDF/hisob uchun)
+        if serial is not None:
+            s_txt = await self._check_serial(serial, order_client(order), exclude_id=order_id)
+            if s_txt != order.get("serial", ""):
+                updates["serial"] = s_txt
+                changes["serial"] = s_txt or "—"
+        if collect is not None:
+            c_val = self._parse_collect(collect)
+            if c_val != (money(order["collect"]) if order.get("collect") not in (None, "") else None):
+                updates["collect"] = c_val
+                changes["collect"] = f"{c_val:g}$" if c_val is not None else "—"
+        only_meta = amount is None and due_date is None and comment is None and changed is None
+        if order.get("status") not in ACTIVE_STATUSES and not only_meta:
+            raise Conflict("Faqat faol buyurtmani o'zgartirish mumkin.")
         if amount is not None:
             qty = parse_number(amount)
             if qty is None or qty != int(qty) or not (0 < qty <= MAX_AMOUNT):

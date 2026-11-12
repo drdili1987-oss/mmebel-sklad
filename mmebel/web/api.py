@@ -19,6 +19,7 @@ from ..constants import (
     ROLE_LABELS,
     ROLE_OMBORCHI,
     ROLE_XODIM,
+    ROLE_YIGUVCHI,
     SELF_PICKUP_DRIVER,
     ST_CANCELLED,
     ST_READY,
@@ -135,6 +136,10 @@ async def api_middleware(request: web.Request, handler):
     if role not in APP_ROLES:
         log.info("API 403 user=%s role=%s %s", user.id, role, request.path)
         return _json_error(403, "Ilova faqat zavod xodimlari va dillerlar uchun. Adminga murojaat qiling.")
+    # Yig'uvchi faqat o'z bo'limiga (/api/w/*, rasmlar) va umumiy endpointlarga kira oladi
+    if role == ROLE_YIGUVCHI and not (request.path.startswith(("/api/w/", "/api/wphoto/"))
+                                      or request.path in DILLER_COMMON_PATHS):
+        return _json_error(403, "Bu bo'lim mebel yig'uvchilar uchun emas.")
     # Diller faqat o'z bo'limiga (/api/d/*) va umumiy endpointlarga kira oladi
     if role == ROLE_DILLER and not (request.path.startswith("/api/d/") or request.path in DILLER_COMMON_PATHS):
         return _json_error(403, "Bu bo'lim dillerlar uchun emas.")
@@ -206,7 +211,9 @@ def order_out(oid: str, o: dict, role: str) -> dict:
     else:
         for f in PRICE_FIELDS + ("pickup_discount", "delivery_price"):
             out.pop(f, None)
-    for f in ("created_by", "delivered_by", "ready_by", "cancelled_by", "client_tg_id"):
+    if role == ROLE_XODIM:
+        out.pop("collect", None)
+    for f in ("created_by", "delivered_by", "ready_by", "cancelled_by", "client_tg_id", "assigned_by"):
         out.pop(f, None)
     return out
 
@@ -357,7 +364,9 @@ async def me(request):
     if role == ROLE_ADMIN:
         meta.update(clients=s["clients"], months=last_months(12), roles=ROLE_LABELS, variants=s["variants"])
     elif role == ROLE_OMBORCHI:
-        meta.update(months=last_months(12))
+        meta.update(months=last_months(12), clients=s["clients"], variants=s["variants"])
+    elif role == ROLE_YIGUVCHI:
+        meta = {}
     elif role == ROLE_DILLER:
         meta = {"models": s["models"], "price_channel": s["price_channel"],
                 "client_name": await S(request).users.client_name_for(u.id) or ""}
@@ -376,8 +385,9 @@ async def dashboard(request):
 
 # ================= buyurtmalar =================
 # Buyurtmalar bo'limlari. Xodimga qo'shimcha: Bugun / Ertaga / Indinga (topshirish sanasi bo'yicha).
-STAFF_SCOPES = ("active", "changed", "overdue", "ready", "done", "cancelled")
-XODIM_SCOPES = STAFF_SCOPES + ("today", "tomorrow", "after")
+BASE_SCOPES = ("active", "changed", "overdue", "ready", "done", "cancelled")
+STAFF_SCOPES = BASE_SCOPES[:4] + ("assigned",) + BASE_SCOPES[4:]   # admin/omborchi: + «Yig'uvchida»
+XODIM_SCOPES = BASE_SCOPES + ("today", "tomorrow", "after")
 DAY_SCOPES = {"today": 0, "tomorrow": 1, "after": 2}
 
 
@@ -391,6 +401,8 @@ def _order_scopes(o: dict, changed: bool, today) -> set[str]:
             out.add("changed")
         if st == ST_READY:
             out.add("ready")
+        if o.get("worker_id"):
+            out.add("assigned")
         if is_overdue(o.get("due_date"), st, ACTIVE_STATUSES):
             out.add("overdue")
         due = parse_date(o.get("due_date"))
@@ -445,28 +457,38 @@ async def order_get(request):
 
 
 @routes.post("/api/orders")
-@requires(ROLE_ADMIN)
+@requires(ROLE_ADMIN, ROLE_OMBORCHI)
 async def order_create(request):
     d = await body(request)
+    is_admin = request["role"] == ROLE_ADMIN
+    if not is_admin:
+        # Omborchi: faqat ro'yxatdagi diller va bazadagi mebel, narx katalogdan (o'zgartira olmaydi)
+        if d.get("new_client") or str(d.get("client_name", "")) not in (await S(request).catalog.settings())["clients"]:
+            raise ServiceError("Dillerni ro'yxatdan tanlang. Yangi dillerni admin qo'shadi.")
+    if not str(d.get("serial", "")).strip():
+        raise ServiceError("Tartib raqamini kiriting (masalan: 001).")
     o = await S(request).orders.create(
         actor(request), client_name=d.get("client_name", ""), product=d.get("product", ""),
         amount=d.get("amount"), due_date=d.get("due_date", ""), comment=d.get("comment", ""),
-        source="admin", custom_price=d.get("price"), variant=d.get("variant"), changed=d.get("changed") is True,
+        source="admin" if is_admin else "omborchi", custom_price=d.get("price") if is_admin else None,
+        variant=d.get("variant"), changed=d.get("changed") is True, serial=d.get("serial"), collect=d.get("collect"),
+        known_only=not is_admin,
     )
-    if d.get("new_client"):
+    if d.get("new_client") and is_admin:
         await S(request).catalog.add_client_if_missing(o["client_name"])
     await E(request).order_created(o, actor(request))
     return web.json_response(order_out(o["order_id"], o, request["role"]), status=201)
 
 
 @routes.patch("/api/orders/{oid}")
-@requires(ROLE_ADMIN)
+@requires(ROLE_ADMIN, ROLE_OMBORCHI)
 async def order_edit(request):
     oid = request.match_info["oid"]
     d = await body(request)
     o = await S(request).orders.edit(actor(request), oid, amount=d.get("amount"), due_date=d.get("due_date"),
                                      comment=d.get("comment"),
-                                     changed=d.get("changed") if isinstance(d.get("changed"), bool) else None)
+                                     changed=d.get("changed") if isinstance(d.get("changed"), bool) else None,
+                                     serial=d.get("serial"), collect=d.get("collect"))
     await E(request).order_edited(oid, o, actor(request))
     return web.json_response(order_out(oid, o, request["role"]))
 
@@ -697,6 +719,8 @@ async def user_set(request):
     d = await body(request)
     role = str(d.get("role", ""))
     await S(request).users.set_role(actor(request), str(d.get("id", "")), role, str(d.get("client_name", "")))
+    if role == ROLE_YIGUVCHI:
+        await S(request).workers.ensure_for_user(actor(request), str(d.get("id", "")))
     if role not in APP_ROLES:
         await S(request).sessions.revoke_user(str(d.get("id", "")))
         await S(request).push.unregister_user(str(d.get("id", "")))

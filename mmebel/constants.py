@@ -7,16 +7,18 @@ ROLE_OMBORCHI = "omborchi"
 ROLE_XODIM = "xodim"
 ROLE_DILLER = "diller"
 ROLE_MIJOZ = "mijoz"
+ROLE_YIGUVCHI = "yiguvchi"  # mebel yig'uvchi (haydovchi): mijozga yetkazadi, yig'adi, ostatkani oladi
 
 STAFF_ROLES = (ROLE_ADMIN, ROLE_OMBORCHI, ROLE_XODIM)
-ALL_ROLES = (ROLE_ADMIN, ROLE_OMBORCHI, ROLE_XODIM, ROLE_DILLER, ROLE_MIJOZ)
+ALL_ROLES = (ROLE_ADMIN, ROLE_OMBORCHI, ROLE_XODIM, ROLE_YIGUVCHI, ROLE_DILLER, ROLE_MIJOZ)
 PANEL_ROLES = STAFF_ROLES
-APP_ROLES = STAFF_ROLES + (ROLE_DILLER,)   # ilova/panelga kira oladiganlar (diller — faqat o'z bo'limi)
+APP_ROLES = STAFF_ROLES + (ROLE_YIGUVCHI, ROLE_DILLER,)   # ilova/panelga kira oladiganlar (diller — faqat o'z bo'limi)
 
 ROLE_LABELS = {
     ROLE_ADMIN: "Admin",
     ROLE_OMBORCHI: "Omborchi",
     ROLE_XODIM: "Xodim",
+    ROLE_YIGUVCHI: "Yig'uvchi",
     ROLE_DILLER: "Diller",
     ROLE_MIJOZ: "Mijoz",
 }

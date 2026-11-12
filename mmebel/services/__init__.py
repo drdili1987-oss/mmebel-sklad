@@ -10,6 +10,7 @@ from .orders import OrderService
 from .reports import ReportService
 from .sessions import SessionService
 from .users import UserService
+from .workers import WorkerService
 
 __all__ = ["Services", "ServiceError", "NotFound", "Conflict"]
 
@@ -24,5 +25,6 @@ class Services:
         self.orders = OrderService(store, self.inventory, self.finance)
         self.reports = ReportService(store, self.finance)
         self.sessions = SessionService(store)
+        self.workers = WorkerService(store, self.users, self.orders, self.finance)
         from ..push import PushService
         self.push = PushService(store)  # sender assemble() da ulanadi

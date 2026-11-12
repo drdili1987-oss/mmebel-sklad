@@ -121,8 +121,13 @@ async def got_contact(message: Message, role: str, services):
         await message.answer(f"❌ {h(e)}", reply_markup=kb.main_menu(role))
         return
     log.info("phone linked: user=%s", message.from_user.id)
+    extra = ""
+    if await services.workers.link_by_phone(message.from_user.id, digits):
+        role = await services.users.role(message.from_user.id)
+        extra = "\n\n🧰 Siz <b>mebel yig'uvchi</b> sifatida ro'yxatdan o'tdingiz. Ilovada o'zingizga biriktirilgan mebellarni ko'rasiz."
+        log.info("worker profile linked: user=%s", message.from_user.id)
     await message.answer(f"✅ Raqamingiz saqlandi: <b>+{h(digits)}</b>\n"
-                         "Endi ilovaga shu raqam bilan kirishingiz mumkin — kod shu botga keladi.",
+                         "Endi ilovaga shu raqam bilan kirishingiz mumkin — kod shu botga keladi." + extra,
                          reply_markup=kb.main_menu(role))
 
 

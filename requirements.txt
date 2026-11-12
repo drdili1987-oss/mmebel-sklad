@@ -3,3 +3,4 @@ firebase_admin==7.4.0
 python-dotenv==1.2.2
 aiohttp>=3.9,<4
 cryptography>=42
+reportlab==4.2.5

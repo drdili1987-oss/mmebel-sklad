@@ -102,3 +102,60 @@ class Events:
             await self.n.send(int(pay["diller_tg_id"]), msg)
         await self.n.to_admins(f"ℹ️ To'lov {h(pay.get('pay_id'))} {'tasdiqlandi' if approve else 'rad etildi'} "
                                f"({h(pay['client_name'])}, {fmt_money(pay['amount'])})", exclude=actor_id)
+
+    # ---------- mebel yig'uvchilar ----------
+    async def order_assigned(self, oid: str, o: dict, actor_id: int) -> None:
+        w = o.get("_worker") or {}
+        serial = f"№{h(o['serial'])} · " if o.get("serial") else ""
+        collect = f"\n💵 Mijozdan olinadigan qoldiq: <b>{fmt_money(o['collect'])}</b>" if o.get("collect") else ""
+        text = (f"🧰 <b>Sizga yig'ish uchun mebel yuborildi</b>\n{serial}📦 {h(product_label(o))} — {h(o.get('amount'))} ta\n"
+                f"🧑 {h(order_client(o))}" + (f"\n📝 {h(o['comment'])}" if o.get("comment") else "") + collect
+                + "\n\nMijozga topshirgach, ilovada «Mebel mijozga topshirildi» tugmasini bosing.")
+        if w.get("uid"):
+            await self.n.to_ids([int(w["uid"])], text, sound="new", mark=(oid, "new"))
+        await self.n.to_roles([ROLE_ADMIN, ROLE_OMBORCHI],
+                              f"🧰 {serial}{h(product_label(o))} × {h(o.get('amount'))} ({h(order_client(o))}) — "
+                              f"yig'ish uchun <b>{h(o.get('worker_name'))}</b> ga yuborildi", exclude=actor_id)
+
+    async def order_handover(self, res: dict) -> None:
+        o, w = res["order"], res["worker"]
+        oid = res["order_id"]
+        serial = f"№{h(o['serial'])} · " if o.get("serial") else ""
+        method = "💳 karta" if res["method"] == "karta" else "💵 naqd"
+        ok = "✅ Qoldiq to'g'ri olindi" if res["correct"] else "⚠️ Qoldiq to'liq olinmadi"
+        expected = f" (kutilgan {fmt_money(res['expected'])})" if res.get("expected") else ""
+        title = "📦 <b>Mebel mijozga topshirildi</b>" if res["kind"] == "handover" else "💵 <b>Mijozdan qo'shimcha to'lov</b>"
+        text = (f"{title}\n{serial}📦 {h(product_label(o))} — {h(o.get('amount'))} ta\n🧑 {h(order_client(o))}\n"
+                f"🧰 {h(w.get('name'))}\n{ok}: <b>{fmt_money(res['amount'])}</b> {method}{expected}"
+                + (f"\n📝 {h(res['note'])}" if res.get("note") else "")
+                + (f"\n💳 Diller qarzi: {fmt_money(o['debt'])}" if "debt" in o else ""))
+        await self.n.to_roles([ROLE_ADMIN, ROLE_OMBORCHI], text, sound=None if res["correct"] else "cancel",
+                              mark=(oid, "deliver"))
+        if res.get("photos"):
+            await self._send_photos(await self.n.users.ids_with_roles([ROLE_ADMIN]), res["photos"],
+                                    f"📎 {serial}{product_label(o)} — {w.get('name')} ({res['method']})")
+
+    async def _send_photos(self, ids, file_ids: list[str], caption: str) -> None:
+        from aiogram.types import InputMediaPhoto
+        media = [InputMediaPhoto(media=f, caption=caption if i == 0 else None) for i, f in enumerate(file_ids[:10])]
+        for uid in dict.fromkeys(ids):
+            try:
+                await self.n.bot.send_media_group(int(uid), media)
+            except Exception:  # noqa: BLE001 — rasm yuborilmasa ham asosiy xabar ketgan
+                pass
+
+    async def transfer_requested(self, t: dict) -> None:
+        who = "Mebel yig'uvchi" if t.get("from_kind") == "worker" else "Omborchi"
+        text = (f"💰 <b>{who} {h(t['from_name'])} sizga {fmt_money(t['amount'])} topshirdi.</b>\n"
+                f"Pulni qabul qilgan bo'lsangiz — ilovada tasdiqlang (Asosiy → Kassa).")
+        await self.n.to_roles([t["to_role"]], text, sound="new")
+
+    async def transfer_resolved(self, t: dict) -> None:
+        if not t.get("from_uid"):
+            return
+        if t["status"] == "approved":
+            msg = f"✅ <b>Topshirish tasdiqlandi</b>\n{h(t.get('text', ''))}"
+        else:
+            msg = (f"❌ <b>Topshirish rad etildi</b> ({fmt_money(t['amount'])}).\n"
+                   f"Rad etgan: {h(t.get('resolved_name', ''))}. Iltimos, bog'laning.")
+        await self.n.send(int(t["from_uid"]), msg)

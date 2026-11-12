@@ -11,7 +11,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 
-from ..constants import ROLE_ADMIN, ROLE_DILLER, ROLE_OMBORCHI, ROLE_XODIM
+from ..constants import ROLE_ADMIN, ROLE_DILLER, ROLE_OMBORCHI, ROLE_XODIM, ROLE_YIGUVCHI
 from ..utils import now
 
 BACK = "Bosh menyu"
@@ -64,6 +64,8 @@ def main_menu(role: str) -> ReplyKeyboardMarkup:
         rows = [[B_STOCK_UPDATE, B_DELIVERY_CTRL], [B_STOCK, B_DELIVERY_REPORT], [B_HISTORY, B_PANEL]]
     elif role == ROLE_XODIM:
         rows = [[B_ACTIVE], [B_PANEL]]
+    elif role == ROLE_YIGUVCHI:
+        rows = [[B_PANEL]]
     elif role == ROLE_DILLER:
         rows = [[B_STOCK_PUBLIC, B_D_ORDER], [B_D_HISTORY, B_D_CANCEL], [B_D_STATUS, B_D_PAYMENT], [B_D_PHOTOS, B_PANEL]]
     else:

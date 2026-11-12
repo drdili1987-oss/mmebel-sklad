@@ -111,7 +111,7 @@ async def test_prices_hidden_from_non_admin(client):
 async def test_order_lifecycle_via_api(client):
     due = (now() + timedelta(days=3)).strftime("%Y-%m-%d")
     r = await client.post("/api/orders", headers=hdr(ADMIN),
-                          json={"client_name": "Umid", "product": "BF 07", "amount": 2, "due_date": due})
+                          json={"serial": "S1", "client_name": "Umid", "product": "BF 07", "amount": 2, "due_date": due})
     assert r.status == 201, await r.text()
     oid = (await r.json())["id"]
     assert any(cid == DILLER for cid, _ in client.sent)  # dillerga xabar ketdi
@@ -132,7 +132,7 @@ async def test_order_lifecycle_via_api(client):
 
 
 async def test_validation_errors_are_400(client):
-    r = await client.post("/api/orders", headers=hdr(ADMIN), json={"client_name": "Umid", "product": "BF07",
+    r = await client.post("/api/orders", headers=hdr(ADMIN), json={"serial": "S2", "client_name": "Umid", "product": "BF07",
                                                                    "amount": -1, "due_date": "2020-01-01"})
     assert r.status == 400
     r = await client.post("/api/orders", headers=hdr(ADMIN), data="not json")
@@ -245,7 +245,7 @@ async def test_session_expiry_is_sliding(client, monkeypatch):
 async def test_admin_dashboard_endpoint(client):
     due = (now() + timedelta(days=1)).strftime("%Y-%m-%d")
     await client.post("/api/orders", headers=hdr(ADMIN),
-                      json={"client_name": "Umid", "product": "BF07", "amount": 2, "due_date": due})
+                      json={"serial": "S3", "client_name": "Umid", "product": "BF07", "amount": 2, "due_date": due})
     assert (await client.get("/api/dashboard/full", headers=hdr(OMBOR))).status == 403
     d = await (await client.get("/api/dashboard/full", headers=hdr(ADMIN))).json()
     assert len(d["revenue"]) == 12 and d["revenue"][-1]["revenue"] == 680
@@ -279,7 +279,7 @@ async def test_push_register_and_delivery(client):
 
     due = (now() + timedelta(days=2)).strftime("%Y-%m-%d")
     await client.post("/api/orders", headers=hdr(ADMIN),
-                      json={"client_name": "Umid", "product": "BF07", "amount": 1, "due_date": due})
+                      json={"serial": "S4", "client_name": "Umid", "product": "BF07", "amount": 1, "due_date": due})
     await services.push.drain()
     assert any(tok in t and "Yangi buyurtma" in title and snd == "new" for t, title, _, snd in fake.sent)
     oid = next(iter(await services.orders.all()))
@@ -413,11 +413,11 @@ async def test_order_variant_api(client):
     due = (now() + timedelta(days=2)).strftime("%Y-%m-%d")
     me = await (await client.get("/api/me", headers=hdr(ADMIN))).json()
     assert me["meta"]["variants"] == ["Matrasli", "Kapotli"]
-    r = await client.post("/api/orders", headers=hdr(ADMIN), json={"client_name": "Umid", "product": "BF07", "amount": 1,
+    r = await client.post("/api/orders", headers=hdr(ADMIN), json={"serial": "S5", "client_name": "Umid", "product": "BF07", "amount": 1,
                                                                   "due_date": due, "variant": ["kapotli", "Matrasli"]})
     o = await r.json()
     assert r.status == 201 and o["variant"] == "Matrasli, Kapotli"
-    bad = await client.post("/api/orders", headers=hdr(ADMIN), json={"client_name": "Umid", "product": "BF07", "amount": 1,
+    bad = await client.post("/api/orders", headers=hdr(ADMIN), json={"serial": "S6", "client_name": "Umid", "product": "BF07", "amount": 1,
                                                                     "due_date": due, "variant": ["Oltin"]})
     assert bad.status == 400
     d = await client.post("/api/d/orders", headers=hdr(DILLER), json={"product": "BF07", "amount": 1,
@@ -465,7 +465,7 @@ async def test_phone_login_unknown_number_and_bruteforce(client):
 async def test_unread_marks_until_seen(client):
     services = client.server.app["services"]
     due = (now() + timedelta(days=2)).strftime("%Y-%m-%d")
-    r = await client.post("/api/orders", headers=hdr(ADMIN), json={"client_name": "Umid", "product": "BF07", "amount": 1,
+    r = await client.post("/api/orders", headers=hdr(ADMIN), json={"serial": "S7", "client_name": "Umid", "product": "BF07", "amount": 1,
                                                                   "due_date": due})
     oid = (await r.json())["id"]
     for uid in (OMBOR, XODIM, DILLER):                          # xabar olganlarda ajralib turadi
@@ -540,7 +540,7 @@ async def test_order_sections_by_role(client):
 async def test_changed_flag_create_and_edit(client):
     services = client.server.app["services"]
     due = (now() + timedelta(days=2)).strftime("%Y-%m-%d")
-    r = await client.post("/api/orders", headers=hdr(ADMIN), json={"client_name": "Umid", "product": "BF07", "amount": 1,
+    r = await client.post("/api/orders", headers=hdr(ADMIN), json={"serial": "S8", "client_name": "Umid", "product": "BF07", "amount": 1,
                                                                   "due_date": due, "changed": True,
                                                                   "comment": "eni 160 sm"})
     o = await r.json()

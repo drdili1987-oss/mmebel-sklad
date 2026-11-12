@@ -178,20 +178,22 @@ function loading() { return el("div", { class: "empty" }, "Yuklanmoqda…"); }
 /* ---------- tablar ---------- */
 const TABS = {
   admin: [["home", "🏠", "Asosiy"], ["orders", "📋", "Buyurtmalar"], ["stock", "📦", "Ombor"], ["money", "💳", "Moliya"], ["more", "☰", "Boshqa"]],
-  omborchi: [["home", "🏠", "Asosiy"], ["orders", "📋", "Buyurtmalar"], ["stock", "📦", "Ombor"], ["deliveries", "🚚", "Yetkazish"]],
+  omborchi: [["home", "🏠", "Asosiy"], ["orders", "📋", "Buyurtmalar"], ["stock", "📦", "Ombor"], ["workers", "🧰", "Yig'uvchilar"], ["deliveries", "🚚", "Yetkazish"]],
+  yiguvchi: [["w_home", "🧰", "Mebellarim"], ["w_cash", "💰", "Hisob-kitob"]],
   xodim: [["plan", "🔨", "Ishlab chiqarish"], ["orders", "📋", "Buyurtmalar"]],
   diller: [["d_home", "🏠", "Asosiy"], ["d_catalog", "🛍", "Katalog"], ["d_orders", "📋", "Buyurtmalarim"], ["d_account", "💳", "Hisob"]],
   mijoz: [["m_catalog", "🛍", "Sotuvda"]],
 };
 const TITLES = { home: "Asosiy", orders: "Buyurtmalar", stock: "Ombor", money: "Moliya", more: "Boshqa",
-  deliveries: "Yetkazishlar", plan: "Ishlab chiqarish",
+  deliveries: "Yetkazishlar", plan: "Ishlab chiqarish", workers: "Mebel yig'uvchilar",
+  w_home: "Mebellarim", w_cash: "Hisob-kitob",
   d_home: "Asosiy", d_catalog: "Katalog", d_orders: "Buyurtmalarim", d_account: "Hisob", m_catalog: "Sotuvdagi mebellar" };
 
 /* ---------- o'qilmagan buyurtma xabarlari: o'qilmaguncha ajralib turadi ---------- */
 S.unread = {};
 const UNREAD_LABELS = { new: "🆕 Yangi", ready: "✅ Tayyor bo'ldi", cancel: "❌ Bekor qilindi",
   edit: "✏️ O'zgartirildi", deliver: "🚚 Yetkazildi" };
-const ORDERS_TAB = { admin: "orders", omborchi: "orders", xodim: "orders", diller: "d_orders" };
+const ORDERS_TAB = { admin: "orders", omborchi: "orders", xodim: "orders", diller: "d_orders", yiguvchi: "w_home" };
 async function loadUnread() {
   if (!S.me || S.me.role === "mijoz") return;
   try { S.unread = (await api("GET", "/api/unread")).items || {}; } catch (_) { /* belgi muhim emas */ }
@@ -250,7 +252,7 @@ function go(tab) {
   view.appendChild(loading());
   window.scrollTo(0, 0);
   const fn = { home: viewHome, orders: viewOrders, stock: viewStock, money: viewMoney, more: viewMore,
-    deliveries: viewDeliveries, plan: viewPlan,
+    deliveries: viewDeliveries, plan: viewPlan, workers: viewWorkers, w_home: viewWHome, w_cash: viewWCash,
     d_home: viewDHome, d_catalog: viewDCatalog, d_orders: viewDOrders, d_account: viewDAccount, m_catalog: viewMCatalog }[tab];
   fn().catch((e) => { clear(view).appendChild(empty(e.message)); });
 }
@@ -266,6 +268,7 @@ async function viewHome() {
   const [d, pay] = await Promise.all([api("GET", "/api/dashboard"), isAdmin ? api("GET", "/api/payments") : null, loadUnread()]);
   const view = clear($("view"));
   unreadLink(view, "orders");
+  transfersBanner(view);
   const stat = (num, label, onClick, cls) => el("button", { class: "stat " + (cls || ""), type: "button", on: { click: onClick } },
     el("b", {}, num), el("span", {}, label));
   const toOrders = (scope) => () => { S.ordersScope = scope; go("orders"); };
@@ -284,8 +287,18 @@ async function viewHome() {
       "📊 Katta ekran dashboard")));
     view.appendChild(el("div", { class: "section-title" }, pay.items.length ? `Tasdiqlanmagan to'lovlar (${pay.items.length})` : "Tasdiqlanmagan to'lov yo'q"));
     if (pay.items.length) view.appendChild(paymentsList(pay.items));
-    fab("＋ Yangi buyurtma", newOrderSheet);
   }
+  fab("＋ Yangi buyurtma", newOrderSheet);
+}
+/* Tasdiqlanmagan pul topshirishlar (yig'uvchi/omborchi -> men) */
+async function transfersBanner(view) {
+  let d;
+  try { d = await api("GET", "/api/workers"); } catch (_) { return; }
+  const mine = (d.pending || []).filter((t) => t.to_role === S.me.role || (S.me.role === "admin" && t.from_holder !== `u_${S.me.id}`));
+  if (!mine.length) return;
+  const sum = mine.reduce((s, t) => s + t.amount, 0);
+  view.prepend(el("button", { class: "unread-banner", type: "button", on: { click: () => { S.moneySeg = "workers"; go(S.me.role === "admin" ? "money" : "workers"); } } },
+    el("b", {}, `💰 ${mine.length} ta pul topshirish — ${money(sum)}`), el("span", {}, " — tasdiqlash uchun bosing")));
 }
 
 function openDashboard() {
@@ -299,16 +312,18 @@ function openDashboard() {
 /* Buyurtmalar bo'limlari: admin/omborchida 6 ta, xodimda + Bugun / Ertaga / Indinga */
 const ORDER_SCOPES = [["active", "Faol"], ["changed", "❗️O'zgarishli❗️"], ["overdue", "Muddati o'tgan"],
   ["ready", "Tayyor mebellar"], ["done", "Yetkazilgan"], ["cancelled", "Bekor qilingan"]];
+/* Admin va omborchida qo'shimcha: «Yig'uvchida» (yig'ish uchun yuborilgan, hali topshirilmagan) */
+const STAFF_ORDER_SCOPES = ORDER_SCOPES.slice(0, 4).concat([["assigned", "🧰 Yig'uvchida"]], ORDER_SCOPES.slice(4));
 const XODIM_DAY_SCOPES = [["today", "Bugun"], ["tomorrow", "Ertaga"], ["after", "Indinga"]];
 
 async function viewOrders() {
   const role = S.me.role;
   const tb = $("toolbar");
-  const scopes = role === "xodim" ? ORDER_SCOPES.concat(XODIM_DAY_SCOPES) : ORDER_SCOPES;
+  const scopes = role === "xodim" ? ORDER_SCOPES.concat(XODIM_DAY_SCOPES) : STAFF_ORDER_SCOPES;
   if (!scopes.some(([k]) => k === S.ordersScope)) S.ordersScope = "active";
   const segBox = el("div");
   tb.appendChild(segBox);
-  const search = el("input", { class: "search", type: "search", placeholder: "Qidirish: diller, mebel, ID", value: S.ordersQuery });
+  const search = el("input", { class: "search", type: "search", placeholder: "Qidirish: tartib raqam, diller, mebel", value: S.ordersQuery });
   tb.appendChild(search);
   const [data] = await Promise.all([api("GET", `/api/orders?scope=${S.ordersScope}`), loadUnread()]);
   const scope = data.scope || S.ordersScope;
@@ -321,7 +336,7 @@ async function viewOrders() {
   const draw = () => {
     const q = search.value.trim().toLowerCase();
     S.ordersQuery = search.value;
-    const found = data.items.filter((o) => !q || `${o.client_name} ${plabel(o)} ${o.id} ${o.comment || ""}`.toLowerCase().includes(q));
+    const found = data.items.filter((o) => !q || `${o.serial || ""} ${o.client_name} ${plabel(o)} ${o.id} ${o.worker_name || ""} ${o.comment || ""}`.toLowerCase().includes(q));
     clear(box);
     const dated = scope !== "done" && scope !== "cancelled";
     const sec = unreadSection(found, (o) => orderCard(o, !dated));
@@ -345,7 +360,7 @@ async function viewOrders() {
   };
   search.addEventListener("input", draw);
   draw();
-  if (role === "admin") fab("＋ Yangi buyurtma", newOrderSheet);
+  if (role === "admin" || role === "omborchi") fab("＋ Yangi buyurtma", newOrderSheet);
 }
 
 function orderCard(o, showStatus) {
@@ -354,11 +369,13 @@ function orderCard(o, showStatus) {
     on: { click: (e) => { if (isNew) { markSeen([o.id]); e.currentTarget.classList.remove("unread"); e.currentTarget.querySelector(".newtag")?.remove(); } orderSheet(o.id); } } },
     unreadTag(o),
     o.changed ? el("span", { class: "chgtag" }, "❗️ O'zgarishli") : null,
-    el("div", {}, el("span", { class: "code" }, plabel(o)), el("span", { class: "qty" }, `× ${o.amount}`),
+    el("div", {}, o.serial ? el("span", { class: "serial" }, `№${o.serial}`) : null,
+      el("span", { class: "code" }, plabel(o)), el("span", { class: "qty" }, `× ${o.amount}`),
       o.status !== "Tayyorlanmoqda" || showStatus ? el("span", { style: "margin-left:8px" }, el("span", { class: `badge ${edgeClass(o.status)}` }, o.status)) : null),
     el("div", { class: "line2" }, el("span", { class: "client" }, o.client_name || "—"),
       el("span", { class: "due" }, showStatus ? fdate(o.delivered_at || o.created_at) : fdate(o.due_date))),
     o.comment && !["yoq", "yo'q", "-"].includes(String(o.comment).toLowerCase()) ? el("div", { class: "note" }, "📝 " + o.comment) : null,
+    o.worker_name ? el("div", { class: "note" }, `🧰 ${o.worker_name}${o.handover ? (o.handover.correct ? " · ✅ topshirdi" : " · ⚠️ qoldiq chala") : ACTIVE.includes(o.status) ? " · yig'ishda" : ""}`) : null,
   );
 }
 
@@ -368,7 +385,9 @@ async function orderSheet(id) {
   const role = S.me.role;
   sheet((close) => {
     const isActive = ACTIVE.includes(o.status);
+    const staff = role === "admin" || role === "omborchi";
     const kv = el("dl", { class: "kv" },
+      o.serial ? [el("dt", {}, "Tartib raqam"), el("dd", {}, el("b", {}, `№${o.serial}`))] : null,
       el("dt", {}, "Diller"), el("dd", {}, o.client_name || "—"),
       el("dt", {}, "Soni"), el("dd", {}, `${o.amount} ta`),
       el("dt", {}, "Muddat"), el("dd", { class: o.overdue ? "pos" : "" }, `${fdate(o.due_date)}${o.overdue ? " (kechikkan)" : ""}`),
@@ -376,14 +395,23 @@ async function orderSheet(id) {
       o.changed ? [el("dt", {}, "Turi"), el("dd", {}, el("span", { class: "chgtag", style: "margin:0" }, "❗️ O'zgarishli mebel"))] : null,
       o.comment ? [el("dt", {}, "Izoh"), el("dd", {}, o.comment)] : null,
       role === "admin" && o.total_price ? [el("dt", {}, "Narxi"), el("dd", {}, `${money(o.price)} × ${o.amount} = ${money(o.total_price)}`)] : null,
-      o.driver ? [el("dt", {}, "Haydovchi"), el("dd", {}, `${o.driver}${o.delivery_price ? " · " + o.delivery_price : ""}`)] : null,
+      staff && o.collect != null ? [el("dt", {}, "Mijozdan qoldiq"), el("dd", {}, money(o.collect))] : null,
+      o.worker_name && ACTIVE.includes(o.status) ? [el("dt", {}, "Yig'uvchi"), el("dd", {}, `🧰 ${o.worker_name}`)] : null,
+      o.driver ? [el("dt", {}, o.worker_name ? "Yig'uvchi" : "Haydovchi"), el("dd", {}, `${o.driver}${o.delivery_price && o.delivery_price !== "0$" ? " · " + o.delivery_price : ""}`)] : null,
       o.delivered_at ? [el("dt", {}, "Yetkazilgan"), el("dd", {}, fdate(o.delivered_at))] : null,
       el("dt", {}, "Yaratilgan"), el("dd", {}, fdate(o.created_at)),
       el("dt", {}, "ID"), el("dd", { class: "small muted" }, o.id),
     );
     const actions = el("div", { class: "actions" });
     const done = () => { close(); refresh(); };
-    if (isActive && (role === "admin" || role === "omborchi")) {
+    if (isActive && staff) {
+      actions.appendChild(el("button", { class: "btn", type: "button", on: { click: () => assignSheet(o, done) } },
+        o.worker_id ? "🧰 Yig'uvchini almashtirish" : "🧰 Yig'ish uchun yuborildi"));
+      if (o.worker_id) actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: async (e) => {
+        if (!(await confirmDlg(`${o.worker_name} dan olib qo'yilsinmi?`))) return;
+        const r = await act(e.target, () => api("DELETE", `/api/orders/${encodeURIComponent(o.id)}/assign`), "Yig'uvchidan olindi");
+        if (r) done();
+      } } }, "↩️ Yig'uvchidan olish"));
       if (o.status !== "Tayyor bo'ldi") {
         actions.appendChild(el("button", { class: "btn", type: "button", on: { click: (e) =>
           act(e.target, () => api("POST", `/api/orders/${encodeURIComponent(o.id)}/ready`), "Tayyor bo'ldi deb belgilandi").then((r) => r && done()) } }, "✅ Tayyor bo'ldi"));
@@ -394,14 +422,82 @@ async function orderSheet(id) {
       actions.appendChild(el("div", { class: "actions two", style: "margin-top:0" },
         el("button", { class: "btn", type: "button", on: { click: () => deliverSheet(o, false, done) } }, "🚚 Yetkazildi"),
         el("button", { class: "btn", type: "button", on: { click: () => deliverSheet(o, true, done) } }, "🏠 O'zi olib ketdi")));
-      if (role === "admin") actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => editOrderSheet(o, done) } }, "✏️ O'zgartirish"));
+      actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => editOrderSheet(o, done) } }, "✏️ O'zgartirish"));
       actions.appendChild(el("button", { class: "btn danger", type: "button", on: { click: async (e) => {
         if (!(await confirmDlg(`${plabel(o)} × ${o.amount} (${o.client_name}) bekor qilinsinmi? Ombordan ayirilgani qaytariladi.`))) return;
         const r = await act(e.target, () => api("POST", `/api/orders/${encodeURIComponent(o.id)}/cancel`), "Buyurtma bekor qilindi");
         if (r) done();
       } } }, "Buyurtmani bekor qilish"));
+    } else if (staff && o.status !== "Bekor qilindi") {
+      actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => editOrderSheet(o, done, true) } }, "✏️ Tartib raqam / qoldiqni to'g'rilash"));
     }
-    return el("div", {}, el("div", { class: "code-big" }, `${plabel(o)} × ${o.amount}`), kv, actions);
+    const pays = el("div");
+    if (staff && o.worker_id && !isActive) loadOrderPays(o.id, pays);
+    return el("div", {}, el("div", { class: "code-big" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} × ${o.amount}`), kv, pays, actions);
+  });
+}
+
+/* Mijozdan olingan to'lovlar (yig'uvchi kiritgan) va karta skrinshotlari */
+async function loadOrderPays(oid, holder) {
+  let data;
+  try { data = await api("GET", `/api/orders/${encodeURIComponent(oid)}/wpay`); } catch (_) { return; }
+  if (!data.items.length) return;
+  holder.appendChild(el("div", { class: "section-title" }, "Mijozdan olingan to'lov"));
+  holder.appendChild(payList(data.items));
+}
+function payList(items, showOrder) {
+  return el("div", { class: "list" }, items.map((p) => el("div", { class: "row", style: "flex-wrap:wrap" },
+    el("div", { class: "grow" },
+      el("div", {}, showOrder ? el("b", {}, `${p.serial ? "№" + p.serial + " · " : ""}${plabel(p)} — ${p.client}`) : el("b", {}, p.kind === "extra" ? "Qo'shimcha to'lov" : (p.correct ? "✅ Qoldiq to'g'ri olindi" : "⚠️ Qoldiq to'liq olinmadi"))),
+      el("div", { class: "sub" }, [fdate(p.ts), p.method === "karta" ? "💳 karta" : "💵 naqd", p.expected ? `kutilgan ${money(p.expected)}` : null, p.note].filter(Boolean).join(" · "))),
+    el("div", { class: "end" }, el("b", {}, money(p.amount))),
+    p.photos ? el("div", { class: "thumbs", style: "width:100%" }, Array.from({ length: p.photos }, (_, i) => photoThumb(p.pay_id, i))) : null)));
+}
+/* Rasm avtorizatsiya bilan yuklanadi (img src ga token qo'yib bo'lmaydi) */
+function photoThumb(pid, i) {
+  const img = el("img", { class: "thumb", alt: `Rasm ${i + 1}`, loading: "lazy" });
+  const auth = IN_TELEGRAM ? "tma " + tg.initData : (getToken() ? "Bearer " + getToken() : "");
+  fetch(`/api/wphoto/${encodeURIComponent(pid)}/${i}`, { headers: { Authorization: auth } })
+    .then((r) => (r.ok ? r.blob() : null)).then((b) => {
+      if (!b) { img.alt = "Rasm ochilmadi"; return; }
+      const url = URL.createObjectURL(b);
+      img.src = url;
+      img.addEventListener("click", () => sheet(() => el("div", {}, el("img", { src: url, class: "photo-full", alt: "" }))));
+    }).catch(() => { img.alt = "Rasm ochilmadi"; });
+  return img;
+}
+
+async function assignSheet(o, onDone) {
+  let data;
+  try { data = await api("GET", "/api/workers"); } catch (e) { toast(e.message, true); return; }
+  const list = data.workers.filter((w) => w.active);
+  sheet((close) => {
+    let pick = o.worker_id || null;
+    const fee = el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", placeholder: "Ixtiyoriy, $" });
+    const btn = el("button", { class: "btn", type: "button" }, "Yig'uvchiga yuborish");
+    const rows = el("div", { class: "list pick" }, list.map((w) => {
+      const b = el("button", { class: "row", type: "button", "aria-pressed": String(w.id === pick) },
+        el("div", { class: "grow" }, el("div", { style: "font-weight:600" }, w.name),
+          el("div", { class: "sub" }, `${w.assigned} ta yig'ishda${w.linked ? "" : " · ⚠️ hali botga kirmagan"}`)),
+        el("div", { class: "end" }, w.id === pick ? "✓" : ""));
+      b.addEventListener("click", () => {
+        pick = w.id;
+        rows.querySelectorAll("button").forEach((x) => { x.setAttribute("aria-pressed", "false"); x.querySelector(".end").textContent = ""; });
+        b.setAttribute("aria-pressed", "true"); b.querySelector(".end").textContent = "✓";
+      });
+      return b;
+    }));
+    btn.addEventListener("click", async () => {
+      if (!pick) { toast("Yig'uvchini tanlang.", true); return; }
+      const r = await act(btn, () => api("POST", `/api/orders/${encodeURIComponent(o.id)}/assign`,
+        { worker_id: pick, fee: fee.value === "" ? null : Number(fee.value) }), "Yig'uvchiga yuborildi");
+      if (r) { close(); onDone(); }
+    });
+    return el("div", {}, el("h2", {}, "Yig'ish uchun yuborish"),
+      el("p", { class: "muted small" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} × ${o.amount} · ${o.client_name}`),
+      list.length ? rows : empty("Yig'uvchi yo'q. Avval «Yig'uvchilar» bo'limida profil oching."),
+      field("Yetkazish haqi ($) — yig'uvchi balansiga yoziladi", fee),
+      el("div", { class: "actions" }, btn));
   });
 }
 
@@ -433,8 +529,10 @@ function deliverSheet(o, pickup, onDone) {
   });
 }
 
-function editOrderSheet(o, onDone) {
+function editOrderSheet(o, onDone, metaOnly) {
   sheet((close) => {
+    const serial = el("input", { type: "text", maxlength: "20", value: o.serial || "", placeholder: "Masalan: 001" });
+    const collect = el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", value: o.collect != null ? o.collect : "", placeholder: "Bo'sh — belgilanmagan" });
     const amount = el("input", { type: "number", min: "1", max: "10000", value: o.amount, inputmode: "numeric" });
     const due = el("input", { type: "date", value: toIso(o.due_date), min: isoToday() });
     const comment = el("textarea", { maxlength: "500" }, o.comment || "");
@@ -443,26 +541,36 @@ function editOrderSheet(o, onDone) {
     const btn = el("button", { class: "btn", type: "button" }, "O'zgarishlarni saqlash");
     btn.addEventListener("click", async () => {
       const body = {};
-      if (Number(amount.value) !== Number(o.amount)) body.amount = Number(amount.value);
-      if (due.value && due.value !== toIso(o.due_date)) body.due_date = due.value;
-      if (comment.value !== (o.comment || "")) body.comment = comment.value;
-      if ((chg.value === "1") !== !!o.changed) body.changed = chg.value === "1";
+      if (serial.value.trim() !== (o.serial || "")) body.serial = serial.value.trim();
+      const cv = collect.value === "" ? null : Number(collect.value);
+      if (cv !== (o.collect != null ? Number(o.collect) : null)) body.collect = cv === null ? "" : cv;
+      if (!metaOnly) {
+        if (Number(amount.value) !== Number(o.amount)) body.amount = Number(amount.value);
+        if (due.value && due.value !== toIso(o.due_date)) body.due_date = due.value;
+        if (comment.value !== (o.comment || "")) body.comment = comment.value;
+        if ((chg.value === "1") !== !!o.changed) body.changed = chg.value === "1";
+      }
       if (!Object.keys(body).length) { close(); return; }
       const r = await act(btn, () => api("PATCH", `/api/orders/${encodeURIComponent(o.id)}`, body), "Saqlandi. Dillerga xabar yuborildi.");
       if (r) { close(); onDone(); }
     });
     return el("div", {}, el("h2", {}, `${plabel(o)} — o'zgartirish`),
-      field("Soni", amount), field("Muddat", due), field("Izoh", comment), field("O'zgarishli mebelmi?", chg),
-      el("p", { class: "muted small" }, "Soni o'zgarsa, ombor qoldig'i avtomatik to'g'rilanadi."),
+      el("div", { class: "actions two", style: "margin-top:0" }, field("Tartib raqam", serial), field("Mijozdan qoldiq ($)", collect)),
+      metaOnly ? null : [field("Soni", amount), field("Muddat", due), field("Izoh", comment), field("O'zgarishli mebelmi?", chg),
+        el("p", { class: "muted small" }, "Soni o'zgarsa, ombor qoldig'i avtomatik to'g'rilanadi.")],
       el("div", { class: "actions" }, btn));
   });
 }
 
 function newOrderSheet() {
   const m = S.me.meta;
+  const isAdmin = S.me.role === "admin";  // omborchi: faqat ro'yxatdagi diller va mebel, narxsiz
   sheet((close) => {
     const clientSel = el("select", {}, el("option", { value: "" }, "— Dillerni tanlang —"),
-      m.clients.map((c) => el("option", { value: c }, c)), el("option", { value: "__new" }, "+ Yangi diller"));
+      (m.clients || []).map((c) => el("option", { value: c }, c)), isAdmin ? el("option", { value: "__new" }, "+ Yangi diller") : null);
+    // Tartib raqam qo'lda kiritiladi (avtomatik berilmaydi); bitta diller ichida takrorlanmaydi
+    const serial = el("input", { type: "text", maxlength: "20", placeholder: "Masalan: 001", autocomplete: "off" });
+    const collect = el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", placeholder: "Masalan: 150 — yig'uvchi shu summani oladi" });
     const newClient = el("input", { type: "text", maxlength: "60", placeholder: "Yangi diller nomi", class: "hidden" });
     clientSel.addEventListener("change", () => newClient.classList.toggle("hidden", clientSel.value !== "__new"));
     const product = el("input", { type: "text", list: "models-dl", maxlength: "60", placeholder: "Ro'yxatdan tanlang yoki o'zingiz yozing" });
@@ -471,7 +579,7 @@ function newOrderSheet() {
     product.addEventListener("input", () => {
       const v = product.value.trim();
       const custom = v && !known.has(v.replace(/[\s-]/g, "").toUpperCase());
-      productHint.textContent = custom ? "Shablonda yo'q mebel — narxini albatta kiriting." : "";
+      productHint.textContent = custom ? (isAdmin ? "Shablonda yo'q mebel — narxini albatta kiriting." : "Faqat ro'yxatdagi mebelni tanlang.") : "";
       if (!changedTouched) setChanged(!!custom);  // shablonda yo'q mebel odatda o'zgarishli
       price.placeholder = custom ? "Narxi ($) — majburiy" : "Bo'sh qoldirsangiz — ombordagi narx";
     });
@@ -510,21 +618,25 @@ function newOrderSheet() {
       const isNew = clientSel.value === "__new";
       const client = isNew ? newClient.value.trim() : clientSel.value;
       if (!client) { toast("Dillerni tanlang.", true); return; }
+      if (!serial.value.trim()) { toast("Tartib raqamini kiriting.", true); serial.focus(); return; }
       if (!product.value.trim()) { toast("Mebelni kiriting.", true); return; }
-      const body = { client_name: client, product: product.value.trim(), amount: Number(amount.value), due_date: due.value,
+      const body = { client_name: client, serial: serial.value.trim(), product: product.value.trim(), amount: Number(amount.value), due_date: due.value,
         comment: comment.value, new_client: isNew, variant: [...chosen], changed };
+      if (collect.value !== "") body.collect = Number(collect.value);
       if (changed && !comment.value.trim()) { toast("O'zgarishli mebel uchun izohga nimasi o'zgarganini yozing.", true); comment.focus(); return; }
-      if (price.value !== "") body.price = Number(price.value);
+      if (isAdmin && price.value !== "") body.price = Number(price.value);
       const r = await act(btn, () => api("POST", "/api/orders", body), "Buyurtma yaratildi");
       if (r) { close(); S.ordersScope = "active"; go("orders"); }
     });
     return el("div", {}, el("h2", {}, "Yangi buyurtma"),
-      field("Diller", el("div", {}, clientSel, newClient)), field("Mebel", el("div", {}, product, dl, productHint)),
+      field("Diller", el("div", {}, clientSel, newClient)), field("Tartib raqam *", serial),
+      field("Mebel", el("div", {}, product, dl, productHint)),
       (m.variants || []).length ? field("Variant", el("div", {}, variantBtn, variantChips)) : "",
       field("O'zgarishli mebelmi?", el("div", {}, changedBtn,
         el("p", { class: "muted small", style: "margin:4px 2px 0" }, "HA bo'lsa — buyurtma omborchi va xodimda «❗️O'zgarishli❗️» bo'limiga tushadi. Nimasi o'zgarganini izohga yozing."))),
       el("div", { class: "actions two", style: "margin-top:0" }, field("Soni", amount), field("Muddat", due)),
-      field("1 dona narxi ($)", price), field("Izoh", comment), el("div", { class: "actions" }, btn));
+      isAdmin ? field("1 dona narxi ($)", price) : null,
+      field("Mijozdan olinadigan qoldiq ($)", collect), field("Izoh", comment), el("div", { class: "actions" }, btn));
   });
 }
 
@@ -664,9 +776,10 @@ async function viewDeliveries(target) {
 
 /* ================= MOLIYA (admin) ================= */
 async function viewMoney() {
-  $("toolbar").appendChild(seg([["debts", "Qarzlar"], ["payments", "To'lovlar"], ["drivers", "Haydovchilar"]], S.moneySeg,
+  $("toolbar").appendChild(seg([["debts", "Qarzlar"], ["workers", "🧰 Yig'uvchilar"], ["payments", "To'lovlar"], ["drivers", "Haydovchilar"]], S.moneySeg,
     (k) => { S.moneySeg = k; refresh(); }));
   const view = clear($("view"));
+  if (S.moneySeg === "workers") { await viewWorkers(view); return; }
   if (S.moneySeg === "debts") {
     const data = await api("GET", "/api/debts");
     const total = data.items.filter((r) => r.debt > 0).reduce((s, r) => s + r.debt, 0);
@@ -726,6 +839,7 @@ async function accountSheet(client) {
         if (r) { reopen(); }
       } } }, "💳 Barchasi to'landi"));
     }
+    actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => reportSheet(client) } }, "📄 Yetkazilganlar: PDF / nusxa"));
     box.appendChild(actions);
     box.appendChild(el("div", { class: "section-title" }, `To'lanmagan (yetkazilgan) — ${a.unsettled.length} ta`));
     if (!a.unsettled.length) box.appendChild(empty("Hammasi to'langan."));
@@ -918,6 +1032,359 @@ async function settingsSection(holder) {
   holder.appendChild(block("drivers", "Haydovchilar", "Har qatorda bitta ism."));
   holder.appendChild(block("models", "Mebel modellari", "Botdagi tanlov tugmalari tartibi."));
   holder.appendChild(block("variants", "Buyurtma variantlari", "Yangi buyurtmada «Tanlang» tugmasi ostidagi variantlar (masalan: Matrasli, Kapotli). Tanlanmasa — bazoviy."));
+}
+
+/* ================= YETKAZILGANLAR HISOBOTI (admin) ================= */
+/* Fayl Authorization sarlavhasisiz ochilishi uchun bir martalik qisqa havola olinadi */
+async function openFile(path, filename) {
+  const url = location.origin + path;
+  if (window.MMebelApp && window.MMebelApp.openExternal) { window.MMebelApp.openExternal(url); return; }  // Android ilova
+  if (IN_TELEGRAM && tg.openLink) { tg.openLink(url); return; }
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Faylni yuklab bo'lmadi.");
+  const blobUrl = URL.createObjectURL(await res.blob());
+  const a = el("a", { href: blobUrl, download: filename });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast("Nusxa olindi — Excel yoki Telegram'ga joylashtiring"); return; } catch (_) { /* quyida */ }
+  sheet(() => {
+    const ta = el("textarea", { rows: "12", readonly: true }, text);
+    setTimeout(() => { ta.focus(); ta.select(); }, 50);
+    return el("div", {}, el("h2", {}, "Nusxa olish"), el("p", { class: "muted small" }, "Matnni belgilab, «Nusxa olish» ni bosing."), ta);
+  });
+}
+function reportSheet(client) {
+  sheet((close) => {
+    let unsettled = true;
+    const from = el("input", { type: "date" });
+    const to = el("input", { type: "date", max: isoToday() });
+    const info = el("p", { class: "muted small" }, "");
+    const preview = el("div");
+    const params = () => ({ client, from: from.value, to: to.value, unsettled: unsettled ? "1" : "" });
+    const load = async () => {
+      info.textContent = "Yuklanmoqda…";
+      try {
+        const q = new URLSearchParams(params()).toString();
+        const d = await api("GET", `/api/reports/delivered?${q}`);
+        info.textContent = `${d.items.length} ta mebel · tartib raqami bo'yicha`;
+        clear(preview).appendChild(d.items.length ? el("div", { class: "list" }, d.items.slice(0, 50).map((r) => el("div", { class: "row" },
+          el("div", { class: "grow" }, el("div", {}, r.serial ? el("span", { class: "serial" }, `№${r.serial}`) : "— ", plabel({ product_id: r.product, variant: r.variant })),
+            el("div", { class: "sub" }, `${fdate(r.delivered_at)}${r.settled ? " · ✅ hisob-kitob" : ""}`)),
+          el("div", { class: "end" }, money(r.price), el("div", { class: "sub" }, `olindi ${money(r.collected)}`))))) : empty("Ro'yxat bo'sh."));
+        preview.dataset.text = d.text;
+      } catch (e) { info.textContent = e.message; }
+    };
+    const download = (format) => async (e) => {
+      await act(e.target, async () => {
+        const r = await api("POST", "/api/reports/delivered/link", { ...params(), unsettled: unsettled, format });
+        await openFile(r.url, `${client}_yetkazilgan.${format}`);
+      });
+    };
+    from.addEventListener("change", load); to.addEventListener("change", load);
+    const kind = chips(["unsettled", "all"], "unsettled", (v) => { unsettled = v === "unsettled"; load(); },
+      (v) => (v === "unsettled" ? "Hisob-kitob qilinmagan" : "Hammasi"));
+    load();
+    return el("div", {}, el("h2", {}, `${client} — yetkazilganlar`),
+      field("Qaysilari", kind),
+      el("div", { class: "actions two", style: "margin-top:0" }, field("Dan (yetkazilgan)", from), field("Gacha", to)),
+      info,
+      el("div", { class: "actions" },
+        el("button", { class: "btn", type: "button", on: { click: download("pdf") } }, "📄 PDF yuklab olish (A4)"),
+        el("div", { class: "actions two", style: "margin-top:0" },
+          el("button", { class: "btn ghost", type: "button", on: { click: () => (preview.dataset.text ? copyText(preview.dataset.text) : toast("Ro'yxat hali yuklanmadi.", true)) } }, "📋 Nusxa olish"),
+          el("button", { class: "btn ghost", type: "button", on: { click: download("csv") } }, "📊 Excel (CSV)"))),
+      preview);
+  });
+}
+
+/* ================= MEBEL YIG'UVCHILAR (admin / omborchi) ================= */
+async function viewWorkers(target) {
+  const d = await api("GET", "/api/workers");
+  const view = target || clear($("view"));
+  clear(view);
+  const isAdmin = S.me.role === "admin";
+  view.appendChild(el("div", { class: "stats" },
+    el("div", { class: "stat wide" + (d.total_cash ? " late" : "") }, el("b", {}, money(d.total_cash)), el("span", {}, "Topshirilmagan naqd pul (jami)")),
+    el("div", { class: "stat" }, el("b", {}, d.month_delivered), el("span", {}, `Shu oy topshirildi (${d.month})`)),
+    el("div", { class: "stat" }, el("b", {}, money(d.month_cash)), el("span", {}, "Shu oy naqd")),
+    el("div", { class: "stat wide" }, el("b", {}, money(d.month_card)), el("span", {}, "Shu oy karta orqali"))));
+  // Tasdiqlash kutayotgan topshirishlar
+  const pending = (d.pending || []).filter((t) => t.from_holder !== `u_${S.me.id}`);
+  if (pending.length) {
+    view.appendChild(el("div", { class: "section-title" }, `Tasdiqlash kutilmoqda — ${pending.length} ta`));
+    view.appendChild(el("div", { class: "list" }, pending.map((t) => {
+      const canResolve = isAdmin || t.to_role === S.me.role;
+      const row = el("div", { class: "row", style: "flex-wrap:wrap" },
+        el("div", { class: "grow" }, el("div", { style: "font-weight:600" }, `${t.from_name} → ${t.to_role === "admin" ? "admin" : "omborchi"}`),
+          el("div", { class: "sub" }, `${t.from_kind === "worker" ? "Mebel yig'uvchi" : "Omborchi"} · ${fdate(t.ts)}`)),
+        el("div", { class: "end" }, el("b", {}, money(t.amount))));
+      if (canResolve) {
+        const resolve = (approve) => async (e) => {
+          if (!(await confirmDlg(approve ? `Siz ${t.from_name} dan ${money(t.amount)} oldingizmi? Tasdiqlaysizmi?` : `${t.from_name}: ${money(t.amount)} rad etilsinmi?`))) return;
+          const r = await act(e.target, () => api("POST", `/api/cash/transfers/${encodeURIComponent(t.id)}/resolve`, { approve }),
+            approve ? "Tasdiqlandi" : "Rad etildi");
+          if (r) refresh();
+        };
+        row.appendChild(el("div", { class: "actions two", style: "width:100%;margin-top:6px" },
+          el("button", { class: "btn", type: "button", on: { click: resolve(true) } }, "✅ Tasdiqlash"),
+          el("button", { class: "btn danger", type: "button", on: { click: resolve(false) } }, "Rad etish")));
+      }
+      return row;
+    })));
+  }
+  // Omborchining o'z kassasi (yig'uvchilardan qabul qilgani) -> adminga
+  if (S.me.role === "omborchi") {
+    view.appendChild(el("div", { class: "section-title" }, "Mening kassam"));
+    const row = el("div", { class: "row", style: "flex-wrap:wrap" },
+      el("div", { class: "grow" }, "Yig'uvchilardan qabul qilingan, adminga topshirilmagan",
+        d.my_pending ? el("div", { class: "sub" }, `⏳ ${money(d.my_pending.amount)} adminga topshirildi — tasdiq kutilmoqda`) : null),
+      el("div", { class: "end" }, el("b", {}, money(d.my_cash || 0))));
+    if (d.my_cash > 0 && !d.my_pending) row.appendChild(el("div", { class: "actions", style: "width:100%;margin-top:6px" },
+      el("button", { class: "btn", type: "button", on: { click: () => cashTransferSheet(d.my_cash, ["admin"], "/api/cash/transfer") } }, "Adminga topshirish")));
+    view.appendChild(el("div", { class: "list" }, row));
+  } else if ((d.staff || []).length) {
+    view.appendChild(el("div", { class: "section-title" }, "Omborchilar kassasi"));
+    view.appendChild(el("div", { class: "list" }, d.staff.map((s) => el("div", { class: "row" },
+      el("div", { class: "grow" }, s.name), el("div", { class: "end" }, el("b", {}, money(s.cash)))))));
+  }
+  view.appendChild(el("div", { class: "section-title" }, `Yig'uvchilar — ${d.workers.length}`));
+  view.appendChild(el("div", { class: "actions" }, el("button", { class: "btn ghost", type: "button", on: { click: newWorkerSheet } }, "＋ Yig'uvchi qo'shish")));
+  if (!d.workers.length) view.appendChild(empty("Hali yig'uvchi yo'q. «＋ Yig'uvchi qo'shish» ni bosing."));
+  view.appendChild(el("div", { class: "list" }, d.workers.map((w) => el("button", { class: "row" + (w.active ? "" : " muted"), type: "button", on: { click: () => workerSheet(w.id) } },
+    el("div", { class: "grow" }, el("div", { style: "font-weight:600" }, w.name, w.active ? "" : " (o'chirilgan)"),
+      el("div", { class: "sub" }, [`${w.assigned} ta yig'ishda`, `shu oy ${w.month_delivered} ta`, w.linked ? null : "⚠️ botga kirmagan"].filter(Boolean).join(" · "))),
+    el("div", { class: "end " + (w.cash > 0 ? "pos" : "muted") }, money(w.cash))))));
+  view.appendChild(el("p", { class: "muted small", style: "margin:6px 4px" },
+    "O'ngdagi summa — yig'uvchi qo'lidagi naqd pul (sexga topshirishi kerak). Karta orqali to'lovlar bunga qo'shilmaydi."));
+}
+
+function newWorkerSheet() {
+  sheet((close) => {
+    const name = el("input", { type: "text", maxlength: "60", placeholder: "Masalan: Javohir", "data-autofocus": "" });
+    const phone = el("input", { type: "tel", maxlength: "20", placeholder: "+998 90 123 45 67" });
+    const btn = el("button", { class: "btn", type: "button" }, "Profil ochish");
+    btn.addEventListener("click", async () => {
+      const r = await act(btn, () => api("POST", "/api/workers", { name: name.value.trim(), phone: phone.value.trim() }), "Yig'uvchi qo'shildi");
+      if (r) { close(); refresh(); }
+    });
+    return el("div", {}, el("h2", {}, "Yangi mebel yig'uvchi"),
+      field("Ismi", name), field("Telefon raqami (Telegram'dagi)", phone),
+      el("p", { class: "muted small" }, "Yig'uvchi botga /start yozib, «📱 Raqamni ulashish» tugmasini bossa — profil avtomatik bog'lanadi va ilovaga shu raqam bilan kiradi."),
+      el("div", { class: "actions" }, btn));
+  });
+}
+
+async function workerSheet(wid) {
+  let w;
+  try { w = await api("GET", `/api/workers/${encodeURIComponent(wid)}`); } catch (e) { toast(e.message, true); return; }
+  sheet((close) => {
+    const box = el("div", {}, el("h2", {}, w.name),
+      el("p", { class: "muted small" }, `+${w.phone || "—"} · ${w.linked ? "✅ botga ulangan" : "⚠️ hali botga kirmagan"}`),
+      el("div", { class: "code-big " + (w.cash > 0 ? "pos" : "") }, money(w.cash)),
+      el("p", { class: "muted small" }, "Qo'lidagi naqd pul — sexga topshirishi kerak"));
+    if (S.me.role === "admin") {
+      box.appendChild(el("div", { class: "actions" }, el("button", { class: "btn ghost", type: "button", on: { click: async (e) => {
+        if (!(await confirmDlg(w.active ? `${w.name} profili o'chirilsinmi? Yangi mebel yuborib bo'lmaydi.` : `${w.name} profili qayta yoqilsinmi?`))) return;
+        const r = await act(e.target, () => api("PATCH", `/api/workers/${encodeURIComponent(wid)}`, { active: !w.active }), "Saqlandi");
+        if (r) { close(); refresh(); }
+      } } }, w.active ? "Profilni o'chirish" : "Profilni yoqish")));
+    }
+    box.appendChild(el("div", { class: "section-title" }, `Yig'ishda — ${w.active_orders.length} ta`));
+    box.appendChild(w.active_orders.length ? el("div", { class: "list" }, w.active_orders.map((o) => el("div", { class: "row" },
+      el("div", { class: "grow" }, el("b", {}, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)}`), ` × ${o.amount}`, el("div", { class: "sub" }, `${o.client_name} · yuborildi ${fdate(o.assigned_at)}`)),
+      el("div", { class: "end" }, o.collect != null ? money(o.collect) : "—")))) : empty("Hozir yig'ishda mebel yo'q."));
+    box.appendChild(el("div", { class: "section-title" }, "Mijozlardan olingan to'lovlar"));
+    box.appendChild(w.payments.length ? payList(w.payments, true) : empty("Hali to'lov yo'q."));
+    box.appendChild(el("div", { class: "section-title" }, "Kassa tarixi"));
+    box.appendChild(cashLogList(w.log));
+    return box;
+  });
+}
+
+function cashLogList(log) {
+  if (!log.length) return empty("Tarix bo'sh.");
+  return el("div", { class: "list" }, log.map((h) => el("div", { class: "row" },
+    el("div", { class: "grow" }, h.text || h.kind, el("div", { class: "sub" }, `${fdate(h.ts)} · qoldiq ${money(h.balance)}`)),
+    el("div", { class: "end " + (h.amount < 0 ? "neg" : "pos") }, (h.amount > 0 ? "+" : "−") + money(Math.abs(h.amount))))));
+}
+
+function cashTransferSheet(balance, targets, path) {
+  sheet((close) => {
+    let to = targets.length === 1 ? targets[0] : null;
+    const amount = el("input", { type: "number", min: "0.01", step: "0.01", inputmode: "decimal", value: balance });
+    const btn = el("button", { class: "btn", type: "button" }, "Topshirish");
+    btn.addEventListener("click", async () => {
+      if (!to) { toast("Kimga topshirishni tanlang.", true); return; }
+      const v = Number(amount.value);
+      if (!(v > 0)) { toast("Summani kiriting.", true); return; }
+      if (!(await confirmDlg(`${money(v)} ${to === "admin" ? "adminga" : "omborchiga"} topshirilsinmi? U tasdiqlagach kassangizdan ayiriladi.`))) return;
+      const r = await act(btn, () => api("POST", path, { to, amount: v }), "Yuborildi. Tasdiqlashni kuting.");
+      if (r) { close(); refresh(); }
+    });
+    return el("div", {}, el("h2", {}, "Qarzni topshirish"),
+      el("p", { class: "muted small" }, `Kassangizda: ${money(balance)}`),
+      targets.length > 1 ? field("Kimga topshirasiz?", chips(targets, null, (v) => { to = v; }, (v) => (v === "admin" ? "👤 Adminga" : "📦 Omborchiga"))) : null,
+      field("Summa ($)", amount), el("div", { class: "actions" }, btn));
+  });
+}
+
+/* ================= YIG'UVCHI PANELI ================= */
+async function viewWHome() {
+  const [d] = await Promise.all([api("GET", "/api/w/me"), loadUnread()]);
+  markSeen();
+  const view = clear($("view"));
+  view.appendChild(el("button", { class: "stat wide" + (d.cash ? " late" : ""), type: "button", style: "width:100%", on: { click: () => go("w_cash") } },
+    el("b", {}, money(d.cash)), el("span", {}, "Sexga topshirishingiz kerak (naqd)")));
+  view.appendChild(el("div", { class: "section-title" }, `Yig'ish uchun yuborilgan — ${d.active.length} ta`));
+  if (!d.active.length) view.appendChild(empty("Hozircha sizga yuborilgan mebel yo'q."));
+  view.appendChild(el("div", { class: "list" }, d.active.map((o) => el("button", { class: "row", type: "button", on: { click: () => wOrderSheet(o) } },
+    el("div", { class: "grow" }, el("div", {}, o.serial ? el("span", { class: "serial" }, `№${o.serial}`) : null, el("b", {}, plabel(o)), ` × ${o.amount}`),
+      el("div", { class: "sub" }, [o.client_name, o.comment].filter(Boolean).join(" · "))),
+    el("div", { class: "end" }, o.collect != null ? el("b", {}, money(o.collect)) : "—")))));
+  if (d.done.length) {
+    view.appendChild(el("div", { class: "section-title" }, "Topshirilganlar"));
+    view.appendChild(el("div", { class: "list" }, d.done.map((o) => el("button", { class: "row", type: "button", on: { click: () => wDoneSheet(o) } },
+      el("div", { class: "grow" }, el("div", {}, o.serial ? el("span", { class: "serial" }, `№${o.serial}`) : null, el("b", {}, plabel(o))),
+        el("div", { class: "sub" }, `${fdate(o.delivered_at)} · ${o.client_name}${o.handover && o.handover.correct === false ? " · ⚠️ chala" : ""}`)),
+      el("div", { class: "end" }, money(o.paid), el("div", { class: "sub" }, o.method === "karta" ? "💳" : o.method ? "💵" : ""))))));
+  }
+}
+
+function wOrderSheet(o) {
+  sheet((close) => el("div", {},
+    el("div", { class: "code-big" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} × ${o.amount}`),
+    el("dl", { class: "kv" },
+      el("dt", {}, "Diller"), el("dd", {}, o.client_name || "—"),
+      o.comment ? [el("dt", {}, "Izoh"), el("dd", {}, o.comment)] : null,
+      el("dt", {}, "Olinadigan qoldiq"), el("dd", {}, o.collect != null ? el("b", {}, money(o.collect)) : "Belgilanmagan"),
+      el("dt", {}, "Yuborildi"), el("dd", {}, fdate(o.assigned_at))),
+    el("div", { class: "actions" }, el("button", { class: "btn", type: "button", on: { click: () => { close(); handoverSheet(o, false); } } }, "✅ Mebel mijozga topshirildi"))));
+}
+
+function wDoneSheet(o) {
+  sheet((close) => el("div", {},
+    el("div", { class: "code-big" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)}`),
+    el("dl", { class: "kv" },
+      el("dt", {}, "Diller"), el("dd", {}, o.client_name),
+      el("dt", {}, "Topshirildi"), el("dd", {}, fdate(o.delivered_at)),
+      el("dt", {}, "Kutilgan qoldiq"), el("dd", {}, o.collect != null ? money(o.collect) : "—"),
+      el("dt", {}, "Olingan"), el("dd", {}, el("b", {}, money(o.paid)))),
+    el("div", { class: "actions" }, el("button", { class: "btn ghost", type: "button", on: { click: () => { close(); handoverSheet(o, true); } } }, "💵 Mijoz qolgan pulni berdi"))));
+}
+
+/* Rasmni telefonda kichraytirib (≤1600px, JPEG) yuklaymiz — tez va 5 MB dan oshmaydi */
+async function compressImage(file) {
+  if (!/^image\//.test(file.type)) throw new Error("Faqat rasm yuklash mumkin.");
+  const bmp = await (window.createImageBitmap ? createImageBitmap(file).catch(() => null) : null);
+  const src = bmp || await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("Rasm ochilmadi.")); i.src = URL.createObjectURL(file); });
+  const k = Math.min(1, 1600 / Math.max(src.width, src.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(src.width * k); c.height = Math.round(src.height * k);
+  c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
+  const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.82));
+  if (!blob) throw new Error("Rasmni tayyorlab bo'lmadi.");
+  if (blob.size > 5 * 1024 * 1024) throw new Error("Rasm hajmi 5 MB dan oshmasin.");
+  return blob;
+}
+async function uploadPhoto(blob) {
+  const auth = IN_TELEGRAM ? "tma " + tg.initData : (getToken() ? "Bearer " + getToken() : "");
+  let res;
+  try { res = await fetch("/api/w/photos", { method: "POST", headers: { Authorization: auth, "Content-Type": "image/jpeg" }, body: blob }); }
+  catch (_) { throw new Error("Internet aloqasi yo'q."); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Xato (${res.status})`);
+  return data.key;
+}
+
+/* «Mebel mijozga topshirildi» -> «Qoldiq summa to'g'ri olindimi?» Ha/Yo'q -> summa, izoh, karta skrinshotlari */
+function handoverSheet(o, extra) {
+  sheet((close) => {
+    let correct = extra ? true : null;
+    let card = false;
+    const photos = [];  // {blob, url}
+    const amount = el("input", { type: "number", min: "0", step: "0.01", inputmode: "decimal", placeholder: "Summa, $" });
+    const note = el("textarea", { maxlength: "500", placeholder: "Qo'shimcha izoh" });
+    const noteLabel = el("span", {}, "Qo'shimcha izoh");
+    const form = el("div", { class: extra ? "" : "hidden" });
+    const thumbs = el("div", { class: "thumbs" });
+    const fileInput = el("input", { type: "file", accept: "image/jpeg,image/png", multiple: true, class: "hidden" });
+    const addPhoto = el("button", { class: "btn ghost", type: "button", on: { click: () => fileInput.click() } }, "📷 Skrinshot qo'shish (1–5 ta)");
+    const drawThumbs = () => {
+      clear(thumbs);
+      photos.forEach((p, i) => thumbs.appendChild(el("div", { class: "thumb-wrap" }, el("img", { class: "thumb", src: p.url, alt: `Rasm ${i + 1}` }),
+        el("button", { class: "thumb-x", type: "button", "aria-label": "O'chirish", on: { click: () => { URL.revokeObjectURL(p.url); photos.splice(i, 1); drawThumbs(); } } }, "×"))));
+      addPhoto.disabled = photos.length >= 5;
+    };
+    fileInput.addEventListener("change", async () => {
+      for (const f of Array.from(fileInput.files || [])) {
+        if (photos.length >= 5) { toast("Ko'pi bilan 5 ta rasm.", true); break; }
+        try { const blob = await compressImage(f); photos.push({ blob, url: URL.createObjectURL(blob) }); } catch (e) { toast(e.message, true); }
+      }
+      fileInput.value = "";
+      drawThumbs();
+    });
+    const cardBox = el("div", { class: "hidden" }, addPhoto, fileInput, thumbs);
+    const cardBtn = el("button", { class: "btn ghost", type: "button", "aria-pressed": "false" }, "💳 To'lov karta orqali amalga oshirildi");
+    cardBtn.addEventListener("click", () => {
+      card = !card;
+      cardBtn.setAttribute("aria-pressed", String(card));
+      cardBox.classList.toggle("hidden", !card);
+    });
+    const pick = (v) => {
+      correct = v;
+      form.classList.remove("hidden");
+      if (v && o.collect != null && amount.value === "") amount.value = o.collect;
+      if (!v) amount.value = "";
+      noteLabel.textContent = v ? "Qo'shimcha izoh" : "Nima uchun farq bor? (majburiy)";
+      note.placeholder = v ? "Qo'shimcha izoh" : "Masalan: chala ish qolgani uchun mijoz hamma pulni bermadi";
+      amount.focus();
+    };
+    const save = el("button", { class: "btn", type: "button" }, "Saqlash");
+    save.addEventListener("click", async () => {
+      if (correct === null) { toast("«Ha» yoki «Yo'q» ni tanlang.", true); return; }
+      const v = amount.value === "" ? NaN : Number(amount.value);
+      if (isNaN(v) || v < 0) { toast("Olingan summani kiriting (olinmagan bo'lsa 0).", true); amount.focus(); return; }
+      if (!correct && !note.value.trim()) { toast("Farq sababini izohga yozing.", true); note.focus(); return; }
+      if (card && v > 0 && !photos.length) { toast("Karta to'lovi uchun skrinshot yuklang.", true); return; }
+      save.disabled = true;
+      try {
+        const keys = [];
+        for (let i = 0; i < photos.length; i++) { save.textContent = `Rasm yuklanmoqda ${i + 1}/${photos.length}…`; keys.push(await uploadPhoto(photos[i].blob)); }
+        save.textContent = "Saqlanmoqda…";
+        const body = { amount: v, method: card ? "karta" : "naqd", note: note.value.trim(), photos: keys };
+        if (extra) await api("POST", `/api/w/orders/${encodeURIComponent(o.id)}/payment`, body);
+        else await api("POST", `/api/w/orders/${encodeURIComponent(o.id)}/handover`, { ...body, correct });
+        toast(extra ? "To'lov saqlandi" : "Topshirildi. Rahmat!");
+        close(); refresh();
+      } catch (e) { toast(e.message, true); }
+      finally { save.disabled = false; save.textContent = "Saqlash"; }
+    });
+    form.append(field(extra ? "Olingan summa ($)" : "Olingan summa ($) — olinmagan bo'lsa 0", amount),
+      el("label", { class: "field" }, noteLabel, note), cardBtn, cardBox, el("div", { class: "actions" }, save));
+    return el("div", {}, el("h2", {}, extra ? "Qo'shimcha to'lov" : "Mebel mijozga topshirildi"),
+      el("p", { class: "muted small" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} · ${o.client_name}${o.collect != null ? " · qoldiq " + money(o.collect) : ""}`),
+      extra ? null : el("div", {}, el("p", { style: "font-weight:600;margin:8px 2px" }, "Mebelning qoldiq summasi to'g'ri olindimi?"),
+        chips([true, false], null, pick, (x) => (x ? "✅ Ha" : "❌ Yo'q"))),
+      form);
+  });
+}
+
+async function viewWCash() {
+  const d = await api("GET", "/api/w/me");
+  const view = clear($("view"));
+  view.appendChild(el("div", { class: "code-big " + (d.cash > 0 ? "pos" : "") }, money(d.cash)));
+  view.appendChild(el("p", { class: "muted small", style: "text-align:center" }, "Qo'lingizdagi naqd pul — sexga topshirishingiz kerak"));
+  if (d.pending_transfer) {
+    view.appendChild(el("div", { class: "unread-banner" }, el("b", {}, `⏳ ${money(d.pending_transfer.amount)} ${d.pending_transfer.to_role === "admin" ? "adminga" : "omborchiga"} topshirildi`),
+      el("span", {}, " — tasdiqlanishi kutilmoqda")));
+  } else if (d.cash > 0) {
+    view.appendChild(el("div", { class: "actions" }, el("button", { class: "btn", type: "button",
+      on: { click: () => cashTransferSheet(d.cash, ["omborchi", "admin"], "/api/w/transfer") } }, "💰 Qarzni topshirish")));
+  }
+  view.appendChild(el("div", { class: "section-title" }, "Hisob-kitob tarixi"));
+  view.appendChild(cashLogList(d.log));
 }
 
 /* ================= DILLER PANELI ================= */

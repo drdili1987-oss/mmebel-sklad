@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
 
 CSP = ("default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; "
-       "img-src 'self' https: data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; "
+       "img-src 'self' https: data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; "
        "form-action 'self'; frame-ancestors https://web.telegram.org https://*.telegram.org")
 
 
@@ -120,6 +120,10 @@ def build_app(settings: Settings, services: Services, bot: Bot, dp: Dispatcher, 
     app.add_routes(api_routes)
     from .web.diller_api import routes as diller_routes
     app.add_routes(diller_routes)
+    from .web.worker_api import routes as worker_routes
+    app.add_routes(worker_routes)
+    from .web.reports_api import routes as report_routes
+    app.add_routes(report_routes)
 
     if not settings.use_polling:
         SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=settings.webhook_secret).register(

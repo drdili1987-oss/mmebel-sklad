@@ -200,6 +200,10 @@ class FinanceService:
         await run_tx(self.store, f"orders/{order_id}/status", tx)
         order = await self.store.get(f"orders/{order_id}") or {}
         ts = now_str()
+        # Buyurtmaga bog'lanmagan (umumiy) qisman to'lovlar avval shu buyurtmani yopishga ketadi.
+        # Aks holda bitta pul qarzni ikki marta kamaytirardi: umumiy to'lov sifatida ham, «To'landi» sifatida ham.
+        remaining = money(max(0.0, row["net"] - row["paid_partial"]))
+        consumed = await self._consume_unlinked(client, remaining, order_id, ts)
         await self.store.push(f"accounting_history/{client}", {
             "order_id": order_id, "client_name": client,
             "product_id": order.get("product_id", ""), "variant": order.get("variant", ""),
@@ -209,14 +213,50 @@ class FinanceService:
             "accounting_type": "toliq", "accounting_date": ts, "status": ST_SETTLED,
             "by": str(actor_id),
         })
-        received = money(max(0.0, row["net"] - row["paid_partial"]))
+        received = money(max(0.0, remaining - consumed))
         if received > 0:
             await self.store.push(f"transactions/clients/{client}", {
                 "type": "Kirim", "amount": received, "timestamp": ts,
                 "note": f"Hisob kitob qilindi: {order_id} ({product_label(order)})",
             })
         new_debt = await self.recalc(client)
-        return {"order_id": order_id, "net": row["net"], "received": received, "debt": new_debt}
+        return {"order_id": order_id, "net": row["net"], "received": received, "from_advance": consumed,
+                "debt": new_debt}
+
+    async def _consume_unlinked(self, client: str, need: float, order_id: str, ts: str) -> float:
+        """Umumiy (buyurtmaga bog'lanmagan) qisman to'lovlardan `need` gacha yechadi (eskisidan boshlab).
+
+        Yechilgan yozuv `settled` deb belgilanadi; ortib qolgan qismi yangi umumiy yozuv bo'lib qoladi.
+        """
+        if need <= 0:
+            return 0.0
+        history = await self.store.get(f"accounting_history/{client}") or {}
+        free = [(hid, h) for hid, h in iter_records(history)
+                if h.get("accounting_type") == "qisman" and not h.get("settled") and not h.get("order_id")]
+        free.sort(key=lambda kv: kv[1].get("accounting_date", ""))
+        updates: dict = {}
+        used = 0.0
+        for hid, h in free:
+            if used >= need:
+                break
+            amt = money(h.get("partial_payment") or 0)
+            if amt <= 0:
+                continue
+            take = min(amt, money(need - used))
+            used = money(used + take)
+            updates[f"accounting_history/{client}/{hid}/settled"] = ts
+            updates[f"accounting_history/{client}/{hid}/settled_by_order"] = order_id
+            if take < amt:
+                key = self.store.new_key(f"accounting_history/{client}")
+                updates[f"accounting_history/{client}/{key}"] = {
+                    "order_id": "", "client_name": client, "partial_payment": money(amt - take),
+                    "comment": f"Umumiy to'lov qoldig'i ({order_id} yopilgandan keyin)",
+                    "accounting_type": "qisman", "accounting_date": h.get("accounting_date", ts),
+                    "status": "Qisman to'ladi", "by": h.get("by", ""),
+                }
+        if updates:
+            await self.store.update("", updates)
+        return used
 
     async def partial_payment(self, actor_id, client: str, amount, order_id: str | None = None,
                               note: str = "") -> float:
