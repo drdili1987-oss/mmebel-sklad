@@ -268,7 +268,7 @@ async function viewHome() {
   const [d, pay] = await Promise.all([api("GET", "/api/dashboard"), isAdmin ? api("GET", "/api/payments") : null, loadUnread()]);
   const view = clear($("view"));
   unreadLink(view, "orders");
-  transfersBanner(view);
+  approvalsWidget(view);
   const stat = (num, label, onClick, cls) => el("button", { class: "stat " + (cls || ""), type: "button", on: { click: onClick } },
     el("b", {}, num), el("span", {}, label));
   const toOrders = (scope) => () => { S.ordersScope = scope; go("orders"); };
@@ -290,15 +290,61 @@ async function viewHome() {
     fab("＋ Yangi buyurtma", newOrderSheet);
   }
 }
-/* Tasdiqlanmagan pul topshirishlar (yig'uvchi/omborchi -> men) */
-async function transfersBanner(view) {
+/* Bosh ekran: tugallanmagan / qaytgan mebellar va tasdiqlash kutayotganlar (qaytish, tahrir, pul topshirish) */
+async function approvalsWidget(view) {
   let d;
-  try { d = await api("GET", "/api/workers"); } catch (_) { return; }
-  const mine = (d.pending || []).filter((t) => t.to_role === S.me.role || (S.me.role === "admin" && t.from_holder !== `u_${S.me.id}`));
-  if (!mine.length) return;
-  const sum = mine.reduce((s, t) => s + t.amount, 0);
-  view.prepend(el("button", { class: "unread-banner", type: "button", on: { click: () => { S.moneySeg = "workers"; go(S.me.role === "admin" ? "money" : "workers"); } } },
-    el("b", {}, `💰 ${mine.length} ta pul topshirish — ${money(sum)}`), el("span", {}, " — tasdiqlash uchun bosing")));
+  try { d = await api("GET", "/api/approvals"); } catch (_) { return; }
+  const n = d.returns.length + d.edits.length + d.transfers.length;
+  const box = el("div");
+  if (d.defect_count) box.appendChild(el("button", { class: "unread-banner danger-banner", type: "button", on: { click: () => { S.ordersScope = "defect"; go("orders"); } } },
+    el("b", {}, `⚠️ Tugallanmagan mebellar: ${d.defect_count} ta`), el("span", {}, " — qayta yig'uvchiga yuboring")));
+  if (n) box.appendChild(el("button", { class: "unread-banner", type: "button", on: { click: () => approvalsSheet(d) } },
+    el("b", {}, `🔔 Tasdiqlash kutilmoqda: ${n} ta`), el("span", {}, " — ko'rish uchun bosing")));
+  if (d.returned_count) box.appendChild(el("button", { class: "unread-banner", type: "button", on: { click: () => { S.ordersScope = "returned"; go("orders"); } } },
+    el("b", {}, `↩️ Qaytgan mebellar: ${d.returned_count} ta`)));
+  view.prepend(box);
+}
+function approvalsSheet(d) {
+  sheet((close) => {
+    const done = () => { close(); refresh(); };
+    const resolveBtns = (path, okText, askOk, askNo) => el("div", { class: "actions two", style: "width:100%;margin-top:6px" },
+      el("button", { class: "btn", type: "button", on: { click: async (e) => {
+        if (!(await confirmDlg(askOk))) return;
+        if (await act(e.target, () => api("POST", path, { approve: true }), okText)) done();
+      } } }, "✅ Tasdiqlash"),
+      el("button", { class: "btn danger", type: "button", on: { click: async (e) => {
+        if (!(await confirmDlg(askNo))) return;
+        if (await act(e.target, () => api("POST", path, { approve: false }), "Rad etildi")) done();
+      } } }, "Rad etish"));
+    const lbl = (x) => `${x.serial ? "№" + x.serial + " · " : ""}${plabel(x)} · ${x.client}`;
+    const box = el("div", {}, el("h2", {}, "Tasdiqlash kutilmoqda"));
+    if (d.returns.length) {
+      box.appendChild(el("div", { class: "section-title" }, "↩️ Skladga qaytdi"));
+      box.appendChild(el("div", { class: "list" }, d.returns.map((x) => el("div", { class: "row", style: "flex-wrap:wrap" },
+        el("div", { class: "grow" }, el("b", {}, lbl(x)), el("div", { class: "sub" }, [`🧰 ${x.worker_name}`, fdate(x.at), x.note].filter(Boolean).join(" · "))),
+        el("div", { class: "end" }, x.expense ? el("b", {}, `xarajat ${money(x.expense)}`) : "xarajatsiz"),
+        resolveBtns(`/api/orders/${encodeURIComponent(x.order_id)}/return/resolve`, "Tasdiqlandi — «Qaytgan mebellar» ga tushdi",
+          `Mebel skladga qaytganini tasdiqlaysizmi?${x.expense ? " Xarajat " + money(x.expense) + " sex hisobidan yoziladi." : ""}`, "Rad etilsinmi? Mebel yig'uvchida qoladi.")))));
+    }
+    if (d.edits.length) {
+      box.appendChild(el("div", { class: "section-title" }, "✏️ Olingan summani tuzatish"));
+      box.appendChild(el("div", { class: "list" }, d.edits.map((x) => el("div", { class: "row", style: "flex-wrap:wrap" },
+        el("div", { class: "grow" }, el("b", {}, lbl(x)), el("div", { class: "sub" }, [`🧰 ${x.worker_name}`, x.method === "karta" ? "💳 karta" : "💵 naqd", x.note].filter(Boolean).join(" · "))),
+        el("div", { class: "end" }, `${money(x.old_amount)} → `, el("b", {}, money(x.new_amount))),
+        resolveBtns(`/api/wpay/${encodeURIComponent(x.pay_id)}/edit/resolve`, "Tasdiqlandi — hisob yangilandi",
+          `${money(x.old_amount)} → ${money(x.new_amount)} tasdiqlansinmi? Diller qarzi va yig'uvchi kassasi o'zgaradi.`, "Rad etilsinmi?")))));
+    }
+    if (d.transfers.length) {
+      box.appendChild(el("div", { class: "section-title" }, "💰 Pul topshirish"));
+      box.appendChild(el("div", { class: "list" }, d.transfers.map((t) => el("div", { class: "row", style: "flex-wrap:wrap" },
+        el("div", { class: "grow" }, el("b", {}, `${t.from_name} → ${t.to_role === "admin" ? "admin" : "omborchi"}`), el("div", { class: "sub" }, fdate(t.ts))),
+        el("div", { class: "end" }, el("b", {}, money(t.amount))),
+        (S.me.role === "admin" || t.to_role === S.me.role) ? resolveBtns(`/api/cash/transfers/${encodeURIComponent(t.id)}/resolve`, "Tasdiqlandi",
+          `Siz ${t.from_name} dan ${money(t.amount)} oldingizmi? Tasdiqlaysizmi?`, `${t.from_name}: ${money(t.amount)} rad etilsinmi?`) : null))));
+    }
+    if (!d.returns.length && !d.edits.length && !d.transfers.length) box.appendChild(empty("Hammasi ko'rib chiqilgan."));
+    return box;
+  });
 }
 
 function openDashboard() {
@@ -313,7 +359,8 @@ function openDashboard() {
 const ORDER_SCOPES = [["active", "Faol"], ["changed", "❗️O'zgarishli❗️"], ["overdue", "Muddati o'tgan"],
   ["ready", "Tayyor mebellar"], ["done", "Yetkazilgan"], ["cancelled", "Bekor qilingan"]];
 /* Admin va omborchida qo'shimcha: «Yig'uvchida» (yig'ish uchun yuborilgan, hali topshirilmagan) */
-const STAFF_ORDER_SCOPES = ORDER_SCOPES.slice(0, 4).concat([["assigned", "🧰 Yig'uvchida"]], ORDER_SCOPES.slice(4));
+const STAFF_ORDER_SCOPES = ORDER_SCOPES.slice(0, 4).concat([["assigned", "🧰 Yig'uvchida"], ["returned", "↩️ Qaytgan mebellar"],
+  ["defect", "⚠️ Tugallanmagan"]], ORDER_SCOPES.slice(4));
 const XODIM_DAY_SCOPES = [["today", "Bugun"], ["tomorrow", "Ertaga"], ["after", "Indinga"]];
 
 async function viewOrders() {
@@ -375,7 +422,9 @@ function orderCard(o, showStatus) {
     el("div", { class: "line2" }, el("span", { class: "client" }, o.client_name || "—"),
       el("span", { class: "due" }, showStatus ? fdate(o.delivered_at || o.created_at) : fdate(o.due_date))),
     o.comment && !["yoq", "yo'q", "-"].includes(String(o.comment).toLowerCase()) ? el("div", { class: "note" }, "📝 " + o.comment) : null,
-    o.worker_name ? el("div", { class: "note" }, `🧰 ${o.worker_name}${o.handover ? (o.handover.correct ? " · ✅ topshirdi" : " · ⚠️ qoldiq chala") : ACTIVE.includes(o.status) ? " · yig'ishda" : ""}`) : null,
+    o.worker_name ? el("div", { class: "note" }, `🧰 ${o.worker_name}${o.ret && o.ret.status === "pending" ? " · ⏳ skladga qaytdi (tasdiq)" : o.handover && !(o.defect && o.defect.open) ? (o.handover.correct ? " · ✅ topshirdi" : " · ⚠️ qoldiq chala") : ACTIVE.includes(o.status) || (o.defect && o.defect.open) ? " · yig'ishda" : ""}`) : null,
+    o.defect && o.defect.open ? el("div", { class: "note", style: "color:var(--st-late);font-weight:600" }, "⚠️ Tugallanmagan: " + o.defect.note) : null,
+    o.returned && ACTIVE.includes(o.status) && !o.worker_id ? el("div", { class: "note" }, "↩️ Skladga qaytgan") : null,
   );
 }
 
@@ -404,7 +453,30 @@ async function orderSheet(id) {
     );
     const actions = el("div", { class: "actions" });
     const done = () => { close(); refresh(); };
-    if (isActive && staff) {
+    const info = el("div");
+    if (staff && o.ret && o.ret.status === "pending") {
+      info.appendChild(el("div", { class: "unread-banner", style: "display:block" }, el("b", {}, `↩️ ${o.ret.worker_name}: skladga qaytdi — tasdiqlang`),
+        el("div", { class: "small" }, [o.ret.expense ? "Xarajat " + money(o.ret.expense) : "Xarajat yo'q", o.ret.note].filter(Boolean).join(" · "))));
+      const resolve = (approve) => async (e) => {
+        if (!(await confirmDlg(approve ? "Skladga qaytganini tasdiqlaysizmi?" : "Rad etilsinmi? Mebel yig'uvchida qoladi."))) return;
+        if (await act(e.target, () => api("POST", `/api/orders/${encodeURIComponent(o.id)}/return/resolve`, { approve }), approve ? "Tasdiqlandi" : "Rad etildi")) done();
+      };
+      actions.appendChild(el("div", { class: "actions two", style: "margin-top:0" },
+        el("button", { class: "btn", type: "button", on: { click: resolve(true) } }, "✅ Tasdiqlash"),
+        el("button", { class: "btn danger", type: "button", on: { click: resolve(false) } }, "Rad etish")));
+    }
+    if (staff && o.defect && (o.defect.open || (o.defect.history || []).length)) {
+      info.appendChild(el("div", { class: "unread-banner" + (o.defect.open ? " danger-banner" : ""), style: "display:block" },
+        el("b", {}, o.defect.open ? "⚠️ Tugallanmagan — kamchilik bor" : "✅ Kamchilik tuzatilgan"),
+        (o.defect.history || []).map((h) => el("div", { class: "small", style: "margin-top:4px" }, `${fdate(h.at)} · ${h.worker_name}: ${h.note} (olindi ${money(h.amount)})`))));
+      if (o.defect.open) actions.appendChild(el("button", { class: "btn", type: "button", on: { click: () => assignSheet(o, done) } },
+        o.worker_id ? `🧰 ${o.worker_name} tuzatmoqda — almashtirish` : "🧰 Yig'uvchiga qayta yuborish"));
+    }
+    if (staff && o.returned && isActive && !o.worker_id) {
+      info.appendChild(el("div", { class: "unread-banner", style: "display:block" }, el("b", {}, "↩️ Skladga qaytgan mebel"),
+        el("div", { class: "small" }, o.ret ? [fdate(o.ret.resolved_at || o.ret.at), o.ret.worker_name, o.ret.note].filter(Boolean).join(" · ") : "")));
+    }
+    if (isActive && staff && !(o.ret && o.ret.status === "pending")) {
       actions.appendChild(el("button", { class: "btn", type: "button", on: { click: () => assignSheet(o, done) } },
         o.worker_id ? "🧰 Yig'uvchini almashtirish" : "🧰 Yig'ish uchun yuborildi"));
       if (o.worker_id) actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: async (e) => {
@@ -432,8 +504,8 @@ async function orderSheet(id) {
       actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => editOrderSheet(o, done, true) } }, "✏️ Narx / tartib raqam / qoldiqni to'g'rilash"));
     }
     const pays = el("div");
-    if (staff && o.worker_id && !isActive) loadOrderPays(o.id, pays);
-    return el("div", {}, el("div", { class: "code-big" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} × ${o.amount}`), kv, pays, actions);
+    if (staff && (o.worker_id || o.handover) && !isActive) loadOrderPays(o.id, pays);
+    return el("div", {}, el("div", { class: "code-big" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} × ${o.amount}`), info, kv, pays, actions);
   });
 }
 
@@ -1255,43 +1327,141 @@ async function viewWHome() {
   const [d] = await Promise.all([api("GET", "/api/w/me"), loadUnread()]);
   markSeen();
   const view = clear($("view"));
-  view.appendChild(el("button", { class: "stat wide" + (d.cash ? " late" : ""), type: "button", style: "width:100%", on: { click: () => go("w_cash") } },
-    el("b", {}, money(d.cash)), el("span", {}, "Sexga topshirishingiz kerak (naqd)")));
+  view.appendChild(el("button", { class: "stat wide" + (d.cash > 0 ? " late" : ""), type: "button", style: "width:100%", on: { click: () => go("w_cash") } },
+    el("b", {}, money(Math.abs(d.cash))), el("span", {}, d.cash < 0 ? "Sex sizga qarzdor (xarajatlar)" : "Sexga topshirishingiz kerak (naqd)")));
   view.appendChild(el("div", { class: "section-title" }, `Yig'ish uchun yuborilgan — ${d.active.length} ta`));
   if (!d.active.length) view.appendChild(empty("Hozircha sizga yuborilgan mebel yo'q."));
-  view.appendChild(el("div", { class: "list" }, d.active.map((o) => el("button", { class: "row", type: "button", on: { click: () => wOrderSheet(o) } },
-    el("div", { class: "grow" }, el("div", {}, o.serial ? el("span", { class: "serial" }, `№${o.serial}`) : null, el("b", {}, plabel(o)), ` × ${o.amount}`),
-      el("div", { class: "sub" }, [o.client_name, o.comment].filter(Boolean).join(" · "))),
-    el("div", { class: "end" }, o.collect != null ? el("b", {}, money(o.collect)) : "—")))));
+  view.appendChild(el("div", { class: "list" }, d.active.map((o) => {
+    const tag = o.ret && o.ret.status === "pending" ? "⏳ skladga qaytarish tasdiqlanmoqda"
+      : o.defect && o.defect.open ? "⚠️ kamchilikni tuzatish" : null;
+    const due = o.left != null ? o.left : o.collect;
+    return el("button", { class: "row", type: "button", on: { click: () => wOrderSheet(o) } },
+      el("div", { class: "grow" }, el("div", {}, o.serial ? el("span", { class: "serial" }, `№${o.serial}`) : null, el("b", {}, plabel(o)), ` × ${o.amount}`),
+        el("div", { class: "sub" }, [tag, o.client_name, o.comment].filter(Boolean).join(" · "))),
+      el("div", { class: "end" }, due != null ? el("b", {}, money(due)) : "—"));
+  })));
   if (d.done.length) {
     view.appendChild(el("div", { class: "section-title" }, "Topshirilganlar"));
-    view.appendChild(el("div", { class: "list" }, d.done.map((o) => el("button", { class: "row", type: "button", on: { click: () => wDoneSheet(o) } },
-      el("div", { class: "grow" }, el("div", {}, o.serial ? el("span", { class: "serial" }, `№${o.serial}`) : null, el("b", {}, plabel(o))),
-        el("div", { class: "sub" }, `${fdate(o.delivered_at)} · ${o.client_name}${o.handover && o.handover.correct === false ? " · ⚠️ chala" : ""}`)),
-      el("div", { class: "end" }, money(o.paid), el("div", { class: "sub" }, o.method === "karta" ? "💳" : o.method ? "💵" : ""))))));
+    view.appendChild(el("div", { class: "list" }, d.done.map((o) => {
+      const pend = (o.payments || []).some((p) => p.edit_req && p.edit_req.status === "pending");
+      return el("button", { class: "row", type: "button", on: { click: () => wDoneSheet(o) } },
+        el("div", { class: "grow" }, el("div", {}, o.serial ? el("span", { class: "serial" }, `№${o.serial}`) : null, el("b", {}, plabel(o))),
+          el("div", { class: "sub" }, [fdate(o.delivered_at), o.client_name, o.defect && o.defect.open ? "⚠️ tugallanmagan" : (o.handover && o.handover.correct === false ? "⚠️ chala" : null),
+            pend ? "⏳ tuzatish tasdiqlanmoqda" : null].filter(Boolean).join(" · "))),
+        el("div", { class: "end" }, money(o.paid), el("div", { class: "sub" }, o.method === "karta" ? "💳" : o.method ? "💵" : "")));
+    })));
   }
 }
 
 function wOrderSheet(o) {
-  sheet((close) => el("div", {},
-    el("div", { class: "code-big" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} × ${o.amount}`),
-    el("dl", { class: "kv" },
+  sheet((close) => {
+    const pendingRet = o.ret && o.ret.status === "pending";
+    const defect = o.defect && o.defect.open;
+    const kv = el("dl", { class: "kv" },
       el("dt", {}, "Diller"), el("dd", {}, o.client_name || "—"),
       o.comment ? [el("dt", {}, "Izoh"), el("dd", {}, o.comment)] : null,
       el("dt", {}, "Olinadigan qoldiq"), el("dd", {}, o.collect != null ? el("b", {}, money(o.collect)) : "Belgilanmagan"),
-      el("dt", {}, "Yuborildi"), el("dd", {}, fdate(o.assigned_at))),
-    el("div", { class: "actions" }, el("button", { class: "btn", type: "button", on: { click: () => { close(); handoverSheet(o, false); } } }, "✅ Mebel mijozga topshirildi"))));
+      el("dt", {}, "Yuborildi"), el("dd", {}, fdate(o.assigned_at)));
+    const box = el("div", {}, el("div", { class: "code-big" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} × ${o.amount}`));
+    // Tugallanmagan mebel: oldingi yig'uvchi izohi va qolgan summa
+    if (defect) {
+      box.appendChild(el("div", { class: "unread-banner", style: "display:block" },
+        el("b", {}, "⚠️ Kamchilikni tuzatish kerak"),
+        (o.defect.history || []).map((h) => el("div", { class: "small", style: "margin-top:4px" }, `${fdate(h.at)} · ${h.worker_name}: ${h.note}`)),
+        o.left != null ? el("div", { style: "margin-top:6px" }, `Mijozdan ${money(o.paid || 0)} olingan, sizga qolgan `, el("b", {}, money(o.left)), " ni olish kerak.") : null));
+    }
+    box.appendChild(kv);
+    const actions = el("div", { class: "actions" });
+    if (pendingRet) {
+      actions.appendChild(el("p", { class: "muted" }, `⏳ Skladga qaytarish tasdiqlanishi kutilmoqda${o.ret.expense ? " (xarajat " + money(o.ret.expense) + ")" : ""}.`));
+    } else {
+      actions.append(
+        el("button", { class: "btn", type: "button", on: { click: () => { close(); handoverSheet(o, defect ? "complete" : "handover"); } } }, "✅ Mebel mijozga topshirildi"),
+        el("button", { class: "btn ghost", type: "button", on: { click: () => { close(); handoverSheet(o, "defect"); } } }, "⚠️ Mebelda kamchilik aniqlandi"));
+      if (!defect) actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => { close(); returnSheet(o); } } }, "↩️ Skladga qaytdi"));
+    }
+    box.appendChild(actions);
+    return box;
+  });
+}
+
+/* «Skladga qaytdi» -> «Xarajat bo'ldimi?» Ha: summa + sabab (majburiy). Admin/omborchi tasdiqlaydi */
+function returnSheet(o) {
+  sheet((close) => {
+    let yes = null;
+    const amount = el("input", { type: "number", min: "0.01", step: "0.01", inputmode: "decimal", placeholder: "Xarajat summasi, $" });
+    const note = el("textarea", { maxlength: "500", placeholder: "Nima uchun qaytdi, qanday xarajat chiqdi" });
+    const amountField = field("Xarajat summasi ($)", amount);
+    const noteLabel = el("span", {}, "Sabab / izoh");
+    const form = el("div", { class: "hidden" }, amountField, el("label", { class: "field" }, noteLabel, note));
+    const pick = (v) => {
+      yes = v; form.classList.remove("hidden");
+      amountField.classList.toggle("hidden", !v);
+      noteLabel.textContent = v ? "Sabab / izoh (majburiy)" : "Sabab / izoh (ixtiyoriy)";
+    };
+    const save = el("button", { class: "btn", type: "button" }, "Saqlash");
+    save.addEventListener("click", async () => {
+      if (yes === null) { toast("Xarajat bo'ldimi — «Ha» yoki «Yo'q».", true); return; }
+      if (yes && !(Number(amount.value) > 0)) { toast("Xarajat summasini kiriting.", true); amount.focus(); return; }
+      if (yes && !note.value.trim()) { toast("Sababini yozing.", true); note.focus(); return; }
+      const r = await act(save, () => api("POST", `/api/w/orders/${encodeURIComponent(o.id)}/return`,
+        { expense_yes: yes, expense: yes ? Number(amount.value) : null, note: note.value.trim() }), "Yuborildi. Tasdiqlashni kuting.");
+      if (r) { close(); refresh(); }
+    });
+    return el("div", {}, el("h2", {}, "Skladga qaytdi"),
+      el("p", { class: "muted small" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} · ${o.client_name}`),
+      el("p", { style: "font-weight:600;margin:8px 2px" }, "Xarajat bo'ldimi?"),
+      chips([true, false], null, pick, (x) => (x ? "Ha" : "Yo'q")),
+      form, el("p", { class: "muted small" }, "Xarajatni sex ko'taradi: tasdiqlangach summa kassangizdan ayiriladi."),
+      el("div", { class: "actions" }, save));
+  });
 }
 
 function wDoneSheet(o) {
-  sheet((close) => el("div", {},
-    el("div", { class: "code-big" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)}`),
-    el("dl", { class: "kv" },
-      el("dt", {}, "Diller"), el("dd", {}, o.client_name),
-      el("dt", {}, "Topshirildi"), el("dd", {}, fdate(o.delivered_at)),
-      el("dt", {}, "Kutilgan qoldiq"), el("dd", {}, o.collect != null ? money(o.collect) : "—"),
-      el("dt", {}, "Olingan"), el("dd", {}, el("b", {}, money(o.paid)))),
-    el("div", { class: "actions" }, el("button", { class: "btn ghost", type: "button", on: { click: () => { close(); handoverSheet(o, true); } } }, "💵 Mijoz qolgan pulni berdi"))));
+  sheet((close) => {
+    const box = el("div", {},
+      el("div", { class: "code-big" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)}`),
+      el("dl", { class: "kv" },
+        el("dt", {}, "Diller"), el("dd", {}, o.client_name),
+        el("dt", {}, "Topshirildi"), el("dd", {}, fdate(o.delivered_at)),
+        el("dt", {}, "Kutilgan qoldiq"), el("dd", {}, o.collect != null ? money(o.collect) : "—"),
+        el("dt", {}, "Olingan (jami)"), el("dd", {}, el("b", {}, money(o.paid)))));
+    const mine = o.payments || [];
+    if (mine.length) {
+      box.appendChild(el("div", { class: "section-title" }, "Siz kiritgan to'lovlar"));
+      box.appendChild(el("div", { class: "list" }, mine.map((p) => {
+        const pend = p.edit_req && p.edit_req.status === "pending";
+        return el("div", { class: "row", style: "flex-wrap:wrap" },
+          el("div", { class: "grow" }, el("b", {}, money(p.amount)), ` · ${p.method === "karta" ? "💳 karta" : "💵 naqd"}`,
+            el("div", { class: "sub" }, [fdate(p.ts), pend ? `⏳ ${money(p.edit_req.old_amount)} → ${money(p.edit_req.new_amount)} tasdiqlanmoqda`
+              : p.edit_req && p.edit_req.status === "rejected" ? "❌ oxirgi tuzatish rad etilgan" : null].filter(Boolean).join(" · "))),
+          pend ? null : el("button", { class: "btn ghost", type: "button", style: "width:auto;padding:6px 12px", on: { click: () => { close(); payEditSheet(p); } } }, "✏️ Tahrirlash"));
+      })));
+    }
+    box.appendChild(el("div", { class: "actions" }, el("button", { class: "btn ghost", type: "button", on: { click: () => { close(); handoverSheet(o, "extra"); } } }, "💵 Mijoz qolgan pulni berdi")));
+    return box;
+  });
+}
+
+/* Olingan summani tuzatish — admin/omborchi tasdiqlagach kuchga kiradi */
+function payEditSheet(p) {
+  sheet((close) => {
+    const amount = el("input", { type: "number", min: "0", step: "0.01", inputmode: "decimal", value: p.amount });
+    const note = el("textarea", { maxlength: "300", placeholder: "Nima uchun o'zgartiryapsiz" });
+    const save = el("button", { class: "btn", type: "button" }, "Tasdiqlashga yuborish");
+    save.addEventListener("click", async () => {
+      if (amount.value === "" || Number(amount.value) < 0) { toast("Summani kiriting.", true); return; }
+      if (!note.value.trim()) { toast("Sababini yozing.", true); note.focus(); return; }
+      const r = await act(save, () => api("POST", `/api/w/pay/${encodeURIComponent(p.pay_id)}/edit`,
+        { amount: Number(amount.value), note: note.value.trim() }), "Yuborildi. Tasdiqlangach o'zgaradi.");
+      if (r) { close(); refresh(); }
+    });
+    return el("div", {}, el("h2", {}, "Olingan summani tuzatish"),
+      el("p", { class: "muted small" }, `Hozir: ${money(p.amount)} (${p.method === "karta" ? "karta" : "naqd"})`),
+      field("Mijozdan olingan summa ($)", amount), field("Sabab", note),
+      el("p", { class: "muted small" }, "Admin yoki omborchi tasdiqlagandan keyingina hisob o'zgaradi."),
+      el("div", { class: "actions" }, save));
+  });
 }
 
 /* Rasmni telefonda kichraytirib (≤1600px, JPEG) yuklaymiz — tez va 5 MB dan oshmaydi */
@@ -1318,16 +1488,21 @@ async function uploadPhoto(blob) {
   return data.key;
 }
 
-/* «Mebel mijozga topshirildi» -> «Qoldiq summa to'g'ri olindimi?» Ha/Yo'q -> summa, izoh, karta skrinshotlari */
-function handoverSheet(o, extra) {
+/* mode: "handover" — «Mebel mijozga topshirildi» (Qoldiq to'g'ri olindimi? Ha/Yo'q);
+   "complete" — tugallanmagan mebelni tugatish (qolgan summa bilan); "defect" — kamchilik + qisman pul;
+   "extra" — mijoz qolgan pulni keyin berdi */
+function handoverSheet(o, mode) {
+  const extra = mode === "extra", defectMode = mode === "defect";
+  const expected = o.left != null ? o.left : o.collect;   // tugallanmaganda: kutilgan − oldin olingan
   sheet((close) => {
-    let correct = extra ? true : null;
+    let correct = extra ? true : defectMode ? false : null;
     let card = false;
     const photos = [];  // {blob, url}
     const amount = el("input", { type: "number", min: "0", step: "0.01", inputmode: "decimal", placeholder: "Summa, $" });
-    const note = el("textarea", { maxlength: "500", placeholder: "Qo'shimcha izoh" });
-    const noteLabel = el("span", {}, "Qo'shimcha izoh");
-    const form = el("div", { class: extra ? "" : "hidden" });
+    if (defectMode && expected != null) amount.max = String(expected);
+    const note = el("textarea", { maxlength: "500", placeholder: defectMode ? "Masalan: fasad tirnalgan, fabrikaga qaytarish kerak" : "Qo'shimcha izoh" });
+    const noteLabel = el("span", {}, defectMode ? "Kamchilik nima? (majburiy)" : "Qo'shimcha izoh");
+    const form = el("div", { class: extra || defectMode ? "" : "hidden" });
     const thumbs = el("div", { class: "thumbs" });
     const fileInput = el("input", { type: "file", accept: "image/jpeg,image/png", multiple: true, class: "hidden" });
     const addPhoto = el("button", { class: "btn ghost", type: "button", on: { click: () => fileInput.click() } }, "📷 Skrinshot qo'shish (1–5 ta)");
@@ -1355,7 +1530,7 @@ function handoverSheet(o, extra) {
     const pick = (v) => {
       correct = v;
       form.classList.remove("hidden");
-      if (v && o.collect != null && amount.value === "") amount.value = o.collect;
+      if (v && expected != null && amount.value === "") amount.value = expected;
       if (!v) amount.value = "";
       noteLabel.textContent = v ? "Qo'shimcha izoh" : "Nima uchun farq bor? (majburiy)";
       note.placeholder = v ? "Qo'shimcha izoh" : "Masalan: chala ish qolgani uchun mijoz hamma pulni bermadi";
@@ -1366,7 +1541,8 @@ function handoverSheet(o, extra) {
       if (correct === null) { toast("«Ha» yoki «Yo'q» ni tanlang.", true); return; }
       const v = amount.value === "" ? NaN : Number(amount.value);
       if (isNaN(v) || v < 0) { toast("Olingan summani kiriting (olinmagan bo'lsa 0).", true); amount.focus(); return; }
-      if (!correct && !note.value.trim()) { toast("Farq sababini izohga yozing.", true); note.focus(); return; }
+      if (defectMode && expected != null && v > expected) { toast(`Qoldiq ${money(expected)} — undan ko'p yozib bo'lmaydi.`, true); return; }
+      if (!correct && !note.value.trim()) { toast(defectMode ? "Kamchilikni izohga yozing." : "Farq sababini izohga yozing.", true); note.focus(); return; }
       if (card && v > 0 && !photos.length) { toast("Karta to'lovi uchun skrinshot yuklang.", true); return; }
       save.disabled = true;
       try {
@@ -1374,18 +1550,23 @@ function handoverSheet(o, extra) {
         for (let i = 0; i < photos.length; i++) { save.textContent = `Rasm yuklanmoqda ${i + 1}/${photos.length}…`; keys.push(await uploadPhoto(photos[i].blob)); }
         save.textContent = "Saqlanmoqda…";
         const body = { amount: v, method: card ? "karta" : "naqd", note: note.value.trim(), photos: keys };
-        if (extra) await api("POST", `/api/w/orders/${encodeURIComponent(o.id)}/payment`, body);
-        else await api("POST", `/api/w/orders/${encodeURIComponent(o.id)}/handover`, { ...body, correct });
-        toast(extra ? "To'lov saqlandi" : "Topshirildi. Rahmat!");
+        const base = `/api/w/orders/${encodeURIComponent(o.id)}`;
+        if (extra) await api("POST", `${base}/payment`, body);
+        else if (defectMode) await api("POST", `${base}/defect`, body);
+        else await api("POST", `${base}/handover`, { ...body, correct });
+        toast(extra ? "To'lov saqlandi" : defectMode ? "Saqlandi. Admin/omborchi qayta yuboradi." : "Topshirildi. Rahmat!");
         close(); refresh();
       } catch (e) { toast(e.message, true); }
       finally { save.disabled = false; save.textContent = "Saqlash"; }
     });
-    form.append(field(extra ? "Olingan summa ($)" : "Olingan summa ($) — olinmagan bo'lsa 0", amount),
-      el("label", { class: "field" }, noteLabel, note), cardBtn, cardBox, el("div", { class: "actions" }, save));
-    return el("div", {}, el("h2", {}, extra ? "Qo'shimcha to'lov" : "Mebel mijozga topshirildi"),
-      el("p", { class: "muted small" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} · ${o.client_name}${o.collect != null ? " · qoldiq " + money(o.collect) : ""}`),
-      extra ? null : el("div", {}, el("p", { style: "font-weight:600;margin:8px 2px" }, "Mebelning qoldiq summasi to'g'ri olindimi?"),
+    const amountLabel = defectMode ? `Mijozdan qisman olingan pul ($)${expected != null ? " — ko'pi bilan " + money(expected) : ""}`
+      : extra ? "Olingan summa ($)" : "Olingan summa ($) — olinmagan bo'lsa 0";
+    form.append(field(amountLabel, amount), el("label", { class: "field" }, noteLabel, note), cardBtn, cardBox, el("div", { class: "actions" }, save));
+    const title = extra ? "Qo'shimcha to'lov" : defectMode ? "Mebelda kamchilik aniqlandi" : "Mebel mijozga topshirildi";
+    return el("div", {}, el("h2", {}, title),
+      el("p", { class: "muted small" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} · ${o.client_name}`),
+      expected != null && !extra ? el("p", {}, mode === "complete" || defectMode ? "Hozirgi qoldiq: " : "Olinadigan qoldiq: ", el("b", {}, money(expected))) : null,
+      extra || defectMode ? null : el("div", {}, el("p", { style: "font-weight:600;margin:8px 2px" }, "Mebelning qoldiq summasi to'g'ri olindimi?"),
         chips([true, false], null, pick, (x) => (x ? "✅ Ha" : "❌ Yo'q"))),
       form);
   });
@@ -1394,8 +1575,9 @@ function handoverSheet(o, extra) {
 async function viewWCash() {
   const d = await api("GET", "/api/w/me");
   const view = clear($("view"));
-  view.appendChild(el("div", { class: "code-big " + (d.cash > 0 ? "pos" : "") }, money(d.cash)));
-  view.appendChild(el("p", { class: "muted small", style: "text-align:center" }, "Qo'lingizdagi naqd pul — sexga topshirishingiz kerak"));
+  view.appendChild(el("div", { class: "code-big " + (d.cash > 0 ? "pos" : "") }, money(Math.abs(d.cash))));
+  view.appendChild(el("p", { class: "muted small", style: "text-align:center" }, d.cash < 0
+    ? "Sex sizga qarzdor (tasdiqlangan xarajatlar)" : "Qo'lingizdagi naqd pul — sexga topshirishingiz kerak"));
   if (d.pending_transfer) {
     view.appendChild(el("div", { class: "unread-banner" }, el("b", {}, `⏳ ${money(d.pending_transfer.amount)} ${d.pending_transfer.to_role === "admin" ? "adminga" : "omborchiga"} topshirildi`),
       el("span", {}, " — tasdiqlanishi kutilmoqda")));

@@ -162,3 +162,56 @@ class Events:
             msg = (f"❌ <b>Topshirish rad etildi</b> ({fmt_money(t['amount'])}).\n"
                    f"Rad etgan: {h(t.get('resolved_name', ''))}. Iltimos, bog'laning.")
         await self.n.send(int(t["from_uid"]), msg)
+
+    @staticmethod
+    def _olabel(o: dict) -> str:
+        return (f"№{h(o['serial'])} · " if o.get("serial") else "") + h(product_label(o))
+
+    async def order_defect(self, res: dict) -> None:
+        o, w = res["order"], res["worker"]
+        method = "💳 karta" if res["method"] == "karta" else "💵 naqd"
+        left = f"\n⏳ Mijozdan yana olinadi: <b>{fmt_money(res['left'])}</b>" if res.get("left") is not None else ""
+        await self.n.to_roles([ROLE_ADMIN, ROLE_OMBORCHI],
+                              f"⚠️ <b>Mebelda kamchilik aniqlandi — tugallanmagan</b>\n📦 {self._olabel(o)}\n"
+                              f"🧑 {h(order_client(o))} · 🧰 {h(w.get('name'))}\n📝 {h(res.get('note', ''))}\n"
+                              f"Qisman olindi: <b>{fmt_money(res['amount'])}</b> {method}{left}\n\n"
+                              "Ilovada «Tugallanmagan» bo'limidan boshqa yig'uvchiga yuboring.",
+                              sound="cancel", mark=(res["order_id"], "edit"))
+
+    async def return_requested(self, res: dict) -> None:
+        o = res["order"]
+        exp = f"\n💸 Xarajat: <b>{fmt_money(res['expense'])}</b>" if res.get("expense") else "\nXarajat yo'q"
+        await self.n.to_roles([ROLE_ADMIN, ROLE_OMBORCHI],
+                              f"↩️ <b>Mebel skladga qaytdi — tasdiqlang</b>\n📦 {self._olabel(o)}\n"
+                              f"🧑 {h(order_client(o))} · 🧰 {h(res.get('worker_name'))}{exp}"
+                              + (f"\n📝 {h(res['note'])}" if res.get("note") else "")
+                              + "\n\nIlovada: Asosiy → tasdiqlash.", sound="new", mark=(res["order_id"], "edit"))
+
+    async def return_resolved(self, res: dict) -> None:
+        uid = res.get("worker_uid")
+        if not uid:
+            return
+        o = res["order"]
+        ok = res["status"] == "approved"
+        await self.n.send(int(uid), (f"✅ Skladga qaytarish tasdiqlandi: {self._olabel(o)}"
+                                     + (f"\n💸 Xarajat {fmt_money(res['expense'])} kassangizdan ayirildi (sex hisobidan)."
+                                        if ok and res.get("expense") else ""))
+                          if ok else f"❌ Skladga qaytarish rad etildi: {self._olabel(o)}. "
+                                     f"Rad etgan: {h(res.get('resolved_name', ''))}.")
+
+    async def edit_requested(self, res: dict) -> None:
+        p = res["payment"]
+        await self.n.to_roles([ROLE_ADMIN, ROLE_OMBORCHI],
+                              f"✏️ <b>Yig'uvchi olingan summani tuzatmoqchi — tasdiqlang</b>\n📦 {self._olabel(p)} · "
+                              f"🧑 {h(p.get('client', ''))}\n🧰 {h(res.get('worker_name'))}: "
+                              f"{fmt_money(res['old_amount'])} → <b>{fmt_money(res['new_amount'])}</b>\n📝 {h(res.get('note', ''))}",
+                              sound="new")
+
+    async def edit_resolved(self, rec: dict) -> None:
+        req = rec.get("edit_req") or {}
+        if not req.get("by"):
+            return
+        ok = req.get("status") == "approved"
+        await self.n.send(int(req["by"]), (f"✅ Tuzatish tasdiqlandi: {self._olabel(rec)} — "
+                                           f"{fmt_money(req['old_amount'])} → {fmt_money(req['new_amount'])}")
+                          if ok else f"❌ Tuzatish rad etildi: {self._olabel(rec)}. Rad etgan: {h(req.get('resolved_name', ''))}.")

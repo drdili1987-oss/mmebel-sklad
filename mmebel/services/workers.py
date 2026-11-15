@@ -27,6 +27,7 @@ from ..constants import (
     ROLE_MIJOZ,
     ROLE_OMBORCHI,
     ROLE_YIGUVCHI,
+    ST_SETTLED,
 )
 from ..store import Store
 from ..utils import (
@@ -209,12 +210,21 @@ class WorkerService:
         prev = {}
 
         def tx(cur):
-            if not isinstance(cur, dict) or cur.get("status") not in ACTIVE_STATUSES:
-                raise Conflict("Faqat faol (yetkazilmagan) buyurtmani yig'uvchiga yuborish mumkin.")
+            if not isinstance(cur, dict):
+                raise NotFound("Buyurtma topilmadi.")
+            defect_open = bool((cur.get("defect") or {}).get("open"))
+            if cur.get("status") not in ACTIVE_STATUSES and not defect_open:
+                raise Conflict("Faqat faol yoki tugallanmagan buyurtmani yig'uvchiga yuborish mumkin.")
+            if (cur.get("ret") or {}).get("status") == "pending":
+                raise Conflict("Skladga qaytarish tasdiqlanishi kutilmoqda — avval tasdiqlang yoki rad eting.")
             prev["wid"] = cur.get("worker_id", "")
             ts = now_str()
-            return dict(cur, worker_id=wid, worker_name=w["name"], assigned_at=ts, assigned_by=str(actor_id),
-                        delivery_fee=money(fee_v))
+            out = dict(cur, worker_id=wid, worker_name=w["name"], assigned_at=ts, assigned_by=str(actor_id),
+                       wids={**(cur.get("wids") or {}), wid: True})
+            if not defect_open:  # tugallanmaganda dostavka allaqachon yozilgan
+                out["delivery_fee"] = money(fee_v)
+            out.pop("returned", None)
+            return out
 
         await run_tx(self.store, f"orders/{order_id}", tx)
         await self._audit(actor_id, "order_assign", {"order_id": order_id, "worker": w["name"],
@@ -224,8 +234,11 @@ class WorkerService:
 
     async def unassign(self, actor_id, order_id: str) -> dict:
         def tx(cur):
-            if not isinstance(cur, dict) or cur.get("status") not in ACTIVE_STATUSES:
+            if not isinstance(cur, dict) or (cur.get("status") not in ACTIVE_STATUSES
+                                             and not (cur.get("defect") or {}).get("open")):
                 raise Conflict("Buyurtma yetkazilgan yoki bekor qilingan.")
+            if (cur.get("ret") or {}).get("status") == "pending":
+                raise Conflict("Skladga qaytarish tasdiqlanishi kutilmoqda.")
             out = dict(cur)
             for k in ("worker_id", "worker_name", "assigned_at", "assigned_by", "delivery_fee"):
                 out.pop(k, None)
@@ -243,11 +256,14 @@ class WorkerService:
         cutoff = (now() - timedelta(days=days)).replace(tzinfo=None)
         active, done = [], []
         for oid, o in (await self.orders.all()).items():
-            if str(o.get("worker_id", "")) != wid:
+            mine_now = str(o.get("worker_id", "")) == wid
+            if not mine_now and wid not in (o.get("wids") or {}):
                 continue
             st = o.get("status", "")
-            if st in ACTIVE_STATUSES:
+            if mine_now and (st in ACTIVE_STATUSES or (o.get("defect") or {}).get("open")):
                 active.append((oid, o))
+            elif st in ACTIVE_STATUSES:
+                continue  # skladga qaytgan / boshqa yig'uvchiga o'tgan
             elif st in DELIVERED_STATUSES or o.get("handover"):
                 ref = parse_datetime(o.get("delivered_at"))
                 if not ref or ref >= cutoff:
@@ -295,6 +311,10 @@ class WorkerService:
         order = await self.orders.get(order_id)
         if str(order.get("worker_id", "")) != wid:
             raise NotFound("Bu buyurtma sizga biriktirilmagan.")
+        self._guard_ret(order)
+        if (order.get("defect") or {}).get("open"):
+            return await self._complete_defect(uid, wid, w, order_id, order, correct=correct, amount=amount,
+                                               method=method, note=note, photos=photos)
         if order.get("status") not in ACTIVE_STATUSES:
             raise Conflict("Bu buyurtma allaqachon topshirilgan yoki bekor qilingan.")
         pay = await self._validate_payment(uid, order, correct=correct, amount=amount, method=method, note=note,
@@ -302,7 +322,7 @@ class WorkerService:
         delivered = await self.orders.deliver(uid, order_id, driver=w["name"], price=order.get("delivery_fee") or 0)
         rec = await self._record_payment(uid, wid, w, order_id, delivered, pay, kind="handover")
         await self.store.update(f"orders/{order_id}", {"handover": {
-            "at": rec["ts"], "correct": pay["correct"], "pay_id": rec["pay_id"]}})
+            "at": rec["ts"], "correct": pay["correct"], "pay_id": rec["pay_id"]}, f"wids/{wid}": True})
         debt = await self.finance.recalc(order_client(order)) if order_client(order) else 0.0
         return {**rec, "order": dict(delivered, debt=debt), "worker": w}
 
@@ -317,8 +337,219 @@ class WorkerService:
         rec = await self._record_payment(uid, wid, w, order_id, order, pay, kind="extra")
         return {**rec, "order": order, "worker": w}
 
+    @staticmethod
+    def _guard_ret(order: dict) -> None:
+        if (order.get("ret") or {}).get("status") == "pending":
+            raise Conflict("Skladga qaytarish tasdiqlanishi kutilmoqda.")
+
+    async def paid_for(self, order_id: str) -> float:
+        return money(sum(p.get("amount") or 0 for p in await self.payments(order_id=order_id)))
+
+    async def remaining(self, order_id: str, order: dict) -> float | None:
+        """Mijozdan yana olinishi kerak: kutilgan qoldiq − barcha yig'uvchilar olgan pul."""
+        if order.get("collect") in (None, ""):
+            return None
+        return money(max(0.0, money(order["collect"]) - await self.paid_for(order_id)))
+
+    # ---------- 3.4 kamchilik (tugallanmagan mebel) ----------
+    async def report_defect(self, uid, order_id: str, *, amount, method: str, note: str = "", photos=None) -> dict:
+        """Mebel mijozda, lekin kamchilik bor: qisman olingan pul yoziladi, buyurtma «Tugallanmagan» bo'ladi.
+
+        Mebel mijozga yetkazilgan hisoblanadi (diller qarziga kiradi), olingan pul undan ayiriladi.
+        Yig'uvchidan olinadi — admin/omborchi boshqa (yoki o'sha) yig'uvchiga qayta yuboradi.
+        """
+        wid, w = await self.require_self(uid)
+        order = await self.orders.get(order_id)
+        if str(order.get("worker_id", "")) != wid:
+            raise NotFound("Bu buyurtma sizga biriktirilmagan.")
+        self._guard_ret(order)
+        defect_open = bool((order.get("defect") or {}).get("open"))
+        if order.get("status") not in ACTIVE_STATUSES and not defect_open:
+            raise Conflict("Bu buyurtma allaqachon topshirilgan yoki bekor qilingan.")
+        if not clean_text(note, 500):
+            raise ServiceError("Kamchilik nima ekanligini izohga yozing.")
+        left = await self.remaining(order_id, order)
+        pay = await self._validate_payment(uid, order, correct=False, amount=amount, method=method, note=note,
+                                           photos=photos, expected=left)
+        if left is not None and pay["amount"] > left:
+            raise ServiceError(f"Mijozdan olinadigan qoldiq {fmt_usd(left)} — undan ko'p yozib bo'lmaydi.")
+        if not defect_open:
+            order = await self.orders.deliver(uid, order_id, driver=w["name"], price=order.get("delivery_fee") or 0)
+        rec = await self._record_payment(uid, wid, w, order_id, order, pay, kind="defect")
+        ts = rec["ts"]
+        updates = {"defect": {"open": True, "note": pay["note"], "at": ts, "worker_id": wid, "worker_name": w["name"],
+                              "history": [*((order.get("defect") or {}).get("history") or []),
+                                          {"at": ts, "worker_name": w["name"], "note": pay["note"],
+                                           "amount": pay["amount"]}]},
+                   "worker_id": None, "worker_name": None, "assigned_at": None, "assigned_by": None,
+                   f"wids/{wid}": True}  # topshirilganlar ro'yxatida qolishi va tahrirlay olishi uchun
+        if not order.get("handover"):
+            updates["handover"] = {"at": ts, "correct": False, "pay_id": rec["pay_id"], "defect": True}
+        await self.store.update(f"orders/{order_id}", updates)
+        debt = await self.finance.recalc(order_client(order)) if order_client(order) else 0.0
+        left_after = await self.remaining(order_id, order)
+        return {**rec, "order": dict(order, debt=debt), "worker": w, "left": left_after}
+
+    async def _complete_defect(self, uid, wid, w, order_id, order, *, correct, amount, method, note, photos) -> dict:
+        left = await self.remaining(order_id, order)
+        pay = await self._validate_payment(uid, order, correct=correct, amount=amount, method=method, note=note,
+                                           photos=photos, expected=left)
+        rec = await self._record_payment(uid, wid, w, order_id, order, {**pay, "kind_note": "completion"},
+                                         kind="completion")
+        defect = dict(order.get("defect") or {})
+        defect.update(open=False, closed_at=rec["ts"], closed_by=w["name"])
+        await self.store.update(f"orders/{order_id}", {"defect": defect,
+                                                       "handover": {"at": rec["ts"], "correct": pay["correct"],
+                                                                    "pay_id": rec["pay_id"]}})
+        debt = await self.finance.recalc(order_client(order)) if order_client(order) else 0.0
+        return {**rec, "order": dict(order, debt=debt), "worker": w}
+
+    # ---------- 3.1 skladga qaytarish ----------
+    async def request_return(self, uid, order_id: str, *, expense_yes, expense=None, note: str = "") -> dict:
+        wid, w = await self.require_self(uid)
+        order = await self.orders.get(order_id)
+        if str(order.get("worker_id", "")) != wid:
+            raise NotFound("Bu buyurtma sizga biriktirilmagan.")
+        self._guard_ret(order)
+        if order.get("status") not in ACTIVE_STATUSES:
+            raise Conflict("Topshirilgan buyurtmani skladga qaytarib bo'lmaydi.")
+        if not isinstance(expense_yes, bool):
+            raise ServiceError("Xarajat bo'ldimi — «Ha» yoki «Yo'q» ni tanlang.")
+        note = clean_text(note, 500)
+        exp = 0.0
+        if expense_yes:
+            exp = parse_number(expense)
+            if exp is None or exp <= 0 or exp > 100_000:
+                raise ServiceError("Xarajat summasini kiriting.")
+            exp = money(exp)
+            if not note:
+                raise ServiceError("Sababini yozing: nima uchun qaytdi, qanday xarajat chiqdi.")
+        ret = {"status": "pending", "worker_id": wid, "worker_name": w["name"], "worker_uid": str(uid),
+               "expense": exp, "note": note, "at": now_str()}
+        await self.store.update(f"orders/{order_id}", {"ret": ret})
+        await self._audit(uid, "return_request", {"order_id": order_id, "expense": exp})
+        return {**ret, "order_id": order_id, "order": order}
+
+    async def resolve_return(self, actor_id, actor_name: str, order_id: str, approve: bool) -> dict:
+        snap: dict = {}
+
+        def tx(cur):
+            if not isinstance(cur, dict):
+                raise NotFound("Buyurtma topilmadi.")
+            ret = dict(cur.get("ret") or {})
+            if ret.get("status") != "pending":
+                raise Conflict("Bu so'rov allaqachon ko'rib chiqilgan.")
+            snap.update(ret)
+            ret.update(status="approved" if approve else "rejected", resolved_by=str(actor_id),
+                       resolved_name=actor_name, resolved_at=now_str())
+            out = dict(cur, ret=ret)
+            if approve:
+                for k in ("worker_id", "worker_name", "assigned_at", "assigned_by", "delivery_fee"):
+                    out.pop(k, None)
+                out.update(returned=True, returned_at=ret["resolved_at"])
+            return out
+
+        res = await run_tx(self.store, f"orders/{order_id}", tx)
+        exp = money(snap.get("expense") or 0)
+        if approve and exp > 0:
+            ts = res["ret"]["resolved_at"]
+            label = f"{res.get('product_id', '')}" + (f", №{res['serial']}" if res.get("serial") else "")
+            # Xarajatni sex ko'taradi: yig'uvchi o'z qo'lidagi puldan to'lagan — qarzidan ayiriladi
+            await self._cash_add(worker_holder(snap["worker_id"]), -exp, {
+                "kind": "expense", "order_id": order_id,
+                "text": f"{human_date(ts)}: skladga qaytarish xarajati {fmt_usd(exp)} sex hisobidan ({label})"})
+            await self.store.push("expenses", {"order_id": order_id, "worker_id": snap["worker_id"],
+                                               "worker_name": snap.get("worker_name", ""), "amount": exp,
+                                               "note": snap.get("note", ""), "approved_by": actor_name, "ts": ts,
+                                               "month": month_key(), "client": order_client(res)})
+        await self._audit(actor_id, "return_resolve", {"order_id": order_id, "approve": approve})
+        return {**res["ret"], "order_id": order_id, "order": res}
+
+    # ---------- 3.2 topshirgandan keyin tahrir ----------
+    async def request_edit(self, uid, pay_id: str, *, amount, note: str = "") -> dict:
+        wid, w = await self.require_self(uid)
+        p = await self.payment(pay_id)
+        if p.get("worker_id") != wid:
+            raise NotFound("To'lov topilmadi.")
+        order = await self.orders.get(p["order_id"])
+        if order.get("status") == ST_SETTLED:
+            raise Conflict("Bu buyurtma bo'yicha hisob-kitob yopilgan — o'zgartirish uchun admin bilan bog'laning.")
+        if (p.get("edit_req") or {}).get("status") == "pending":
+            raise Conflict("Oldingi o'zgartirish hali tasdiqlanmagan.")
+        new = parse_number(amount)
+        if new is None or new < 0 or new > MAX_CASH:
+            raise ServiceError("Olingan summani kiriting (0 yoki undan katta).")
+        new = money(new)
+        if new == money(p.get("amount") or 0):
+            raise ServiceError("Summa o'zgarmagan.")
+        note = clean_text(note, 300)
+        if not note:
+            raise ServiceError("Nima uchun o'zgartirayotganingizni yozing.")
+        req = {"status": "pending", "old_amount": money(p.get("amount") or 0), "new_amount": new, "note": note,
+               "at": now_str(), "by": str(uid), "worker_name": w["name"]}
+        await self.store.set(f"wpay/{pay_id}/edit_req", req)
+        return {**req, "pay_id": pay_id, "payment": p, "order": order}
+
+    async def resolve_edit(self, actor_id, actor_name: str, pay_id: str, approve: bool) -> dict:
+        if not is_valid_key(pay_id):
+            raise NotFound("To'lov topilmadi.")
+        snap: dict = {}
+
+        def tx(cur):
+            if not isinstance(cur, dict):
+                raise NotFound("To'lov topilmadi.")
+            req = dict(cur.get("edit_req") or {})
+            if req.get("status") != "pending":
+                raise Conflict("Bu so'rov allaqachon ko'rib chiqilgan.")
+            snap.update(cur)
+            req.update(status="approved" if approve else "rejected", resolved_by=str(actor_id),
+                       resolved_name=actor_name, resolved_at=now_str())
+            out = dict(cur, edit_req=req)
+            if approve:
+                out["amount"] = req["new_amount"]
+                # Audit: kim, qachon, qaysi qiymatdan qaysi qiymatga
+                out["history"] = [*(cur.get("history") or []),
+                                  {"field": "amount", "from": req["old_amount"], "to": req["new_amount"],
+                                   "by": req.get("worker_name", ""), "requested_at": req.get("at", ""),
+                                   "approved_by": actor_name, "approved_at": req["resolved_at"], "note": req.get("note", "")}]
+            return out
+
+        res = await run_tx(self.store, f"wpay/{pay_id}", tx)
+        if approve:
+            old, new = money(snap["edit_req"]["old_amount"]), money(snap["edit_req"]["new_amount"])
+            delta = money(new - old)
+            client = snap.get("client", "")
+            if delta and client and is_valid_key(client):
+                await self.finance.adjust_order_payment(actor_id, client, snap["order_id"], delta,
+                                                        note=f"Yig'uvchi tahriri: {fmt_usd(old)} → {fmt_usd(new)}")
+            if delta and snap.get("method") == "naqd":
+                await self._cash_add(worker_holder(snap["worker_id"]), delta, {
+                    "kind": "edit", "order_id": snap["order_id"], "pay_id": pay_id,
+                    "text": f"{human_date(res['edit_req']['resolved_at'])}: olingan summa tuzatildi "
+                            f"{fmt_usd(old)} → {fmt_usd(new)} ({snap.get('product_id', '')})"})
+        await self._audit(actor_id, "pay_edit_resolve", {"pay_id": pay_id, "approve": approve})
+        return res
+
+    async def approvals(self) -> dict:
+        """Admin/omborchi tasdiqlashi kerak bo'lganlar: skladga qaytish va to'lov tahrirlari."""
+        returns, defects, returned = [], [], []
+        for oid, o in (await self.orders.all()).items():
+            if (o.get("ret") or {}).get("status") == "pending":
+                returns.append({"order_id": oid, "serial": o.get("serial", ""), "product_id": o.get("product_id", ""),
+                                "variant": o.get("variant", ""), "client": order_client(o), **o["ret"]})
+            if (o.get("defect") or {}).get("open"):
+                defects.append(oid)
+            if o.get("returned") and o.get("status") in ACTIVE_STATUSES and not o.get("worker_id"):
+                returned.append(oid)
+        edits = [{"pay_id": k, "order_id": v.get("order_id"), "serial": v.get("serial", ""),
+                  "product_id": v.get("product_id", ""), "client": v.get("client", ""), "method": v.get("method"),
+                  **v["edit_req"]}
+                 for k, v in iter_records(await self.store.get("wpay") or {})
+                 if (v.get("edit_req") or {}).get("status") == "pending"]
+        return {"returns": returns, "edits": edits, "defect_count": len(defects), "returned_count": len(returned)}
+
     async def _validate_payment(self, uid, order: dict, *, correct, amount, method, note, photos,
-                                extra: bool = False) -> dict:
+                                extra: bool = False, expected=...) -> dict:
         if not isinstance(correct, bool):
             raise ServiceError("Qoldiq summa to'g'ri olindimi — «Ha» yoki «Yo'q» ni tanlang.")
         if method not in METHODS:
@@ -330,7 +561,9 @@ class WorkerService:
         if extra and amt <= 0:
             raise ServiceError("Summa 0 dan katta bo'lishi kerak.")
         note = clean_text(note, 500)
-        expected = money(order.get("collect") or 0)
+        if expected is ...:
+            expected = money(order.get("collect") or 0)
+        expected = money(expected or 0)
         if not correct and not note:
             raise ServiceError("Nima uchun farq borligini izohga yozing.")
         if correct and expected and amt != expected and not note:
@@ -347,6 +580,7 @@ class WorkerService:
         ts = now_str()
         client = order_client(order)
         pid = self.store.new_key("wpay")
+        pay = {k: v for k, v in pay.items() if k != "kind_note"}
         rec = {"pay_id": pid, "order_id": order_id, "client": client, "serial": order.get("serial", ""),
                "product_id": order.get("product_id", ""), "variant": order.get("variant", ""),
                "worker_id": wid, "worker_name": w["name"], "kind": kind, "ts": ts, "by": str(uid),

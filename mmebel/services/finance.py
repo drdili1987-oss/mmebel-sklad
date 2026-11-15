@@ -285,6 +285,25 @@ class FinanceService:
         })
         return await self.recalc(client)
 
+    async def adjust_order_payment(self, actor_id, client: str, order_id: str, delta: float, note: str = "") -> float:
+        """Buyurtmaga bog'langan to'lovni tuzatish (musbat yoki manfiy farq) — tasdiqlangan tahrirlar uchun."""
+        delta = money(delta)
+        if not delta:
+            return await self.recalc(client)
+        order = await self.store.get(f"orders/{order_id}") or {}
+        ts = now_str()
+        await self.store.push(f"accounting_history/{client}", {
+            "order_id": order_id, "client_name": client, "product_id": order.get("product_id", ""),
+            "variant": order.get("variant", ""), "amount": order.get("amount", ""), "partial_payment": delta,
+            "comment": clean_text(note, 200), "accounting_type": "qisman", "accounting_date": ts,
+            "status": "To'lov tuzatildi", "by": str(actor_id),
+        })
+        await self.store.push(f"transactions/clients/{client}", {
+            "type": "Kirim" if delta > 0 else "Chiqim", "amount": abs(delta), "timestamp": ts,
+            "note": f"To'lov tuzatildi: {order_id} ({clean_text(note, 120)})",
+        })
+        return await self.recalc(client)
+
     async def settle_all(self, actor_id, client: str) -> dict:
         acc = await self.account(client, save=False)
         history = await self.store.get(f"accounting_history/{client}") or {}

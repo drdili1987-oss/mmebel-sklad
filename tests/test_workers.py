@@ -327,3 +327,113 @@ async def test_admin_renames_user_and_fixes_wrong_id(client):  # noqa: F811
     assert (await client.patch("/api/users/555", headers=hdr(ADMIN), json={"new_id": str(OMBOR)})).status == 409
     assert (await client.patch(f"/api/users/{ADMIN}", headers=hdr(ADMIN), json={"new_id": "999"})).status == 400
     assert (await client.patch("/api/users/555", headers=hdr(OMBOR), json={"name": "x"})).status == 403
+
+
+async def _scope_ids(c, scope, who=ADMIN):
+    d = await (await c.get(f"/api/orders?scope={scope}", headers=hdr(who))).json()
+    return {o["id"] for o in d["items"]}
+
+
+async def test_return_to_warehouse_with_expense(client):  # noqa: F811
+    services = client.app["services"]
+    wid = await make_worker(client)
+    oid = (await (await new_order(client, "070", collect=300)).json())["id"]
+    await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": wid})
+    # «Ha» — summa va sabab majburiy
+    r = await client.post(f"/api/w/orders/{oid}/return", headers=hdr(WORKER_UID), json={"expense_yes": True, "expense": 20})
+    assert r.status == 400
+    r = await client.post(f"/api/w/orders/{oid}/return", headers=hdr(WORKER_UID),
+                          json={"expense_yes": True, "expense": 20, "note": "Mijoz rad etdi, yuk tashuvchiga 20$"})
+    assert r.status == 200, await r.text()
+    # tasdiqlanguncha topshirib ham, qayta so'rab ham bo'lmaydi
+    r = await client.post(f"/api/w/orders/{oid}/handover", headers=hdr(WORKER_UID),
+                          json={"correct": True, "amount": 300, "method": "naqd"})
+    assert r.status == 409
+    appr = await (await client.get("/api/approvals", headers=hdr(OMBOR))).json()
+    assert [x["order_id"] for x in appr["returns"]] == [oid] and appr["returns"][0]["expense"] == 20
+    r = await client.post(f"/api/orders/{oid}/return/resolve", headers=hdr(OMBOR), json={"approve": True})
+    assert r.status == 200
+    assert oid in await _scope_ids(client, "returned") and oid not in await _scope_ids(client, "assigned")
+    me = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
+    assert me["active"] == [] and me["cash"] == -20            # xarajatni sex ko'taradi — sex unga qarzdor
+    assert (await services.finance.account("Umid")).debt == 0  # yetkazilmagan — dillerga qarz yo'q
+    # qaytgan mebel qayta yuboriladi
+    r = await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": wid})
+    assert r.status == 200
+    assert oid not in await _scope_ids(client, "returned")
+
+
+async def test_return_rejected_keeps_order_with_worker(client):  # noqa: F811
+    wid = await make_worker(client)
+    oid = (await (await new_order(client, "071")).json())["id"]
+    await client.post(f"/api/orders/{oid}/assign", headers=hdr(ADMIN), json={"worker_id": wid})
+    await client.post(f"/api/w/orders/{oid}/return", headers=hdr(WORKER_UID), json={"expense_yes": False})
+    r = await client.post(f"/api/orders/{oid}/return/resolve", headers=hdr(ADMIN), json={"approve": False})
+    assert r.status == 200
+    me = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
+    assert [o["id"] for o in me["active"]] == [oid] and me["cash"] == 0
+    assert (await client.post(f"/api/orders/{oid}/return/resolve", headers=hdr(ADMIN),
+                              json={"approve": True})).status == 409
+
+
+async def test_defect_reassign_and_completion(client):  # noqa: F811
+    services = client.app["services"]
+    w1 = await make_worker(client)
+    w2 = await make_worker(client, uid=78, name="Sardor", phone="+998 90 999 88 77")
+    oid = (await (await new_order(client, "080", collect=300)).json())["id"]
+    await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": w1})
+    r = await client.post(f"/api/w/orders/{oid}/defect", headers=hdr(WORKER_UID),
+                          json={"amount": 120, "method": "naqd"})
+    assert r.status == 400                                      # izohsiz bo'lmaydi
+    r = await client.post(f"/api/w/orders/{oid}/defect", headers=hdr(WORKER_UID),
+                          json={"amount": 350, "method": "naqd", "note": "Fasad tirnalgan"})
+    assert r.status == 400                                      # qoldiqdan ko'p
+    r = await client.post(f"/api/w/orders/{oid}/defect", headers=hdr(WORKER_UID),
+                          json={"amount": 120, "method": "naqd", "note": "Fasad tirnalgan, fabrikaga qaytarish kerak"})
+    assert r.status == 200, await r.text()
+    assert (await r.json())["left"] == 180
+    assert oid in await _scope_ids(client, "defect", OMBOR)
+    assert (await services.finance.account("Umid")).debt == 340 - 120     # mebel mijozda — qarzga kiradi
+    me1 = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
+    assert me1["active"] == [] and me1["cash"] == 120 and [o["id"] for o in me1["done"]] == [oid]
+    # boshqa yig'uvchiga qayta yuboriladi — izoh va qolgan summa ko'rinadi
+    r = await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": w2})
+    assert r.status == 200, await r.text()
+    me2 = await (await client.get("/api/w/me", headers=hdr(78))).json()
+    o2 = me2["active"][0]
+    assert o2["id"] == oid and o2["left"] == 180 and "Fasad" in o2["defect"]["note"]
+    r = await client.post(f"/api/w/orders/{oid}/handover", headers=hdr(78),
+                          json={"correct": True, "amount": 180, "method": "naqd"})
+    assert r.status == 200, await r.text()
+    assert oid not in await _scope_ids(client, "defect")
+    assert (await services.finance.account("Umid")).debt == 340 - 300
+    me2 = await (await client.get("/api/w/me", headers=hdr(78))).json()
+    assert me2["cash"] == 180 and me2["active"] == []
+
+
+async def test_worker_edit_needs_approval_and_is_audited(client):  # noqa: F811
+    services = client.app["services"]
+    wid = await make_worker(client)
+    oid = (await (await new_order(client, "090", collect=300)).json())["id"]
+    await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": wid})
+    await client.post(f"/api/w/orders/{oid}/handover", headers=hdr(WORKER_UID),
+                      json={"correct": True, "amount": 300, "method": "naqd"})
+    me = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
+    pid = me["done"][0]["payments"][0]["pay_id"]
+    assert (await client.post(f"/api/w/pay/{pid}/edit", headers=hdr(WORKER_UID), json={"amount": 250})).status == 400
+    r = await client.post(f"/api/w/pay/{pid}/edit", headers=hdr(WORKER_UID),
+                          json={"amount": 250, "note": "Xato yozibman, 250 olganman"})
+    assert r.status == 200
+    # tasdiqlanguncha hech narsa o'zgarmaydi
+    assert (await services.finance.account("Umid")).debt == 40
+    assert (await client.post(f"/api/w/pay/{pid}/edit", headers=hdr(WORKER_UID),
+                              json={"amount": 200, "note": "yana"})).status == 409
+    appr = await (await client.get("/api/approvals", headers=hdr(ADMIN))).json()
+    assert [e["pay_id"] for e in appr["edits"]] == [pid]
+    r = await client.post(f"/api/wpay/{pid}/edit/resolve", headers=hdr(OMBOR), json={"approve": True})
+    assert r.status == 200, await r.text()
+    assert (await services.finance.account("Umid")).debt == 90
+    me = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
+    assert me["cash"] == 250
+    p = await services.workers.payment(pid)
+    assert p["amount"] == 250 and p["history"][0]["from"] == 300 and p["history"][0]["to"] == 250

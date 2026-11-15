@@ -38,6 +38,8 @@ def E(request):
 def w_order(oid: str, o: dict) -> dict:
     """Yig'uvchiga ko'rinadigan buyurtma: diller narxi va ichki maydonlarsiz."""
     hv = o.get("handover") or {}
+    ret = o.get("ret") or {}
+    defect = o.get("defect") or {}
     return {
         "id": oid, "serial": o.get("serial", ""), "product_id": o.get("product_id", ""),
         "variant": o.get("variant", ""), "amount": to_int(o.get("amount"), 1), "client_name": order_client(o),
@@ -45,12 +47,17 @@ def w_order(oid: str, o: dict) -> dict:
         "collect": money(o["collect"]) if o.get("collect") not in (None, "") else None,
         "assigned_at": o.get("assigned_at", ""), "delivered_at": o.get("delivered_at", ""),
         "handover": {"at": hv.get("at", ""), "correct": hv.get("correct")} if hv else None,
+        "ret": {k: ret.get(k) for k in ("status", "expense", "note", "at", "worker_name")} if ret else None,
+        "defect": {"open": bool(defect.get("open")), "note": defect.get("note", ""), "at": defect.get("at", ""),
+                   "worker_name": defect.get("worker_name", ""),
+                   "history": defect.get("history") or []} if defect else None,
     }
 
 
 def pay_out(p: dict) -> dict:
     out = {k: p.get(k) for k in ("pay_id", "order_id", "client", "serial", "product_id", "variant", "worker_id",
-                                 "worker_name", "kind", "ts", "correct", "amount", "method", "note", "expected")}
+                                 "worker_name", "kind", "ts", "correct", "amount", "method", "note", "expected",
+                                 "edit_req", "history")}
     out["photos"] = len(p.get("photos") or [])
     return out
 
@@ -64,15 +71,21 @@ async def w_me(request):
     holder = worker_holder(wid)
     paid: dict[str, float] = {}
     methods: dict[str, set] = {}
-    for p in await S(request).workers.payments(wid=wid):
+    my_pays = await S(request).workers.payments(wid=wid)
+    for p in await S(request).workers.payments():  # boshqa yig'uvchi olgan qism ham qoldiqqa ta'sir qiladi
+        if p.get("worker_id") != wid:
+            paid[p["order_id"]] = money(paid.get(p["order_id"], 0) + (p.get("amount") or 0))
+    for p in my_pays:
         paid[p["order_id"]] = money(paid.get(p["order_id"], 0) + (p.get("amount") or 0))
         methods.setdefault(p["order_id"], set()).add(p.get("method", ""))
     pending = [t for t in await S(request).workers.transfers(status="pending") if t.get("from_holder") == holder]
     return web.json_response({
         "worker": {"id": wid, "name": w.get("name", ""), "phone": w.get("phone", "")},
         "cash": await S(request).workers.balance(holder),
-        "active": [w_order(k, v) for k, v in active],
-        "done": [dict(w_order(k, v), paid=paid.get(k, 0.0), method="+".join(sorted(methods.get(k, set()))))
+        "active": [dict(w_order(k, v), paid=paid.get(k, 0.0),
+                        left=await S(request).workers.remaining(k, v)) for k, v in active],
+        "done": [dict(w_order(k, v), paid=paid.get(k, 0.0), method="+".join(sorted(methods.get(k, set()))),
+                      payments=[pay_out(p) for p in my_pays if p["order_id"] == k])
                  for k, v in done[:60]],
         "log": (await S(request).workers.log(holder))[:100],
         "pending_transfer": pending[0] if pending else None,
@@ -126,6 +139,41 @@ async def w_extra_payment(request):
         note=str(d.get("note", "")), photos=d.get("photos"))
     await E(request).order_handover(res)
     return web.json_response({"ok": True, "pay_id": res["pay_id"]})
+
+
+@routes.post("/api/w/orders/{oid}/defect")
+@requires(ROLE_YIGUVCHI)
+async def w_defect(request):
+    """«Mebelda kamchilik aniqlandi»: qisman olingan pul + kamchilik izohi."""
+    d = await body(request)
+    res = await S(request).workers.report_defect(
+        actor(request), request.match_info["oid"], amount=d.get("amount"), method=str(d.get("method", "naqd")),
+        note=str(d.get("note", "")), photos=d.get("photos"))
+    await E(request).order_defect(res)
+    return web.json_response({"ok": True, "left": res["left"]})
+
+
+@routes.post("/api/w/orders/{oid}/return")
+@requires(ROLE_YIGUVCHI)
+async def w_return(request):
+    """«Skladga qaytdi» — admin/omborchi tasdiqlaydi."""
+    d = await body(request)
+    res = await S(request).workers.request_return(actor(request), request.match_info["oid"],
+                                                  expense_yes=d.get("expense_yes"), expense=d.get("expense"),
+                                                  note=str(d.get("note", "")))
+    await E(request).return_requested(res)
+    return web.json_response({"ok": True})
+
+
+@routes.post("/api/w/pay/{pid}/edit")
+@requires(ROLE_YIGUVCHI)
+async def w_pay_edit(request):
+    """Topshirgandan keyin olingan summani tuzatish — tasdiqlangach kuchga kiradi."""
+    d = await body(request)
+    res = await S(request).workers.request_edit(actor(request), request.match_info["pid"], amount=d.get("amount"),
+                                                note=str(d.get("note", "")))
+    await E(request).edit_requested(res)
+    return web.json_response({"ok": True})
 
 
 @routes.post("/api/w/transfer")
@@ -237,6 +285,39 @@ async def order_unassign(request):
 async def order_payments(request):
     rows = await S(request).workers.payments(order_id=request.match_info["oid"])
     return web.json_response({"items": [pay_out(p) for p in rows]})
+
+
+@routes.get("/api/approvals")
+@requires(ROLE_ADMIN, ROLE_OMBORCHI)
+async def approvals(request):
+    a = await S(request).workers.approvals()
+    pending = await S(request).workers.transfers(status="pending")
+    me = f"u_{actor(request)}"
+    a["transfers"] = [t for t in pending if t.get("from_holder") != me
+                      and (request["role"] == ROLE_ADMIN or t.get("to_role") == ROLE_OMBORCHI)]
+    return web.json_response(a)
+
+
+@routes.post("/api/orders/{oid}/return/resolve")
+@requires(ROLE_ADMIN, ROLE_OMBORCHI)
+async def return_resolve(request):
+    d = await body(request)
+    u = request["user"]
+    res = await S(request).workers.resolve_return(actor(request), u.full_name or str(u.id), request.match_info["oid"],
+                                                  d.get("approve") is True)
+    await E(request).return_resolved(res)
+    return web.json_response({"ok": True, "status": res["status"]})
+
+
+@routes.post("/api/wpay/{pid}/edit/resolve")
+@requires(ROLE_ADMIN, ROLE_OMBORCHI)
+async def pay_edit_resolve(request):
+    d = await body(request)
+    u = request["user"]
+    res = await S(request).workers.resolve_edit(actor(request), u.full_name or str(u.id), request.match_info["pid"],
+                                                d.get("approve") is True)
+    await E(request).edit_resolved(res)
+    return web.json_response({"ok": True, "status": res["edit_req"]["status"]})
 
 
 @routes.post("/api/cash/transfers/{tid}/resolve")

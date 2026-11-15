@@ -269,3 +269,4 @@ button.unread-banner { width: 100%; text-align: left; cursor: pointer; color: va
 .list.pick .row .end { color: var(--accent-bright); font-weight: 700; }
 .btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-bright); border-color: var(--accent-bright); }
 .row.muted { opacity: .6; }
+.unread-banner.danger-banner { background: color-mix(in srgb, var(--st-late) 14%, transparent); border-color: var(--st-late); color: var(--st-late); }

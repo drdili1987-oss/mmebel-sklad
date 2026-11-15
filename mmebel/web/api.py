@@ -386,7 +386,8 @@ async def dashboard(request):
 # ================= buyurtmalar =================
 # Buyurtmalar bo'limlari. Xodimga qo'shimcha: Bugun / Ertaga / Indinga (topshirish sanasi bo'yicha).
 BASE_SCOPES = ("active", "changed", "overdue", "ready", "done", "cancelled")
-STAFF_SCOPES = BASE_SCOPES[:4] + ("assigned",) + BASE_SCOPES[4:]   # admin/omborchi: + «Yig'uvchida»
+# admin/omborchi: + «Yig'uvchida», «Qaytgan mebellar», «Tugallanmagan»
+STAFF_SCOPES = BASE_SCOPES[:4] + ("assigned", "returned", "defect") + BASE_SCOPES[4:]
 XODIM_SCOPES = BASE_SCOPES + ("today", "tomorrow", "after")
 DAY_SCOPES = {"today": 0, "tomorrow": 1, "after": 2}
 
@@ -403,6 +404,8 @@ def _order_scopes(o: dict, changed: bool, today) -> set[str]:
             out.add("ready")
         if o.get("worker_id"):
             out.add("assigned")
+        elif o.get("returned"):
+            out.add("returned")      # skladga qaytgan, hali qayta yuborilmagan
         if is_overdue(o.get("due_date"), st, ACTIVE_STATUSES):
             out.add("overdue")
         due = parse_date(o.get("due_date"))
@@ -414,6 +417,8 @@ def _order_scopes(o: dict, changed: bool, today) -> set[str]:
         out.add("done")
     elif st == ST_CANCELLED:
         out.add("cancelled")
+    if (o.get("defect") or {}).get("open"):
+        out.add("defect")            # tugallanmagan (kamchilik) — qayta yig'uvchiga yuboriladi
     return out
 
 
