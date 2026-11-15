@@ -10,6 +10,7 @@ import uuid
 from ..constants import (
     ACTIVE_STATUSES,
     ALLOWED_TRANSITIONS,
+    DELIVERED_STATUSES,
     SELF_PICKUP_DRIVER,
     ST_CANCELLED,
     ST_DELIVERED,
@@ -132,6 +133,9 @@ class OrderService:
             if unit is None or unit < 0 or unit > 1_000_000:
                 raise ServiceError("Narx noto'g'ri.")
             unit = money(unit)
+        elif custom_price not in (None, ""):
+            # Admin narxni o'zi kiritgan bo'lsa (masalan, o'zgarishli mebel) — katalog narxi bilan almashtirilmaydi
+            unit = self._parse_price(custom_price)
         else:
             unit = self.inventory.unit_price(product_rec)
 
@@ -175,6 +179,13 @@ class OrderService:
         await self._audit(actor_id, oid, "create", {"amount": qty, "client": client_name})
         return dict(record, product_name=(product_rec or {}).get("nomi", pid),
                     product_model=(product_rec or {}).get("modeli", ""))
+
+    @staticmethod
+    def _parse_price(price) -> float:
+        unit = parse_number(price)
+        if unit is None or unit < 0 or unit > 1_000_000:
+            raise ServiceError("Narx noto'g'ri.")
+        return money(unit)
 
     @staticmethod
     def _parse_collect(collect) -> float | None:
@@ -293,7 +304,8 @@ class OrderService:
 
     # ---------- tahrirlash ----------
     async def edit(self, actor_id, order_id: str, *, amount=None, due_date=None, comment=None, changed=None,
-                   serial=None, collect=None) -> dict:
+                   serial=None, collect=None, product=None, price=None) -> dict:
+        """Admin tahriri. Faol buyurtmada hammasi; yetkazilganda — tartib raqam, qoldiq va narx."""
         order = await self.get(order_id)
         updates: dict = {}
         changes: dict = {}
@@ -308,9 +320,44 @@ class OrderService:
             if c_val != (money(order["collect"]) if order.get("collect") not in (None, "") else None):
                 updates["collect"] = c_val
                 changes["collect"] = f"{c_val:g}$" if c_val is not None else "—"
-        only_meta = amount is None and due_date is None and comment is None and changed is None
-        if order.get("status") not in ACTIVE_STATUSES and not only_meta:
-            raise Conflict("Faqat faol buyurtmani o'zgartirish mumkin.")
+        status = order.get("status")
+        only_meta = amount is None and due_date is None and comment is None and changed is None and product is None
+        if status not in ACTIVE_STATUSES and not only_meta:
+            raise Conflict("Mebel, soni, muddat va izohni faqat faol buyurtmada o'zgartirish mumkin.")
+        if price not in (None, "") and status not in ACTIVE_STATUSES and status not in DELIVERED_STATUSES:
+            raise Conflict("Hisob-kitob qilingan yoki bekor qilingan buyurtma narxini o'zgartirib bo'lmaydi.")
+        unit = money(order.get("price") or 0)
+        cur_pid = order.get("product_id", "")
+        if product not in (None, ""):
+            name = clean_text(product, 60)
+            new_pid = product_key(name)
+            if not new_pid or not any(c.isalnum() for c in new_pid) or any(ord(c) < 32 for c in name):
+                raise ServiceError("Mebel nomini kiriting.")
+            if new_pid != product_key(cur_pid):
+                rec = await self.inventory.get(new_pid)
+                known = rec is not None or new_pid in {product_key(m) for m in await self.finance.catalog.models()}
+                if not known and price in (None, ""):
+                    if not money(order.get("price") or 0):
+                        raise ServiceError("Bu mebel shablonda yo'q — 1 dona narxini kiriting.")
+                    price = order.get("price")   # shablonda yo'q nom — eski narx saqlanadi
+                stored_pid = new_pid if known else name
+                qty_now = order_amount(order)
+                old_ded = parse_number(order.get("deducted_qty"))
+                old_ded = int(old_ded) if old_ded is not None and old_ded >= 0 else qty_now
+                await self.inventory.release(cur_pid, old_ded)        # eski mebel omborga qaytadi
+                new_ded = await self.inventory.reserve(stored_pid, qty_now)
+                if price in (None, ""):
+                    unit = self.inventory.unit_price(rec)
+                updates.update({"product_id": stored_pid, "deducted_qty": new_ded, "price": unit,
+                                "total_price": money(unit * qty_now)})
+                changes["product_id"] = stored_pid
+                cur_pid = stored_pid
+        if price not in (None, ""):
+            new_unit = self._parse_price(price)
+            if new_unit != money(order.get("price") or 0) or "price" in updates:
+                unit = new_unit
+                updates.update({"price": unit, "total_price": money(unit * order_amount(order))})
+                changes["price"] = f"{unit:g}$"
         if amount is not None:
             qty = parse_number(amount)
             if qty is None or qty != int(qty) or not (0 < qty <= MAX_AMOUNT):
@@ -318,13 +365,12 @@ class OrderService:
             qty = int(qty)
             old_qty = order_amount(order)
             if qty != old_qty:
-                pid = order.get("product_id", "")
-                old_ded = parse_number(order.get("deducted_qty"))
+                pid = cur_pid
+                old_ded = parse_number(updates.get("deducted_qty", order.get("deducted_qty")))
                 old_ded = int(old_ded) if old_ded is not None and old_ded >= 0 else old_qty
                 # Avval eski ayirilganini qaytaramiz, keyin yangisini band qilamiz
                 await self.inventory.release(pid, old_ded)
                 new_ded = await self.inventory.reserve(pid, qty)
-                unit = money(order.get("price") or 0)
                 updates.update({"amount": qty, "deducted_qty": new_ded, "total_price": money(unit * qty)})
                 changes["amount"] = qty
         if due_date is not None:

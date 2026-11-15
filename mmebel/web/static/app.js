@@ -429,7 +429,7 @@ async function orderSheet(id) {
         if (r) done();
       } } }, "Buyurtmani bekor qilish"));
     } else if (role === "admin" && o.status !== "Bekor qilindi") {
-      actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => editOrderSheet(o, done, true) } }, "✏️ Tartib raqam / qoldiqni to'g'rilash"));
+      actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => editOrderSheet(o, done, true) } }, "✏️ Narx / tartib raqam / qoldiqni to'g'rilash"));
     }
     const pays = el("div");
     if (staff && o.worker_id && !isActive) loadOrderPays(o.id, pays);
@@ -533,6 +533,10 @@ function editOrderSheet(o, onDone, metaOnly) {
   sheet((close) => {
     const serial = el("input", { type: "text", maxlength: "20", value: o.serial || "", placeholder: "Masalan: 001" });
     const collect = el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", value: o.collect != null ? o.collect : "", placeholder: "Bo'sh — belgilanmagan" });
+    // Admin: mebel nomi va narxi ham tahrirlanadi (xato bo'lsa buyurtmani bekor qilib qayta ochish shart emas)
+    const product = el("input", { type: "text", maxlength: "60", value: o.product_id || "", list: "models-dl3", autocomplete: "off" });
+    const dl = el("datalist", { id: "models-dl3" }, (S.me.meta.models || []).map((x) => el("option", { value: x })));
+    const price = el("input", { type: "number", min: "0", step: "0.01", inputmode: "decimal", value: o.price != null ? o.price : "" });
     const amount = el("input", { type: "number", min: "1", max: "10000", value: o.amount, inputmode: "numeric" });
     const due = el("input", { type: "date", value: toIso(o.due_date), min: isoToday() });
     const comment = el("textarea", { maxlength: "500" }, o.comment || "");
@@ -544,7 +548,9 @@ function editOrderSheet(o, onDone, metaOnly) {
       if (serial.value.trim() !== (o.serial || "")) body.serial = serial.value.trim();
       const cv = collect.value === "" ? null : Number(collect.value);
       if (cv !== (o.collect != null ? Number(o.collect) : null)) body.collect = cv === null ? "" : cv;
+      if (price.value !== "" && Number(price.value) !== Number(o.price)) body.price = Number(price.value);
       if (!metaOnly) {
+        if (product.value.trim() && product.value.trim() !== o.product_id) body.product = product.value.trim();
         if (Number(amount.value) !== Number(o.amount)) body.amount = Number(amount.value);
         if (due.value && due.value !== toIso(o.due_date)) body.due_date = due.value;
         if (comment.value !== (o.comment || "")) body.comment = comment.value;
@@ -556,8 +562,11 @@ function editOrderSheet(o, onDone, metaOnly) {
     });
     return el("div", {}, el("h2", {}, `${plabel(o)} — o'zgartirish`),
       el("div", { class: "actions two", style: "margin-top:0" }, field("Tartib raqam", serial), field("Mijozdan qoldiq ($)", collect)),
+      metaOnly ? null : field("Mebel nomi", el("div", {}, product, dl)),
+      field("1 dona narxi ($)", price),
+      metaOnly ? el("p", { class: "muted small" }, "Narx o'zgarsa, diller qarzi avtomatik qayta hisoblanadi.") : null,
       metaOnly ? null : [field("Soni", amount), field("Muddat", due), field("Izoh", comment), field("O'zgarishli mebelmi?", chg),
-        el("p", { class: "muted small" }, "Soni o'zgarsa, ombor qoldig'i avtomatik to'g'rilanadi.")],
+        el("p", { class: "muted small" }, "Mebel yoki soni o'zgarsa, ombor qoldig'i avtomatik to'g'rilanadi. Yangi mebel tanlansa va narx o'zgartirilmasa — katalog narxi qo'yiladi.")],
       el("div", { class: "actions" }, btn));
   });
 }
@@ -955,7 +964,7 @@ async function usersSection(holder) {
   const roles = S.me.meta.roles;
   holder.appendChild(el("p", { class: "muted small", style: "margin:6px 4px" },
     "Yangi xodim botga /start yozsa, shu ro'yxatda paydo bo'ladi. Yoki uning Telegram ID raqamini (/id buyrug'i) kiriting."));
-  holder.appendChild(el("div", { class: "actions" }, el("button", { class: "btn", type: "button", on: { click: () => userSheet(null) } }, "＋ ID orqali rol berish")));
+  holder.appendChild(el("div", { class: "actions" }, el("button", { class: "btn", type: "button", on: { click: () => userSheet(null) } }, "＋ Foydalanuvchi qo'shish")));
   const groups = {};
   data.items.forEach((u) => { (groups[u.role] = groups[u.role] || []).push(u); });
   Object.keys(roles).forEach((r) => {
@@ -971,21 +980,33 @@ async function usersSection(holder) {
 function userSheet(u) {
   const roles = S.me.meta.roles;
   sheet((close) => {
-    const id = el("input", { type: "text", inputmode: "numeric", maxlength: "15", value: u ? u.id : "", readonly: u ? true : null, placeholder: "Masalan: 123456789" });
+    // ID tahrirlanadi: noto'g'ri kiritilgan (masalan, telefon raqami yozilgan) ID ni to'g'rilash uchun
+    const id = el("input", { type: "text", inputmode: "numeric", maxlength: "15", value: u ? u.id : "", readonly: u && u.owner ? true : null, placeholder: "Masalan: 123456789" });
+    const name = el("input", { type: "text", maxlength: "80", value: u ? u.name : "", placeholder: "Masalan: Javohir (haydovchi)" });
     const role = el("select", {}, Object.entries(roles).map(([k, v]) => el("option", { value: k, selected: u && u.role === k ? true : null }, v)));
     const client = el("select", {}, el("option", { value: "" }, "— Kompaniyani tanlang —"),
       S.me.meta.clients.map((c) => el("option", { value: c, selected: u && u.client_name === c ? true : null }, c)));
     const clientField = field("Diller kompaniyasi", client);
     const sync = () => clientField.classList.toggle("hidden", role.value !== "diller");
     role.addEventListener("change", sync); sync();
-    const btn = el("button", { class: "btn", type: "button" }, "Rolni saqlash");
+    const btn = el("button", { class: "btn", type: "button" }, "Saqlash");
     btn.addEventListener("click", async () => {
-      const r = await act(btn, () => api("POST", "/api/users", { id: id.value.trim(), role: role.value, client_name: client.value }), "Rol saqlandi");
+      const newId = id.value.trim();
+      if (!/^-?\d{3,15}$/.test(newId)) { toast("Telegram ID faqat raqamlardan iborat (botda /id yozib bilinadi).", true); id.focus(); return; }
+      let uid = u ? u.id : newId;
+      const r = await act(btn, async () => {
+        if (u && (newId !== u.id || name.value.trim() !== (u.name || ""))) {
+          if (newId !== u.id && !(await confirmDlg(`ID ${u.id} → ${newId} ga o'zgartirilsinmi? Rol, ism va boshqa ma'lumotlar yangi ID ga o'tadi.`))) return null;
+          uid = (await api("PATCH", `/api/users/${encodeURIComponent(u.id)}`, { name: name.value.trim(), new_id: newId })).id;
+        }
+        return api("POST", "/api/users", { id: uid, role: role.value, client_name: client.value, name: u ? "" : name.value.trim() });
+      }, "Saqlandi");
       if (r) { close(); refresh(); }
     });
-    return el("div", {}, el("h2", {}, u ? (u.name || "Foydalanuvchi") : "Rol berish"),
-      field("Telegram ID", id), field("Rol", role), clientField,
-      el("p", { class: "muted small" }, "Yangi rol foydalanuvchi keyingi xabar yozganda kuchga kiradi (30 soniyagacha)."),
+    return el("div", {}, el("h2", {}, u ? (u.name || "Foydalanuvchi") : "Foydalanuvchi qo'shish"),
+      field("Ismi", name), field("Telegram ID", id), field("Rol", role), clientField,
+      u && u.phone ? el("p", { class: "muted small" }, `Telefon: +${u.phone}`) : null,
+      el("p", { class: "muted small" }, "Telegram ID ni odam botga /id yozib biladi (telefon raqami emas!). Yangi rol 30 soniyagacha kuchga kiradi."),
       el("div", { class: "actions" }, btn));
   });
 }

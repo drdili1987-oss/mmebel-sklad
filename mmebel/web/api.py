@@ -483,7 +483,10 @@ async def order_edit(request):
     o = await S(request).orders.edit(actor(request), oid, amount=d.get("amount"), due_date=d.get("due_date"),
                                      comment=d.get("comment"),
                                      changed=d.get("changed") if isinstance(d.get("changed"), bool) else None,
-                                     serial=d.get("serial"), collect=d.get("collect"))
+                                     serial=d.get("serial"), collect=d.get("collect"),
+                                     product=d.get("product"), price=d.get("price"))
+    if {"price", "product_id"} & set(o.get("_changes") or {}) and o.get("status") not in ACTIVE_STATUSES:
+        await S(request).finance.recalc(order_client(o))   # yetkazilgan buyurtma narxi o'zgarsa — qarz qayta hisoblanadi
     await E(request).order_edited(oid, o, actor(request))
     return web.json_response(order_out(oid, o, request["role"]))
 
@@ -714,12 +717,31 @@ async def user_set(request):
     d = await body(request)
     role = str(d.get("role", ""))
     await S(request).users.set_role(actor(request), str(d.get("id", "")), role, str(d.get("client_name", "")))
+    if str(d.get("name", "")).strip():
+        await S(request).users.set_name(actor(request), str(d.get("id", "")).strip(), str(d["name"]))
     if role == ROLE_YIGUVCHI:
         await S(request).workers.ensure_for_user(actor(request), str(d.get("id", "")))
     if role not in APP_ROLES:
         await S(request).sessions.revoke_user(str(d.get("id", "")))
         await S(request).push.unregister_user(str(d.get("id", "")))
     return web.json_response({"ok": True})
+
+
+@routes.patch("/api/users/{uid}")
+@requires(ROLE_ADMIN)
+async def user_edit(request):
+    """Ism va/yoki noto'g'ri kiritilgan Telegram ID ni to'g'rilash."""
+    d = await body(request)
+    uid = request.match_info["uid"]
+    if str(d.get("name", "")).strip():
+        await S(request).users.set_name(actor(request), uid, str(d["name"]))
+    new_id = str(d.get("new_id", "")).strip()
+    if new_id and new_id != uid:
+        await S(request).users.change_id(actor(request), uid, new_id)
+        await S(request).sessions.revoke_user(uid)      # eski ID bilan ochilgan sessiyalar yopiladi
+        await S(request).push.unregister_user(uid)
+        uid = new_id
+    return web.json_response({"ok": True, "id": uid})
 
 
 @routes.delete("/api/users/{uid}")

@@ -7,7 +7,7 @@ from datetime import timedelta
 from ..constants import ALL_ROLES, ROLE_ADMIN, ROLE_ALIASES, ROLE_DILLER, ROLE_MIJOZ
 from ..store import Store
 from ..utils import clean_text, is_valid_key, iter_records, now, now_str
-from .errors import NotFound, ServiceError
+from .errors import Conflict, NotFound, ServiceError
 
 _CACHE_TTL = 30.0
 
@@ -137,11 +137,59 @@ class UserService:
         user = await self.get(uid) or {}
         name = clean_text(full_name, 80)
         uname = clean_text(username, 64)
+        if user.get("name_locked"):
+            name = user.get("name", "")  # admin qo'lda yozgan ism Telegram ismi bilan almashtirilmaydi
         if user.get("name") == name and user.get("username", "") == uname and user.get("last_seen", "")[:10] == now_str()[:10]:
             return
         await self.store.update(f"users/{uid}", {"name": name, "username": uname, "last_seen": now_str()})
         if self._cache is not None:
             self._cache.setdefault(uid, {}).update({"name": name, "username": uname, "last_seen": now_str()})
+
+    async def set_name(self, actor_id, user_id, name: str) -> None:
+        """Admin foydalanuvchi ismini qo'lda yozadi (masalan: «Javohir haydovchi»)."""
+        uid = str(user_id).strip()
+        name = clean_text(name, 80)
+        if not name:
+            raise ServiceError("Ismni kiriting.")
+        if not await self.get(uid):
+            raise NotFound("Foydalanuvchi topilmadi.")
+        await self.store.update(f"users/{uid}", {"name": name, "name_locked": True})
+        await self.store.push("audit_log", {"action": "set_name", "user_id": uid, "name": name,
+                                            "by": str(actor_id), "at": now_str()})
+        self.invalidate()
+
+    async def change_id(self, actor_id, old_id, new_id) -> dict:
+        """Noto'g'ri kiritilgan Telegram ID ni to'g'rilaydi: yozuv (rol, ism, diller, telefon) yangi ID ga ko'chadi."""
+        old, new = str(old_id).strip(), str(new_id).strip()
+        if not new.lstrip("-").isdigit() or len(new.lstrip("-")) > 15:
+            raise ServiceError("Telegram ID faqat raqamlardan iborat bo'lishi kerak (/id buyrug'i bilan bilinadi).")
+        if old == new:
+            raise ServiceError("Yangi ID eskisi bilan bir xil.")
+        if old == str(actor_id) or old in self.owner_ids:
+            raise ServiceError("Bu foydalanuvchining ID sini o'zgartirib bo'lmaydi.")
+        rec = await self.get(old)
+        if not rec:
+            raise NotFound("Foydalanuvchi topilmadi.")
+        target = await self.get(new) or {}
+        if self.normalize_role(target.get("role")) != ROLE_MIJOZ:
+            raise Conflict(f"{new} ID li foydalanuvchida allaqachon «{target.get('role')}» roli bor.")
+        moved = {**target, **{k: v for k, v in rec.items() if v not in (None, "")}}
+        if target.get("name") and not rec.get("name_locked"):
+            moved["name"] = target["name"]          # haqiqiy Telegram ismi yangi ID dan olinadi
+        if target.get("username"):
+            moved["username"] = target["username"]
+        updates: dict = {f"users/{new}": moved, f"users/{old}": None, f"unread/{old}": None}
+        if rec.get("phone") and str(await self.store.get(f"phones/{rec['phone']}") or "") == old:
+            updates[f"phones/{rec['phone']}"] = new
+        workers = await self.store.get("workers") or {}
+        for wid, w in (workers.items() if isinstance(workers, dict) else []):
+            if isinstance(w, dict) and str(w.get("uid") or "") == old:
+                updates[f"workers/{wid}/uid"] = new
+        await self.store.update("", updates)
+        await self.store.push("audit_log", {"action": "change_id", "old_id": old, "new_id": new,
+                                            "by": str(actor_id), "at": now_str()})
+        self.invalidate()
+        return moved
 
     async def set_role(self, actor_id, user_id, role: str, client_name: str = "") -> None:
         uid = str(user_id).strip()

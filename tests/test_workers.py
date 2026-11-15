@@ -280,3 +280,50 @@ def test_pdf_pages_have_20_rows_and_page_totals():
     pdf = as_pdf(rows, title="Yetkazilgan mebellar", subtitle="Comfort")
     import re
     assert len(re.findall(rb"/Type /Page\b(?!s)", pdf)) == 3            # 45 ta mebel -> 20 + 20 + 5
+
+
+async def test_admin_custom_price_kept_for_known_product(client):  # noqa: F811
+    """O'zgarishli mebelga kiritilgan narx katalog narxi bilan almashib ketmasin."""
+    r = await new_order(client, "050", price=500, changed=True)
+    o = await (await client.get(f"/api/orders/{(await r.json())['id']}", headers=hdr(ADMIN))).json()
+    assert o["price"] == 500 and o["total_price"] == 500
+
+
+async def test_admin_edits_product_and_price(client):  # noqa: F811
+    services = client.app["services"]
+    oid = (await (await new_order(client, "060")).json())["id"]
+    stock_before = (await services.inventory.get("BF07"))["soni"]
+    r = await client.patch(f"/api/orders/{oid}", headers=hdr(ADMIN), json={"product": "Maxsus divan", "price": 610})
+    assert r.status == 200, await r.text()
+    o = await services.orders.get(oid)
+    assert o["product_id"] == "Maxsus divan" and o["price"] == 610 and o["total_price"] == 610
+    assert (await services.inventory.get("BF07"))["soni"] == stock_before + 1     # eski mebel omborga qaytdi
+    # yetkazilgandan keyin narx tuzatiladi — qarz qayta hisoblanadi; mebel nomi esa o'zgarmaydi
+    await services.orders.deliver(ADMIN, oid, driver="Dilmurod", price=0)
+    assert (await services.finance.account("Umid")).debt == 610
+    r = await client.patch(f"/api/orders/{oid}", headers=hdr(ADMIN), json={"price": 590})
+    assert r.status == 200
+    assert (await services.finance.account("Umid")).debt == 590
+    assert (await client.patch(f"/api/orders/{oid}", headers=hdr(ADMIN), json={"product": "BF 07"})).status == 409
+    # omborchiga narx haqida xabar bormaydi
+    assert not any("590" in t for uid, t in client.sent if str(uid) == str(OMBOR))
+
+
+async def test_admin_renames_user_and_fixes_wrong_id(client):  # noqa: F811
+    services = client.app["services"]
+    # telefon raqami ID sifatida kiritilgan xodim
+    await client.post("/api/users", headers=hdr(ADMIN), json={"id": "998901112233", "role": "xodim", "name": "Bobur"})
+    u = await services.users.get("998901112233")
+    assert u["role"] == "xodim" and u["name"] == "Bobur"
+    r = await client.patch("/api/users/998901112233", headers=hdr(ADMIN), json={"name": "Bobur usta", "new_id": "555"})
+    assert r.status == 200 and (await r.json())["id"] == "555"
+    assert await services.users.get("998901112233") is None
+    moved = await services.users.get("555")
+    assert moved["role"] == "xodim" and moved["name"] == "Bobur usta"
+    # Telegram'dagi ism admin yozgan ismni almashtirmaydi
+    await services.users.touch(555, "Bobur T", "bobur")
+    assert (await services.users.get("555"))["name"] == "Bobur usta"
+    # rolli foydalanuvchi ustiga yozilmaydi; admin o'zini/OWNER ni ko'chira olmaydi
+    assert (await client.patch("/api/users/555", headers=hdr(ADMIN), json={"new_id": str(OMBOR)})).status == 409
+    assert (await client.patch(f"/api/users/{ADMIN}", headers=hdr(ADMIN), json={"new_id": "999"})).status == 400
+    assert (await client.patch("/api/users/555", headers=hdr(OMBOR), json={"name": "x"})).status == 403
