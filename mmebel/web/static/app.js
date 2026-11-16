@@ -1496,13 +1496,15 @@ function handoverSheet(o, mode) {
     const noteLabel = el("span", {}, defectMode ? "Kamchilik nima? (majburiy)" : "Qo'shimcha izoh");
     const form = el("div", { class: extra || defectMode ? "" : "hidden" });
     const thumbs = el("div", { class: "thumbs" });
-    const fileInput = el("input", { type: "file", accept: "image/jpeg,image/png", multiple: true, class: "hidden" });
-    const addPhoto = el("button", { class: "btn ghost", type: "button", on: { click: () => fileInput.click() } }, "📷 Skrinshot qo'shish (1–5 ta)");
+    // Rasm tanlash: tugma ichiga shaffof input qo'yilgan — foydalanuvchi bevosita inputni bosadi (JS click() ishonchsiz)
+    const fileInput = el("input", { type: "file", accept: "image/*", multiple: true, class: "file-overlay", "aria-label": "Skrinshot tanlash" });
+    const addPhoto = el("label", { class: "btn ghost file-btn" }, "📷 Skrinshot qo'shish (1–5 ta)", fileInput);
     const drawThumbs = () => {
       clear(thumbs);
       photos.forEach((p, i) => thumbs.appendChild(el("div", { class: "thumb-wrap" }, el("img", { class: "thumb", src: p.url, alt: `Rasm ${i + 1}` }),
         el("button", { class: "thumb-x", type: "button", "aria-label": "O'chirish", on: { click: () => { URL.revokeObjectURL(p.url); photos.splice(i, 1); drawThumbs(); } } }, "×"))));
-      addPhoto.disabled = photos.length >= 5;
+      fileInput.disabled = photos.length >= 5;
+      addPhoto.classList.toggle("is-disabled", photos.length >= 5);
     };
     fileInput.addEventListener("change", async () => {
       for (const f of Array.from(fileInput.files || [])) {
@@ -1512,7 +1514,7 @@ function handoverSheet(o, mode) {
       fileInput.value = "";
       drawThumbs();
     });
-    const cardBox = el("div", { class: "hidden" }, addPhoto, fileInput, thumbs);
+    const cardBox = el("div", { class: "hidden" }, addPhoto, thumbs);
     const cardBtn = el("button", { class: "btn ghost", type: "button", "aria-pressed": "false" }, "💳 To'lov karta orqali amalga oshirildi");
     cardBtn.addEventListener("click", () => {
       card = !card;
