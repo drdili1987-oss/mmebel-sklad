@@ -102,7 +102,13 @@ async def w_photo_upload(request):
         raise ServiceError("Faqat JPG yoki PNG rasm yuklash mumkin.")
     if request.content_length and request.content_length > MAX_IMAGE:
         raise ServiceError("Rasm hajmi 5 MB dan oshmasin.")
-    data = await request.content.read(MAX_IMAGE + 1)
+    # StreamReader.read(n) faqat birinchi bo'lakni qaytaradi (rasm kesilib qolardi) — oxirigacha o'qiymiz
+    buf = bytearray()
+    async for chunk in request.content.iter_chunked(64 * 1024):
+        buf += chunk
+        if len(buf) > MAX_IMAGE:
+            break
+    data = bytes(buf)
     if len(data) > MAX_IMAGE:
         raise ServiceError("Rasm hajmi 5 MB dan oshmasin.")
     if len(data) < 100:
@@ -159,7 +165,7 @@ async def w_return(request):
     """«Skladga qaytdi» — admin/omborchi tasdiqlaydi."""
     d = await body(request)
     res = await S(request).workers.request_return(actor(request), request.match_info["oid"],
-                                                  expense_yes=d.get("expense_yes"), expense=d.get("expense"),
+                                                  expense_yes=d.get("expense_yes", False), expense=d.get("expense"),
                                                   note=str(d.get("note", "")))
     await E(request).return_requested(res)
     return web.json_response({"ok": True})

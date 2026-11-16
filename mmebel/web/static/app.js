@@ -1061,6 +1061,12 @@ function userSheet(u) {
     const clientField = field("Diller kompaniyasi", client);
     const sync = () => clientField.classList.toggle("hidden", role.value !== "diller");
     role.addEventListener("change", sync); sync();
+    const delBtn = el("button", { class: "btn danger", type: "button" }, "Foydalanuvchini o'chirish");
+    delBtn.addEventListener("click", async () => {
+      if (!u || !(await confirmDlg(`${u.name || u.id} o'chirilsinmi? Ilovaga kira olmaydi (rol olib tashlanadi). Eski buyurtma va hisob tarixi saqlanadi.`))) return;
+      const r = await act(delBtn, () => api("DELETE", `/api/users/${encodeURIComponent(u.id)}`), "O'chirildi");
+      if (r) { close(); refresh(); }
+    });
     const btn = el("button", { class: "btn", type: "button" }, "Saqlash");
     btn.addEventListener("click", async () => {
       const newId = id.value.trim();
@@ -1079,7 +1085,8 @@ function userSheet(u) {
       field("Ismi", name), field("Telegram ID", id), field("Rol", role), clientField,
       u && u.phone ? el("p", { class: "muted small" }, `Telefon: +${u.phone}`) : null,
       el("p", { class: "muted small" }, "Telegram ID ni odam botga /id yozib biladi (telefon raqami emas!). Yangi rol 30 soniyagacha kuchga kiradi."),
-      el("div", { class: "actions" }, btn));
+      el("div", { class: "actions" }, btn),
+      u && !u.owner ? el("div", { class: "actions" }, delBtn) : null);
   });
 }
 
@@ -1385,34 +1392,19 @@ function wOrderSheet(o) {
   });
 }
 
-/* «Skladga qaytdi» -> «Xarajat bo'ldimi?» Ha: summa + sabab (majburiy). Admin/omborchi tasdiqlaydi */
+/* «Skladga qaytdi» — faqat izoh. Admin/omborchi tasdiqlaydi */
 function returnSheet(o) {
   sheet((close) => {
-    let yes = null;
-    const amount = el("input", { type: "number", min: "0.01", step: "0.01", inputmode: "decimal", placeholder: "Xarajat summasi, $" });
-    const note = el("textarea", { maxlength: "500", placeholder: "Nima uchun qaytdi, qanday xarajat chiqdi" });
-    const amountField = field("Xarajat summasi ($)", amount);
-    const noteLabel = el("span", {}, "Sabab / izoh");
-    const form = el("div", { class: "hidden" }, amountField, el("label", { class: "field" }, noteLabel, note));
-    const pick = (v) => {
-      yes = v; form.classList.remove("hidden");
-      amountField.classList.toggle("hidden", !v);
-      noteLabel.textContent = v ? "Sabab / izoh (majburiy)" : "Sabab / izoh (ixtiyoriy)";
-    };
+    const note = el("textarea", { maxlength: "500", placeholder: "Nima uchun qaytdi" });
     const save = el("button", { class: "btn", type: "button" }, "Saqlash");
     save.addEventListener("click", async () => {
-      if (yes === null) { toast("Xarajat bo'ldimi — «Ha» yoki «Yo'q».", true); return; }
-      if (yes && !(Number(amount.value) > 0)) { toast("Xarajat summasini kiriting.", true); amount.focus(); return; }
-      if (yes && !note.value.trim()) { toast("Sababini yozing.", true); note.focus(); return; }
       const r = await act(save, () => api("POST", `/api/w/orders/${encodeURIComponent(o.id)}/return`,
-        { expense_yes: yes, expense: yes ? Number(amount.value) : null, note: note.value.trim() }), "Yuborildi. Tasdiqlashni kuting.");
+        { expense_yes: false, note: note.value.trim() }), "Yuborildi. Tasdiqlashni kuting.");
       if (r) { close(); refresh(); }
     });
     return el("div", {}, el("h2", {}, "Skladga qaytdi"),
       el("p", { class: "muted small" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} · ${o.client_name}`),
-      el("p", { style: "font-weight:600;margin:8px 2px" }, "Xarajat bo'ldimi?"),
-      chips([true, false], null, pick, (x) => (x ? "Ha" : "Yo'q")),
-      form, el("p", { class: "muted small" }, "Xarajatni sex ko'taradi: tasdiqlangach summa kassangizdan ayiriladi."),
+      field("Izoh", note),
       el("div", { class: "actions" }, save));
   });
 }

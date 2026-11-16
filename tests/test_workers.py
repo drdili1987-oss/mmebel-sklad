@@ -437,3 +437,38 @@ async def test_worker_edit_needs_approval_and_is_audited(client):  # noqa: F811
     assert me["cash"] == 250
     p = await services.workers.payment(pid)
     assert p["amount"] == 250 and p["history"][0]["from"] == 300 and p["history"][0]["to"] == 250
+
+
+async def test_large_photo_upload_not_truncated(client):  # noqa: F811
+    """Katta rasm (bir necha bo'lak) kesilmasdan Telegram'ga yetib borishi kerak."""
+    seen = []
+    fake_photo_bot(client)
+    orig = client.app["events"].n.bot.send_photo
+
+    async def spy(chat_id, photo, **kw):
+        seen.append(len(photo.data))
+        return await orig(chat_id, photo, **kw)
+
+    client.app["events"].n.bot.send_photo = spy
+    await make_worker(client)
+    payload = b"\xff\xd8" + b"0" * 600_000
+    r = await client.post("/api/w/photos", headers={**hdr(WORKER_UID), "Content-Type": "image/jpeg"}, data=payload)
+    assert r.status == 201, await r.text()
+    assert seen == [len(payload)]
+    big = b"\xff\xd8" + b"0" * (5 * 1024 * 1024 + 10)
+    r = await client.post("/api/w/photos", headers={**hdr(WORKER_UID), "Content-Type": "image/jpeg"}, data=big)
+    assert r.status == 400
+
+
+async def test_return_note_only_and_admin_removes_user(client):  # noqa: F811
+    wid = await make_worker(client)
+    oid = (await (await new_order(client, "090", collect=100)).json())["id"]
+    assert (await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": wid})).status == 200
+    r = await client.post(f"/api/w/orders/{oid}/return", headers=hdr(WORKER_UID), json={"note": "mijoz uyda yo'q"})
+    assert r.status == 200, await r.text()
+    o = await (await client.get(f"/api/orders/{oid}", headers=hdr(ADMIN))).json()
+    assert o["ret"]["expense"] == 0 and o["ret"]["note"] == "mijoz uyda yo'q"
+    # faqat admin xodimni o'chira oladi
+    assert (await client.delete(f"/api/users/{WORKER_UID}", headers=hdr(OMBOR))).status == 403
+    assert (await client.delete(f"/api/users/{WORKER_UID}", headers=hdr(ADMIN))).status == 200
+    assert (await client.get("/api/w/me", headers=hdr(WORKER_UID))).status == 403
