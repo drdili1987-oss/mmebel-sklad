@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -42,6 +43,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var offline: LinearLayout
     private val baseUri: Uri by lazy { Uri.parse(BuildConfig.BASE_URL) }
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    /** <input type="file"> (skrinshot yuklash) uchun: WebView o'zi rasm tanlash oynasini ochmaydi. */
+    private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private val pickFiles = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        val uris = WebChromeClient.FileChooserParams.parseResult(res.resultCode, res.data)
+        fileCallback?.onReceiveValue(uris)
+        fileCallback = null
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -74,6 +83,22 @@ class MainActivity : ComponentActivity() {
         web.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView, newProgress: Int) {
                 progress.visibility = if (newProgress < 100) View.VISIBLE else View.GONE
+            }
+
+            override fun onShowFileChooser(
+                view: WebView, callback: ValueCallback<Array<Uri>>, params: WebChromeClient.FileChooserParams
+            ): Boolean {
+                fileCallback?.onReceiveValue(null)   // oldingi tugallanmagan so'rovni yopamiz
+                fileCallback = callback
+                return try {
+                    pickFiles.launch(params.createIntent())
+                    true
+                } catch (e: ActivityNotFoundException) {
+                    fileCallback = null
+                    callback.onReceiveValue(null)
+                    Toast.makeText(this@MainActivity, "Rasm tanlash ilovasi topilmadi.", Toast.LENGTH_LONG).show()
+                    true
+                }
             }
         }
         web.webViewClient = PanelClient()
