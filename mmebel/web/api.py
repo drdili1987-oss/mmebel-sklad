@@ -752,6 +752,7 @@ async def user_edit(request):
 @routes.delete("/api/users/{uid}")
 @requires(ROLE_ADMIN)
 async def user_revoke(request):
+    await S(request).workers.release_user(request.match_info["uid"])
     await S(request).users.remove(actor(request), request.match_info["uid"])
     await S(request).sessions.revoke_user(request.match_info["uid"])
     await S(request).push.unregister_user(request.match_info["uid"])

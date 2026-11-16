@@ -1063,7 +1063,7 @@ function userSheet(u) {
     role.addEventListener("change", sync); sync();
     const delBtn = el("button", { class: "btn danger", type: "button" }, "Foydalanuvchini o'chirish");
     delBtn.addEventListener("click", async () => {
-      if (!u || !(await confirmDlg(`${u.name || u.id} o'chirilsinmi? Ilovaga kira olmaydi (rol olib tashlanadi). Eski buyurtma va hisob tarixi saqlanadi.`))) return;
+      if (!u || !(await confirmDlg(`${u.name || u.id} ro'yxatdan o'chirilsinmi? Ilovaga kira olmaydi. Eski buyurtma va hisob tarixi saqlanadi.`))) return;
       const r = await act(delBtn, () => api("DELETE", `/api/users/${encodeURIComponent(u.id)}`), "O'chirildi");
       if (r) { close(); refresh(); }
     });

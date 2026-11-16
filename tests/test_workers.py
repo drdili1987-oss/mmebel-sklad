@@ -470,5 +470,19 @@ async def test_return_note_only_and_admin_removes_user(client):  # noqa: F811
     assert o["ret"]["expense"] == 0 and o["ret"]["note"] == "mijoz uyda yo'q"
     # faqat admin xodimni o'chira oladi
     assert (await client.delete(f"/api/users/{WORKER_UID}", headers=hdr(OMBOR))).status == 403
+    assert (await client.delete(f"/api/users/{WORKER_UID}", headers=hdr(ADMIN))).status == 409  # buyurtma hali yig'uvchida
+    assert (await client.post(f"/api/orders/{oid}/return/resolve", headers=hdr(OMBOR), json={"approve": True})).status == 200
     assert (await client.delete(f"/api/users/{WORKER_UID}", headers=hdr(ADMIN))).status == 200
     assert (await client.get("/api/w/me", headers=hdr(WORKER_UID))).status == 403
+    ids = [u["id"] for u in (await (await client.get("/api/users", headers=hdr(ADMIN))).json())["items"]]
+    assert str(WORKER_UID) not in ids
+
+
+async def test_remove_user_blocked_with_cash_or_orders(client):  # noqa: F811
+    wid = await make_worker(client)
+    oid = (await (await new_order(client, "091", collect=100)).json())["id"]
+    assert (await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": wid})).status == 200
+    r = await client.delete(f"/api/users/{WORKER_UID}", headers=hdr(ADMIN))
+    assert r.status == 409 and "buyurtma" in (await r.json())["error"]
+    ids = [u["id"] for u in (await (await client.get("/api/users", headers=hdr(ADMIN))).json())["items"]]
+    assert str(WORKER_UID) in ids

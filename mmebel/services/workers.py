@@ -248,6 +248,23 @@ class WorkerService:
         await self._audit(actor_id, "order_unassign", {"order_id": order_id})
         return res
 
+    async def release_user(self, uid) -> None:
+        """Foydalanuvchi o'chirilishidan oldin: kassada pul yoki yig'uvchida buyurtma qolgan bo'lsa — to'xtatadi.
+        Yig'uvchi profili faol emas qilinadi (tarix va kassa yozuvlari saqlanadi)."""
+        uid = str(uid)
+        if money(await self.store.get(f"cash/{staff_holder(uid)}") or 0) != 0:
+            raise Conflict("Kassasida pul bor — avval topshirib/qabul qilib, hisobni 0 qiling.")
+        found = await self.by_uid(uid)
+        if not found:
+            return
+        wid, _ = found
+        if money(await self.store.get(f"cash/{worker_holder(wid)}") or 0) != 0:
+            raise Conflict("Yig'uvchi kassasida pul bor — avval pulni topshirtiring/hisobni 0 qiling.")
+        active, _done = await self.orders_for(wid)
+        if active:
+            raise Conflict("Yig'uvchida buyurtma bor — avval ularni topshirtiring yoki skladga qaytaring.")
+        await self.store.update(f"workers/{wid}", {"active": False, "uid": ""})
+
     async def orders_for(self, wid: str, days: int = 45) -> tuple[list, list]:
         """(faol — yetkazilishi kerak, oxirgi yetkazilganlar)."""
         from datetime import timedelta

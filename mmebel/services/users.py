@@ -248,6 +248,12 @@ class UserService:
             raise ServiceError("OWNER_IDS dagi foydalanuvchini o'chirib bo'lmaydi.")
         if not await self.get(uid):
             raise NotFound("Foydalanuvchi topilmadi.")
-        await self.store.update(f"users/{uid}", {"role": ROLE_MIJOZ, "client_name": None})
-        await self.store.push("audit_log", {"action": "revoke", "user_id": uid, "by": str(actor_id), "at": now_str()})
+        rec = await self.get(uid) or {}
+        updates = {f"users/{uid}": None, f"unread/{uid}": None, f"uploads/{uid}": None}
+        phone = rec.get("phone")
+        if phone and str(await self.store.get(f"phones/{phone}") or "") == uid:
+            updates[f"phones/{phone}"] = None
+        await self.store.update("", updates)
+        await self.store.push("audit_log", {"action": "delete_user", "user_id": uid, "name": rec.get("name") or "",
+                                            "role": rec.get("role") or "", "by": str(actor_id), "at": now_str()})
         self.invalidate()
