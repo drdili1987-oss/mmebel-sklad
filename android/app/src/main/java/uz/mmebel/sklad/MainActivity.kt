@@ -72,7 +72,7 @@ class MainActivity : ComponentActivity() {
             javaScriptEnabled = true
             domStorageEnabled = true            // sessiya tokeni localStorage'da
             allowFileAccess = false
-            allowContentAccess = false
+            allowContentAccess = true           // rasm tanlash oynasi content:// manzil qaytaradi — o'qish uchun kerak
             setSupportMultipleWindows(false)
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             cacheMode = WebSettings.LOAD_DEFAULT

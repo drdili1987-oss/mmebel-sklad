@@ -1458,7 +1458,9 @@ function payEditSheet(p) {
 
 /* Rasmni telefonda kichraytirib (≤1600px, JPEG) yuklaymiz — tez va 5 MB dan oshmaydi */
 async function compressImage(file) {
-  if (!/^image\//.test(file.type)) throw new Error("Faqat rasm yuklash mumkin.");
+  // Android WebView ba'zi fayllar uchun type ni bo'sh beradi — bunda ruxsat beramiz, rasm ekanini dekoder aniqlaydi
+  if (file.type && !/^image\//.test(file.type)) throw new Error(`Faqat rasm yuklash mumkin (${file.type}).`);
+  if (!file.size) throw new Error("Rasm o'qilmadi (hajmi 0). Boshqa rasm tanlang.");
   const bmp = await (window.createImageBitmap ? createImageBitmap(file).catch(() => null) : null);
   const src = bmp || await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("Rasm ochilmadi.")); i.src = URL.createObjectURL(file); });
   const k = Math.min(1, 1600 / Math.max(src.width, src.height));
@@ -1509,7 +1511,7 @@ function handoverSheet(o, mode) {
     fileInput.addEventListener("change", async () => {
       for (const f of Array.from(fileInput.files || [])) {
         if (photos.length >= 5) { toast("Ko'pi bilan 5 ta rasm.", true); break; }
-        try { const blob = await compressImage(f); photos.push({ blob, url: URL.createObjectURL(blob) }); } catch (e) { toast(e.message, true); }
+        try { const blob = await compressImage(f); photos.push({ blob, url: URL.createObjectURL(blob) }); } catch (e) { toast(`${e.message} [${f.name || "?"}, ${f.type || "tur yo'q"}, ${f.size}B]`, true); }
       }
       fileInput.value = "";
       drawThumbs();
