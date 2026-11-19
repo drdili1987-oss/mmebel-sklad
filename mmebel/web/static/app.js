@@ -174,11 +174,11 @@ function uzsInput(opts) {
     const v = Number(input.value);
     if (input.value === "" || isNaN(v)) { hint.textContent = "Ming so'mda yozing: 48 534 = 48 534 000 so'm"; return; }
     const full = Math.round(v * 1000), r = FX_RATE;
-    hint.textContent = r ? `${uzs(full)} ≈ ${money(full / r)}  (kurs: 1$ = ${uzs(r)})` : uzs(full);
+    hint.textContent = r && S.me && S.me.role === "admin" ? `${uzs(full)} ≈ ${money(full / r)}  (kurs: 1$ = ${uzs(r)})` : uzs(full);
   };
   input.addEventListener("input", upd);
   upd();
-  fxRate().then(upd);
+  if (S.me && S.me.role === "admin") fxRate().then(upd);
   return { input, hint, node: el("div", {}, input, hint), value: () => (input.value === "" ? NaN : Number(input.value)) };
 }
 

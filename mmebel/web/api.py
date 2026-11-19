@@ -673,6 +673,7 @@ async def fx_legacy_run(request):
 
 
 @routes.get("/api/fx/convert")
+@requires(ROLE_ADMIN)
 async def fx_convert(request):
     """So'mni (ming) joriy kurs bilan $ ga o'girib ko'rsatadi — kiritish oynasidagi oldindan ko'rish uchun."""
     rate = await S(request).finance.current_rate()

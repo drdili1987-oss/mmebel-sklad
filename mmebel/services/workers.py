@@ -664,7 +664,7 @@ class WorkerService:
         if amt > 0 and pay["method"] == "naqd":
             await self._cash_add(worker_holder(wid), amt, {
                 "kind": "collect", "order_id": order_id, "pay_id": pid, "serial": order.get("serial", ""),
-                "text": f"{human_date(ts)}: mijozdan {fmt_uzs(pay['uzs'])} ({fmt_usd(amt)}) naqd olindi ({order.get('product_id', '')}"
+                "text": f"{human_date(ts)}: mijozdan {fmt_uzs(pay['uzs'])} naqd olindi ({order.get('product_id', '')}"
                         + (f", №{order['serial']}" if order.get("serial") else "") + ")"})
         return rec
 

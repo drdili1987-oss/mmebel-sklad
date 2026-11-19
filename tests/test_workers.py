@@ -523,7 +523,8 @@ async def test_fx_endpoints_admin_only_and_convert(client):  # noqa: F811
     r = await client.post("/api/fx", headers=hdr(ADMIN), json={"rate": 12500})
     assert r.status == 200 and (await r.json())["rate"] == 12500
     assert (await client.post("/api/fx", headers=hdr(ADMIN), json={"rate": 3})).status == 400
-    r = await client.get("/api/fx/convert?ming=48534", headers=hdr(OMBOR))
+    assert (await client.get("/api/fx/convert?ming=1", headers=hdr(OMBOR))).status == 403   # kurs faqat adminga
+    r = await client.get("/api/fx/convert?ming=48534", headers=hdr(ADMIN))
     j = await r.json()
     assert j["uzs"] == 48_534_000 and j["rate"] == 12500 and j["usd"] == 3882.72
 

@@ -55,12 +55,17 @@ def w_order(oid: str, o: dict) -> dict:
     }
 
 
-def pay_out(p: dict) -> dict:
+def pay_out(p: dict, admin: bool = False) -> dict:
     out = {k: p.get(k) for k in ("pay_id", "order_id", "client", "serial", "product_id", "variant", "worker_id",
-                                 "worker_name", "kind", "ts", "correct", "amount", "uzs", "rate", "method", "note", "expected",
+                                 "worker_name", "kind", "ts", "correct", "amount", "uzs", "method", "note", "expected",
                                  "expected_uzs",
                                  "edit_req", "history")}
     out["photos"] = len(p.get("photos") or [])
+    if admin:
+        out["rate"] = p.get("rate")
+    else:   # kurs faqat adminga ko'rinadi
+        if out.get("edit_req"):
+            out["edit_req"] = {k: v for k, v in out["edit_req"].items() if k != "rate"}
     return out
 
 
@@ -293,7 +298,7 @@ async def order_unassign(request):
 @requires(ROLE_ADMIN, ROLE_OMBORCHI)
 async def order_payments(request):
     rows = await S(request).workers.payments(order_id=request.match_info["oid"])
-    return web.json_response({"items": [pay_out(p) for p in rows]})
+    return web.json_response({"items": [pay_out(p, request["role"] == ROLE_ADMIN) for p in rows]})
 
 
 @routes.get("/api/approvals")
