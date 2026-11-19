@@ -910,6 +910,7 @@ async function accountSheet(client) {
       el("div", { class: "code-big " + (a.debt > 0 ? "pos" : a.debt < 0 ? "neg" : "") }, money(a.debt)),
       el("p", { class: "muted small" }, a.debt < 0 ? "Diller oldindan to'lagan (ortiqcha to'lov)." :
         a.partial_total ? `Qisman to'lovlar hisobga olingan: −${money(a.partial_total)}` : "Joriy qarz"));
+    if (a.last_settlement) box.appendChild(lastSettlementNote(a.last_settlement));
     const payBtn = el("button", { class: "btn", type: "button", on: { click: () => partialSheet(client, null, reopen) } }, "💵 To'lov qabul qilish");
     const actions = el("div", { class: "actions" }, payBtn);
     if (a.unsettled.length) {
@@ -918,6 +919,10 @@ async function accountSheet(client) {
         const r = await act(e.target, () => api("POST", `/api/accounts/${encodeURIComponent(client)}/settle_all`), "Hammasi hisob-kitob qilindi");
         if (r) { reopen(); }
       } } }, "💳 Barchasi to'landi"));
+    }
+    if (a.unsettled.length) {
+      actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => rangeSettleSheet(client, a.last_settlement, reopen) } },
+        "🗓 Sana bo'yicha to'landi"));
     }
     actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => reportSheet(client) } }, "📄 Yetkazilganlar: PDF / nusxa"));
     box.appendChild(actions);
@@ -950,6 +955,52 @@ async function accountSheet(client) {
         el("div", { class: "sub" }, `${fdate(h.accounting_date)}${h.note ? " · " + h.note : ""}${h.settled ? " · yopilgan" : ""}`)),
       el("div", { class: "end" }, money(h.accounting_type === "toliq" ? h.total_price : h.partial_payment))))));
     return box;
+  });
+}
+
+/* Eslatma: oxirgi hisob-kitob qaysi sanalar oralig'ida qilingan */
+function lastSettlementNote(ls) {
+  const when = ls.at ? ` (${fdate(ls.at)} kuni bosilgan)` : "";
+  return el("p", { class: "muted small" }, `🕘 Oxirgi hisob-kitob: ${fdate(ls.from)} – ${fdate(ls.to)}, ${ls.count} ta mebel${when}`);
+}
+
+/* Sana bo'yicha «To'landi»: avval ko'rinish, keyin tasdiqlash. Yetkazilgan sana bo'yicha, ikkala chegara ham kiradi. */
+function rangeSettleSheet(client, last, onDone) {
+  sheet((close) => {
+    const from = el("input", { type: "date" });
+    const to = el("input", { type: "date" });
+    const result = el("div", {});
+    const preview = el("button", { class: "btn", type: "button" }, "Ko'rish");
+    const params = () => ({ from: from.value, to: to.value });
+    const reset = () => clear(result);
+    from.addEventListener("change", reset);
+    to.addEventListener("change", reset);
+    preview.addEventListener("click", async () => {
+      if (!from.value || !to.value) { toast("Ikkala sanani tanlang.", true); return; }
+      const p = await act(preview, () => api("POST", `/api/accounts/${encodeURIComponent(client)}/settle_range`, params()));
+      if (!p) return;
+      clear(result);
+      if (!p.count) { result.appendChild(empty("Bu sanalarda hisob-kitob qilinmagan yetkazilgan mebel yo'q.")); return; }
+      result.appendChild(el("div", { class: "list" },
+        el("div", { class: "row" }, el("div", { class: "grow" }, "Mebellar soni"), el("div", { class: "end" }, `${p.count} ta`)),
+        el("div", { class: "row" }, el("div", { class: "grow" }, "Narxi jami"), el("div", { class: "end" }, money(p.net_total))),
+        p.paid_total ? el("div", { class: "row" }, el("div", { class: "grow" }, "Allaqachon to'langan"), el("div", { class: "end" }, "−" + money(p.paid_total))) : null,
+        p.from_advance ? el("div", { class: "row" }, el("div", { class: "grow" }, "Umumiy to'lovdan ayriladi"), el("div", { class: "end" }, "−" + money(p.from_advance))) : null,
+        el("div", { class: "row" }, el("div", { class: "grow" }, el("b", {}, "Olinadigan summa")), el("div", { class: "end" }, el("b", {}, money(p.to_receive))))));
+      const confirmBtn = el("button", { class: "btn", type: "button" }, "✅ Tasdiqlash: to'landi deb belgilash");
+      confirmBtn.addEventListener("click", async () => {
+        if (!(await confirmDlg(`${client}: ${fdate(p.from)} – ${fdate(p.to)} oralig'idagi ${p.count} ta mebel to'landi deb belgilansinmi? Buni qaytarib bo'lmaydi.`))) return;
+        const r = await act(confirmBtn, () => api("POST", `/api/accounts/${encodeURIComponent(client)}/settle_range`, { ...params(), confirm: true }),
+          "Hisob-kitob qilindi");
+        if (r) { close(); onDone(); }
+      });
+      result.appendChild(el("div", { class: "actions" }, confirmBtn));
+    });
+    return el("div", {}, el("h2", {}, "Sana bo'yicha to'landi"),
+      last ? lastSettlementNote(last) : el("p", { class: "muted small" }, "Hali sana bo'yicha hisob-kitob qilinmagan."),
+      el("p", { class: "muted small" }, "Shu sanalar oralig'ida yetkazilgan, hali yopilmagan mebellar to'landi bo'ladi."),
+      field("Dan (yetkazilgan sana)", from), field("Gacha (shu kun ham kiradi)", to),
+      el("div", { class: "actions" }, preview), result);
   });
 }
 

@@ -292,3 +292,65 @@ async def test_previous_settlement_not_counted_again(svc):
         await svc.finance.settle_order(ADMIN, "Umid", o1["order_id"])
     third = await svc.finance.settle_all(ADMIN, "Umid")
     assert third["settled"] == 0 and third["received"] == 0 and third["debt"] == 0
+
+
+async def _delivered(svc, product, day, price=6):
+    o = await svc.orders.create(ADMIN, client_name="Umid", product=product, amount=1, due_date=due())
+    await svc.orders.deliver(ADMIN, o["order_id"], driver="Baxrom", price=price)
+    await svc.store.update(f"orders/{o['order_id']}", {"delivered_at": f"{day} 10:00:00"})
+    return o["order_id"]
+
+
+@pytest.mark.asyncio
+async def test_settle_range_only_selected_dates_and_not_twice(svc):
+    from datetime import date
+    a = await _delivered(svc, "BF09", "2026-11-01")      # 200$ — chegara (kiradi)
+    b = await _delivered(svc, "BF07", "2026-11-19")      # 340$ — chegara (kiradi)
+    c = await _delivered(svc, "BF09", "2026-11-20")      # 200$ — oraliqdan tashqarida
+    await svc.finance.partial_payment(ADMIN, "Umid", 50, order_id=a)
+    d1, d2 = date(2026, 11, 1), date(2026, 11, 19)
+
+    pv = await svc.finance.settle_range(ADMIN, "Umid", d1, d2)          # faqat ko'rinish
+    assert pv["count"] == 2 and pv["net_total"] == 540 and pv["paid_total"] == 50 and pv["to_receive"] == 490
+    assert (await svc.orders.get(a))["status"] != ST_SETTLED             # hech narsa o'zgarmagan
+    assert await svc.finance.last_settlement("Umid") is None
+
+    res = await svc.finance.settle_range(ADMIN, "Umid", d1, d2, confirm=True)
+    assert res["settled"] == 2 and res["received"] == 490 and res["debt"] == 200
+    assert (await svc.orders.get(a))["status"] == ST_SETTLED
+    assert (await svc.orders.get(b))["status"] == ST_SETTLED
+    assert (await svc.orders.get(c))["status"] != ST_SETTLED             # sanasi tashqarida — tegilmagan
+    last = await svc.finance.last_settlement("Umid")
+    assert last["from"] == "2026-11-01" and last["to"] == "2026-11-19" and last["count"] == 2 and last["kind"] == "davr"
+
+    # xuddi shu oraliq qayta tanlansa — hech narsa qayta sanalmaydi
+    pv2 = await svc.finance.settle_range(ADMIN, "Umid", d1, d2)
+    assert pv2["count"] == 0 and pv2["to_receive"] == 0
+    with pytest.raises(Conflict):
+        await svc.finance.settle_range(ADMIN, "Umid", d1, d2, confirm=True)
+    assert (await svc.finance.account("Umid")).debt == 200
+
+
+@pytest.mark.asyncio
+async def test_settle_range_uses_unlinked_payment_once_and_validates(svc):
+    from datetime import date
+    await _delivered(svc, "BF09", "2026-11-05")           # 200$
+    await _delivered(svc, "BF09", "2026-11-25")           # 200$ — tashqarida
+    await svc.finance.partial_payment(ADMIN, "Umid", 150)  # umumiy to'lov
+    pv = await svc.finance.settle_range(ADMIN, "Umid", date(2026, 11, 1), date(2026, 11, 10))
+    assert pv["from_advance"] == 150 and pv["to_receive"] == 50
+    res = await svc.finance.settle_range(ADMIN, "Umid", date(2026, 11, 1), date(2026, 11, 10), confirm=True)
+    assert res["received"] == 50 and res["debt"] == 200   # 150$ avans ikki marta ayirilmadi
+    with pytest.raises(ServiceError):
+        await svc.finance.settle_range(ADMIN, "Umid", date(2026, 11, 10), date(2026, 11, 1))
+    with pytest.raises(ServiceError):
+        await svc.finance.settle_range(ADMIN, "Umid", None, date(2026, 11, 1))
+
+
+@pytest.mark.asyncio
+async def test_settle_all_records_last_settlement(svc):
+    await _delivered(svc, "BF09", "2026-11-03")
+    await _delivered(svc, "BF09", "2026-11-12")
+    await svc.finance.settle_all(ADMIN, "Umid")
+    last = await svc.finance.last_settlement("Umid")
+    assert last["from"] == "2026-11-03" and last["to"] == "2026-11-12" and last["kind"] == "hammasi"

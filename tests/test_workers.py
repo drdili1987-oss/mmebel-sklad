@@ -486,3 +486,17 @@ async def test_remove_user_blocked_with_cash_or_orders(client):  # noqa: F811
     assert r.status == 409 and "buyurtma" in (await r.json())["error"]
     ids = [u["id"] for u in (await (await client.get("/api/users", headers=hdr(ADMIN))).json())["items"]]
     assert str(WORKER_UID) in ids
+
+
+async def test_settle_range_api_admin_only(client):  # noqa: F811
+    url = "/api/accounts/Umid/settle_range"
+    body = {"from": "2026-11-01", "to": "2026-11-19"}
+    assert (await client.post(url, headers=hdr(OMBOR), json=body)).status == 403
+    r = await client.post(url, headers=hdr(ADMIN), json=body)
+    assert r.status == 200 and (await r.json())["count"] == 0
+    r = await client.post(url, headers=hdr(ADMIN), json={"from": "bad", "to": "2026-11-19"})
+    assert r.status == 400
+    r = await client.post(url, headers=hdr(ADMIN), json={**body, "confirm": True})
+    assert r.status == 409
+    acc = await (await client.get("/api/accounts/Umid", headers=hdr(ADMIN))).json()
+    assert acc["last_settlement"] is None

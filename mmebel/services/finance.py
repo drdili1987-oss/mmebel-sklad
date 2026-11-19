@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import date
 
 from ..constants import (
     DEBT_EXCLUDED_STATUSES,
@@ -16,7 +17,9 @@ from ..constants import (
     ST_SETTLED,
 )
 from ..store import Store
-from ..utils import clean_text, is_valid_key, iter_records, money, now_str, parse_number, product_key, product_label
+from ..utils import (
+    clean_text, is_valid_key, iter_records, money, now_str, parse_date, parse_number, product_key, product_label,
+)
 from .errors import Conflict, NotFound, ServiceError, run_tx
 
 MAX_PAYMENT = 10_000_000
@@ -191,6 +194,14 @@ class FinanceService:
         row = next((r for r in acc.unsettled if r["order_id"] == order_id), None)
         if not row:
             raise Conflict("Bu buyurtma hisob-kitob uchun mavjud emas (allaqachon yopilgan yoki yetkazilmagan).")
+        received, consumed = await self._settle_row(actor_id, client, row)
+        new_debt = await self.recalc(client)
+        return {"order_id": order_id, "net": row["net"], "received": received, "from_advance": consumed,
+                "debt": new_debt}
+
+    async def _settle_row(self, actor_id, client: str, row: dict) -> tuple[float, float]:
+        """Bitta yetkazilgan buyurtmani yopadi. (olingan pul, umumiy to'lovdan yechilgan) qaytaradi."""
+        order_id = row["order_id"]
 
         def tx(cur):
             if cur in DEBT_EXCLUDED_STATUSES:
@@ -219,9 +230,69 @@ class FinanceService:
                 "type": "Kirim", "amount": received, "timestamp": ts,
                 "note": f"Hisob kitob qilindi: {order_id} ({product_label(order)})",
             })
-        new_debt = await self.recalc(client)
-        return {"order_id": order_id, "net": row["net"], "received": received, "from_advance": consumed,
-                "debt": new_debt}
+        return received, consumed
+
+    async def _free_unlinked_total(self, client: str) -> float:
+        history = await self.store.get(f"accounting_history/{client}") or {}
+        return money(sum(money(h.get("partial_payment") or 0) for _, h in iter_records(history)
+                         if h.get("accounting_type") == "qisman" and not h.get("settled") and not h.get("order_id")))
+
+    async def last_settlement(self, client: str) -> dict | None:
+        """Oxirgi hisob-kitob (sanalar oralig'i) — eslatma uchun."""
+        raw = await self.store.get(f"settlements/{client}") or {}
+        rows = [v for _, v in iter_records(raw) if isinstance(v, dict)]
+        return max(rows, key=lambda v: v.get("at", "")) if rows else None
+
+    async def _record_settlement(self, actor_id, client: str, start: str, end: str, count: int,
+                                 received: float, kind: str) -> None:
+        await self.store.push(f"settlements/{client}", {
+            "from": start, "to": end, "count": count, "received": received, "kind": kind,
+            "at": now_str(), "by": str(actor_id),
+        })
+
+    async def settle_range(self, actor_id, client: str, start: date | None, end: date | None, *,
+                           confirm: bool = False) -> dict:
+        """Yetkazilgan sana oralig'idagi (ikkala chegara ham kiradi) hali yopilmagan buyurtmalarni yopadi.
+
+        confirm=False — faqat ko'rinish (hech narsa o'zgarmaydi). Oldin yopilganlar qayta olinmaydi.
+        """
+        if not start or not end:
+            raise ServiceError("Sanalarni to'g'ri kiriting (dan va gacha).")
+        if start > end:
+            raise ServiceError("Boshlanish sanasi tugash sanasidan keyin bo'lmasin.")
+        acc = await self.account(client, save=False)
+        rows = []
+        for r in acc.unsettled:
+            d = parse_date(r.get("delivered_at"))
+            if d and start <= d <= end:
+                rows.append(r)
+        rows.sort(key=lambda r: str(r.get("delivered_at") or ""))
+        remaining = money(sum(max(0.0, r["net"] - r["paid_partial"]) for r in rows))
+        from_advance = money(min(remaining, await self._free_unlinked_total(client)))
+        preview = {
+            "from": start.isoformat(), "to": end.isoformat(), "count": len(rows),
+            "net_total": money(sum(r["net"] for r in rows)),
+            "paid_total": money(sum(r["paid_partial"] for r in rows)),
+            "from_advance": from_advance, "to_receive": money(remaining - from_advance),
+        }
+        if not confirm:
+            return preview
+        if not rows:
+            raise Conflict("Bu sanalarda hisob-kitob qilinmagan yetkazilgan buyurtma yo'q.")
+        settled = skipped = 0
+        received = 0.0
+        for r in rows:
+            try:
+                rec, _ = await self._settle_row(actor_id, client, r)
+            except Conflict:      # bu orada boshqa joydan yopilgan bo'lsa — o'tkazib yuboramiz
+                skipped += 1
+                continue
+            settled += 1
+            received = money(received + rec)
+        if settled:
+            await self._record_settlement(actor_id, client, preview["from"], preview["to"], settled, received, "davr")
+        debt = await self.recalc(client)
+        return {**preview, "settled": settled, "skipped": skipped, "received": received, "debt": debt}
 
     async def _consume_unlinked(self, client: str, need: float, order_id: str, ts: str) -> float:
         """Umumiy (buyurtmaga bog'lanmagan) qisman to'lovlardan `need` gacha yechadi (eskisidan boshlab).
@@ -332,6 +403,10 @@ class FinanceService:
         received = money(max(0.0, acc.debt))
         if updates:
             await self.store.update("", updates)
+        dates = sorted(d for r in acc.unsettled if (d := parse_date(r.get("delivered_at"))))
+        if settled and dates:
+            await self._record_settlement(actor_id, client, dates[0].isoformat(), dates[-1].isoformat(),
+                                          settled, received, "hammasi")
         if received > 0:
             await self.store.push(f"transactions/clients/{client}", {
                 "type": "Kirim", "amount": received, "timestamp": ts,

@@ -619,7 +619,8 @@ async def debts(request):
 async def account(request):
     client = request.match_info["client"]
     acc = await S(request).finance.account(client)
-    return web.json_response({**acc.to_dict(), "history": (await S(request).finance.history(client))[:200],
+    return web.json_response({**acc.to_dict(), "last_settlement": await S(request).finance.last_settlement(client),
+                              "history": (await S(request).finance.history(client))[:200],
                               "transactions": (await S(request).finance.client_transactions(client))[:200]})
 
 
@@ -638,6 +639,16 @@ async def account_partial(request):
     debt = await S(request).finance.partial_payment(actor(request), request.match_info["client"], d.get("amount"),
                                                     order_id=d.get("order_id") or None, note=d.get("note", ""))
     return web.json_response({"debt": debt})
+
+
+@routes.post("/api/accounts/{client}/settle_range")
+@requires(ROLE_ADMIN)
+async def account_settle_range(request):
+    d = await body(request)
+    res = await S(request).finance.settle_range(
+        actor(request), request.match_info["client"], parse_date(d.get("from")), parse_date(d.get("to")),
+        confirm=bool(d.get("confirm")))
+    return web.json_response(res)
 
 
 @routes.post("/api/accounts/{client}/settle_all")
