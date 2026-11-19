@@ -33,7 +33,7 @@ from ..utils import (
     product_label,
 )
 from .errors import Conflict, NotFound, ServiceError, run_tx
-from .finance import order_amount, order_client, order_gross, order_net
+from .finance import order_amount, order_client, order_gross, order_net, to_usd
 
 MAX_AMOUNT = 10_000
 
@@ -106,7 +106,7 @@ class OrderService:
         if not client_name or not is_valid_key(client_name):
             raise ServiceError("Mijoz nomi bo'sh yoki unda . $ # [ ] / belgilari bor.")
         serial_txt = await self._check_serial(serial, client_name)
-        collect_v = self._parse_collect(collect)
+        collect_v, collect_uzs = await self._collect_fields(collect)
         name = clean_text(product, 60)
         pid = product_key(name)
         if not pid or not any(c.isalnum() for c in pid) or any(ord(c) < 32 for c in name):
@@ -167,6 +167,7 @@ class OrderService:
             record["serial"] = serial_txt
         if collect_v is not None:
             record["collect"] = collect_v
+            record["collect_uzs"] = collect_uzs
         if changed is True and source != "diller":
             record["changed"] = True  # admin belgilagan: omborchi/xodimda «O'zgarishli» bo'limiga tushadi
         if client_tg_id is not None:
@@ -187,15 +188,16 @@ class OrderService:
             raise ServiceError("Narx noto'g'ri.")
         return money(unit)
 
-    @staticmethod
-    def _parse_collect(collect) -> float | None:
-        """Mijozdan olinadigan qoldiq ($): bo'sh bo'lsa — belgilanmagan."""
+    async def _collect_fields(self, collect) -> tuple[float | None, int | None]:
+        """Mijozdan olinadigan qoldiq «ming so'm» da kiritiladi (48 534 = 48 534 000 so'm).
+        Qaytaradi: (joriy kursdagi $ ekvivalenti, so'm). Bo'sh bo'lsa — belgilanmagan."""
         if collect in (None, ""):
-            return None
+            return None, None
         v = parse_number(collect)
         if v is None or v < 0 or v > 10_000_000:
             raise ServiceError("Mijozdan olinadigan qoldiq summasi noto'g'ri.")
-        return money(v)
+        rate = await self.finance.current_rate()
+        return to_usd(v, rate), int(round(v * 1000))
 
     async def _check_serial(self, serial, client_name: str, exclude_id: str | None = None) -> str:
         """Tartib raqam qo'lda kiritiladi; bitta diller ichida takrorlanmaydi."""
@@ -316,10 +318,14 @@ class OrderService:
                 updates["serial"] = s_txt
                 changes["serial"] = s_txt or "—"
         if collect is not None:
-            c_val = self._parse_collect(collect)
-            if c_val != (money(order["collect"]) if order.get("collect") not in (None, "") else None):
+            c_val, c_uzs = await self._collect_fields(collect)
+            old_uzs = order.get("collect_uzs")
+            if old_uzs is None and order.get("collect") not in (None, ""):
+                old_uzs = None      # eski (dollarlik) yozuv: har qanday yangi qiymat o'zgarish hisoblanadi
+            if c_uzs != (int(old_uzs) if old_uzs not in (None, "") else None):
                 updates["collect"] = c_val
-                changes["collect"] = f"{c_val:g}$" if c_val is not None else "—"
+                updates["collect_uzs"] = c_uzs
+                changes["collect"] = f"{c_uzs:,}".replace(",", " ") + " so'm" if c_uzs is not None else "—"
         status = order.get("status")
         only_meta = amount is None and due_date is None and comment is None and changed is None and product is None
         if status not in ACTIVE_STATUSES and not only_meta:

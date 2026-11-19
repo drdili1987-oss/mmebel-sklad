@@ -385,3 +385,49 @@ async def test_settlement_history_batches_and_pdf(svc):
     import io
     text = "".join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(pdf)).pages)
     assert "01.11.2026" in text and "noma'lum" in text
+
+
+# ---------- so'm va dollar kursi ----------
+@pytest.mark.asyncio
+async def test_rate_admin_set_latest_stays_and_validates(svc):
+    assert await svc.finance.current_rate() == 12000          # kiritilmagan — vaqtincha 12 000
+    await svc.finance.set_rate(ADMIN, "12 500")
+    assert await svc.finance.current_rate() == 12500
+    await svc.finance.set_rate(ADMIN, 12700)
+    info = await svc.finance.fx_info()
+    assert info["rate"] == 12700 and info["is_set"] and len(info["log"]) == 2
+    for bad in (0, 5, -1, "abc", 10_000_000):
+        with pytest.raises(ServiceError):
+            await svc.finance.set_rate(ADMIN, bad)
+    assert await svc.finance.current_rate() == 12700          # noto'g'ri qiymat kursni buzmadi
+
+
+@pytest.mark.asyncio
+async def test_uzs_payment_frozen_at_entry_rate(svc):
+    from mmebel.services.finance import entry_usd, entry_uzs
+    o = await _delivered(svc, "BF07", "2026-11-05")                      # 340$
+    await svc.finance.set_rate(ADMIN, 12500)
+    await svc.finance.partial_payment(ADMIN, "Umid", None, order_id=o, uzs_ming=1250)   # 1 250 000 so'm = 100$
+    await svc.finance.set_rate(ADMIN, 13000)                              # kurs o'zgardi
+    await svc.finance.partial_payment(ADMIN, "Umid", None, order_id=o, uzs_ming=1300)   # 1 300 000 so'm = 100$
+    rows = [r for r in await svc.finance.history("Umid") if r.get("accounting_type") == "qisman"]
+    assert sorted(r["partial_payment"] for r in rows) == [100, 100]
+    assert sorted(r["rate"] for r in rows) == [12500, 13000]              # har biri o'z kursida qotgan
+    assert sum(entry_uzs(r) for r in rows) == 2_550_000
+    assert sum(entry_usd(r) for r in rows) == 200
+    acc = await svc.finance.account("Umid")
+    assert acc.debt == 140 and acc.unsettled[0]["paid_uzs"] == 2_550_000
+    with pytest.raises(ServiceError):
+        await svc.finance.partial_payment(ADMIN, "Umid", None, uzs_ming=0)
+
+
+@pytest.mark.asyncio
+async def test_settle_preview_is_honest_about_overpayment(svc):
+    from datetime import date
+    a = await _delivered(svc, "BF09", "2026-11-05")                      # 200$
+    await svc.finance.set_rate(ADMIN, 1000)
+    await svc.finance.partial_payment(ADMIN, "Umid", None, order_id=a, uzs_ming=250)   # 250$ — narxdan ko'p
+    pv = await svc.finance.settle_range(ADMIN, "Umid", date(2026, 11, 1), date(2026, 11, 10))
+    assert pv["net_total"] == 200 and pv["paid_total"] == 250 and pv["to_receive"] == -50
+    assert pv["overpaid"] == [a] and pv["paid_uzs"] == 250_000
+    assert pv["rows"][0]["paid_usd"] == 250 and pv["rows"][0]["paid_uzs"] == 250_000

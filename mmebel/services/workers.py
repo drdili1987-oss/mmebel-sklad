@@ -40,7 +40,7 @@ from ..utils import (
     parse_number,
 )
 from .errors import Conflict, NotFound, ServiceError, run_tx
-from .finance import order_client
+from .finance import LEGACY_RATE, MAX_RATE, MIN_RATE, order_client, to_usd
 
 MAX_PHOTOS = 5
 MAX_CASH = 10_000_000
@@ -65,6 +65,10 @@ def fmt_usd(v) -> str:
     v = money(v)
     s = f"{v:,.2f}".rstrip("0").rstrip(".").replace(",", " ")
     return f"{s}$"
+
+
+def fmt_uzs(v) -> str:
+    return f"{int(round(float(v or 0))):,}".replace(",", " ") + " so'm"
 
 
 def worker_holder(wid: str) -> str:
@@ -335,7 +339,7 @@ class WorkerService:
         if order.get("status") not in ACTIVE_STATUSES:
             raise Conflict("Bu buyurtma allaqachon topshirilgan yoki bekor qilingan.")
         pay = await self._validate_payment(uid, order, correct=correct, amount=amount, method=method, note=note,
-                                           photos=photos)
+                                           photos=photos, expected_uzs=await self.remaining_uzs(order_id, order))
         delivered = await self.orders.deliver(uid, order_id, driver=w["name"], price=order.get("delivery_fee") or 0)
         rec = await self._record_payment(uid, wid, w, order_id, delivered, pay, kind="handover")
         await self.store.update(f"orders/{order_id}", {"handover": {
@@ -362,6 +366,32 @@ class WorkerService:
     async def paid_for(self, order_id: str) -> float:
         return money(sum(p.get("amount") or 0 for p in await self.payments(order_id=order_id)))
 
+    @staticmethod
+    def expected_uzs(order: dict, rate: float) -> int | None:
+        """Mijozdan olinadigan qoldiq so'mda: admin so'mda kiritgan bo'lsa shu, eski buyurtmada $ × kurs."""
+        if order.get("collect_uzs") not in (None, ""):
+            return int(round(float(order["collect_uzs"])))
+        if order.get("collect") in (None, ""):
+            return None
+        return int(round(money(order["collect"]) * rate))
+
+    async def paid_uzs_for(self, order_id: str, rate: float) -> int:
+        tot = 0
+        for p in await self.payments(order_id=order_id):
+            if p.get("uzs") is not None:
+                tot += int(round(float(p["uzs"])))
+            else:
+                tot += int(round(money(p.get("amount") or 0) * float(p.get("rate") or rate)))
+        return tot
+
+    async def remaining_uzs(self, order_id: str, order: dict) -> int | None:
+        """Mijozdan yana olinishi kerak (so'm): kutilgan qoldiq − barcha yig'uvchilar olgan pul."""
+        rate = await self.finance.current_rate()
+        exp = self.expected_uzs(order, rate)
+        if exp is None:
+            return None
+        return max(0, exp - await self.paid_uzs_for(order_id, rate))
+
     async def remaining(self, order_id: str, order: dict) -> float | None:
         """Mijozdan yana olinishi kerak: kutilgan qoldiq − barcha yig'uvchilar olgan pul."""
         if order.get("collect") in (None, ""):
@@ -385,11 +415,11 @@ class WorkerService:
             raise Conflict("Bu buyurtma allaqachon topshirilgan yoki bekor qilingan.")
         if not clean_text(note, 500):
             raise ServiceError("Kamchilik nima ekanligini izohga yozing.")
-        left = await self.remaining(order_id, order)
+        left = await self.remaining_uzs(order_id, order)
         pay = await self._validate_payment(uid, order, correct=False, amount=amount, method=method, note=note,
-                                           photos=photos, expected=left)
-        if left is not None and pay["amount"] > left:
-            raise ServiceError(f"Mijozdan olinadigan qoldiq {fmt_usd(left)} — undan ko'p yozib bo'lmaydi.")
+                                           photos=photos, expected_uzs=left)
+        if left is not None and pay["uzs"] > left:
+            raise ServiceError(f"Mijozdan olinadigan qoldiq {fmt_uzs(left)} — undan ko'p yozib bo'lmaydi.")
         if not defect_open:
             order = await self.orders.deliver(uid, order_id, driver=w["name"], price=order.get("delivery_fee") or 0)
         rec = await self._record_payment(uid, wid, w, order_id, order, pay, kind="defect")
@@ -404,13 +434,13 @@ class WorkerService:
             updates["handover"] = {"at": ts, "correct": False, "pay_id": rec["pay_id"], "defect": True}
         await self.store.update(f"orders/{order_id}", updates)
         debt = await self.finance.recalc(order_client(order)) if order_client(order) else 0.0
-        left_after = await self.remaining(order_id, order)
+        left_after = await self.remaining_uzs(order_id, order)
         return {**rec, "order": dict(order, debt=debt), "worker": w, "left": left_after}
 
     async def _complete_defect(self, uid, wid, w, order_id, order, *, correct, amount, method, note, photos) -> dict:
-        left = await self.remaining(order_id, order)
+        left = await self.remaining_uzs(order_id, order)
         pay = await self._validate_payment(uid, order, correct=correct, amount=amount, method=method, note=note,
-                                           photos=photos, expected=left)
+                                           photos=photos, expected_uzs=left)
         rec = await self._record_payment(uid, wid, w, order_id, order, {**pay, "kind_note": "completion"},
                                          kind="completion")
         defect = dict(order.get("defect") or {})
@@ -496,14 +526,24 @@ class WorkerService:
         new = parse_number(amount)
         if new is None or new < 0 or new > MAX_CASH:
             raise ServiceError("Olingan summani kiriting (0 yoki undan katta).")
+        uzs_mode = p.get("uzs") is not None      # so'mda olingan to'lov: summa «ming so'm», kurs — o'sha to'lovniki
+        new_uzs = old_uzs = rate = None
+        if uzs_mode:
+            rate = float(p.get("rate") or await self.finance.current_rate())
+            old_uzs, new_uzs = int(round(float(p["uzs"]))), int(round(new * 1000))
+            if new_uzs == old_uzs:
+                raise ServiceError("Summa o'zgarmagan.")
+            new = to_usd(new, rate)
         new = money(new)
-        if new == money(p.get("amount") or 0):
+        if not uzs_mode and new == money(p.get("amount") or 0):
             raise ServiceError("Summa o'zgarmagan.")
         note = clean_text(note, 300)
         if not note:
             raise ServiceError("Nima uchun o'zgartirayotganingizni yozing.")
         req = {"status": "pending", "old_amount": money(p.get("amount") or 0), "new_amount": new, "note": note,
                "at": now_str(), "by": str(uid), "worker_name": w["name"]}
+        if uzs_mode:
+            req.update(old_uzs=old_uzs, new_uzs=new_uzs, rate=rate)
         await self.store.set(f"wpay/{pay_id}/edit_req", req)
         return {**req, "pay_id": pay_id, "payment": p, "order": order}
 
@@ -524,9 +564,12 @@ class WorkerService:
             out = dict(cur, edit_req=req)
             if approve:
                 out["amount"] = req["new_amount"]
+                if req.get("new_uzs") is not None:
+                    out["uzs"] = req["new_uzs"]
                 # Audit: kim, qachon, qaysi qiymatdan qaysi qiymatga
                 out["history"] = [*(cur.get("history") or []),
                                   {"field": "amount", "from": req["old_amount"], "to": req["new_amount"],
+                                   "from_uzs": req.get("old_uzs"), "to_uzs": req.get("new_uzs"),
                                    "by": req.get("worker_name", ""), "requested_at": req.get("at", ""),
                                    "approved_by": actor_name, "approved_at": req["resolved_at"], "note": req.get("note", "")}]
             return out
@@ -536,8 +579,12 @@ class WorkerService:
             old, new = money(snap["edit_req"]["old_amount"]), money(snap["edit_req"]["new_amount"])
             delta = money(new - old)
             client = snap.get("client", "")
+            req = snap["edit_req"]
+            fx = None
+            if req.get("new_uzs") is not None:
+                fx = {"uzs": int(req["new_uzs"]) - int(req["old_uzs"]), "rate": req["rate"], "usd": delta}
             if delta and client and is_valid_key(client):
-                await self.finance.adjust_order_payment(actor_id, client, snap["order_id"], delta,
+                await self.finance.adjust_order_payment(actor_id, client, snap["order_id"], delta, fx=fx,
                                                         note=f"Yig'uvchi tahriri: {fmt_usd(old)} → {fmt_usd(new)}")
             if delta and snap.get("method") == "naqd":
                 await self._cash_add(worker_holder(snap["worker_id"]), delta, {
@@ -566,31 +613,35 @@ class WorkerService:
         return {"returns": returns, "edits": edits, "defect_count": len(defects), "returned_count": len(returned)}
 
     async def _validate_payment(self, uid, order: dict, *, correct, amount, method, note, photos,
-                                extra: bool = False, expected=...) -> dict:
+                                extra: bool = False, expected_uzs=...) -> dict:
+        """`amount` — mijozdan olingan pul, «ming so'm» (48 534 = 48 534 000 so'm). Joriy kurs bilan $ ga o'giriladi."""
         if not isinstance(correct, bool):
             raise ServiceError("Qoldiq summa to'g'ri olindimi — «Ha» yoki «Yo'q» ni tanlang.")
         if method not in METHODS:
             raise ServiceError("To'lov turi: naqd yoki karta.")
-        amt = parse_number(amount)
-        if amt is None or amt < 0 or amt > MAX_CASH:
-            raise ServiceError("Olingan summani kiriting (0 yoki undan katta).")
-        amt = money(amt)
-        if extra and amt <= 0:
+        ming = parse_number(amount)
+        if ming is None or ming < 0 or ming > MAX_CASH:
+            raise ServiceError("Olingan summani kiriting (0 yoki undan katta, ming so'mda).")
+        if extra and ming <= 0:
             raise ServiceError("Summa 0 dan katta bo'lishi kerak.")
         note = clean_text(note, 500)
-        if expected is ...:
-            expected = money(order.get("collect") or 0)
-        expected = money(expected or 0)
+        rate = await self.finance.current_rate()
+        uzs = int(round(ming * 1000))
+        usd = to_usd(ming, rate) if ming > 0 else 0.0
+        if expected_uzs is ...:
+            expected_uzs = self.expected_uzs(order, rate)
+        expected_uzs = int(expected_uzs or 0)
         if not correct and not note:
             raise ServiceError("Nima uchun farq borligini izohga yozing.")
-        if correct and expected and amt != expected and not note:
-            raise ServiceError(f"Kutilgan qoldiq {fmt_usd(expected)}, siz {fmt_usd(amt)} kiritdingiz. "
+        if correct and expected_uzs and uzs != expected_uzs and not note:
+            raise ServiceError(f"Kutilgan qoldiq {fmt_uzs(expected_uzs)}, siz {fmt_uzs(uzs)} kiritdingiz. "
                                "Summani tekshiring yoki «Yo'q» ni tanlab sababini yozing.")
         files = await self._resolve_uploads(uid, photos)
-        if method == "karta" and amt > 0 and not files:
+        if method == "karta" and uzs > 0 and not files:
             raise ServiceError("Karta orqali to'lov uchun kamida 1 ta skrinshot yuklang.")
-        return {"correct": correct, "amount": amt, "method": method, "note": note, "photos": files,
-                "expected": expected}
+        return {"correct": correct, "amount": usd, "uzs": uzs, "rate": rate, "method": method, "note": note,
+                "photos": files, "expected": to_usd(expected_uzs / 1000, rate) if expected_uzs else 0.0,
+                "expected_uzs": expected_uzs}
 
     async def _record_payment(self, uid, wid: str, w: dict, order_id: str, order: dict, pay: dict, *,
                               kind: str) -> dict:
@@ -607,12 +658,13 @@ class WorkerService:
         if amt > 0 and client and is_valid_key(client):
             label = "naqd" if pay["method"] == "naqd" else "karta"
             await self.finance.partial_payment(uid, client, amt, order_id=order_id,
+                                               fx={"uzs": pay["uzs"], "rate": pay["rate"], "usd": amt},
                                                note=f"Mijozdan ostatka ({label}) — {w['name']}"
                                                     + (f". {pay['note']}" if pay["note"] else ""))
         if amt > 0 and pay["method"] == "naqd":
             await self._cash_add(worker_holder(wid), amt, {
                 "kind": "collect", "order_id": order_id, "pay_id": pid, "serial": order.get("serial", ""),
-                "text": f"{human_date(ts)}: mijozdan {fmt_usd(amt)} naqd olindi ({order.get('product_id', '')}"
+                "text": f"{human_date(ts)}: mijozdan {fmt_uzs(pay['uzs'])} ({fmt_usd(amt)}) naqd olindi ({order.get('product_id', '')}"
                         + (f", №{order['serial']}" if order.get("serial") else "") + ")"})
         return rec
 
@@ -644,6 +696,53 @@ class WorkerService:
         await self.store.push(f"cash_log/{holder}", {**entry, "amount": money(delta), "ts": now_str(),
                                                      "balance": money(new)})
         return money(new)
+
+    # ---------- eski «ming so'm $ deb yozilgan» to'lovlarni so'mga o'tkazish (faqat admin tasdig'i bilan) ----------
+    async def legacy_payments(self) -> list[dict]:
+        """So'm maydoni yo'q (eski) yig'uvchi to'lovlari — admin qaysilari ming so'm bo'lganini belgilaydi."""
+        rows = [{"pay_id": p["id"], "order_id": p.get("order_id", ""), "client": p.get("client", ""),
+                 "serial": p.get("serial", ""), "product_id": p.get("product_id", ""), "worker_name": p.get("worker_name", ""),
+                 "ts": p.get("ts", ""), "amount": money(p.get("amount") or 0), "method": p.get("method", "")}
+                for p in await self.payments() if p.get("uzs") is None and (p.get("amount") or 0) > 0]
+        rows.sort(key=lambda r: r["ts"])
+        return rows
+
+    async def migrate_legacy(self, actor_id, pay_ids, rate=None) -> dict:
+        """Tanlangan to'lovlarda `amount` aslida ming so'm edi: so'mga (×1000) o'tkazib, berilgan kurs bilan $ ga o'giradi.
+        Asl qiymat `orig_amount` da saqlanadi (qaytarish mumkin). Diller hisobi va naqd kassa ham to'g'rilanadi."""
+        r = parse_number(rate) if rate not in (None, "") else LEGACY_RATE
+        if r is None or not (MIN_RATE <= r <= MAX_RATE):
+            raise ServiceError("Kurs noto'g'ri.")
+        done, skipped = 0, []
+        for pid in pay_ids or []:
+            p = await self.store.get(f"wpay/{pid}") if is_valid_key(str(pid)) else None
+            if not isinstance(p, dict) or p.get("uzs") is not None or not (p.get("amount") or 0) > 0:
+                skipped.append(str(pid))
+                continue
+            old = money(p["amount"])
+            usd = to_usd(old, r)
+            uzs = int(round(old * 1000))
+            await self.store.update(f"wpay/{pid}", {"orig_amount": old, "amount": usd, "uzs": uzs, "rate": r, "migrated": True})
+            client, oid = p.get("client", ""), p.get("order_id", "")
+            if client and is_valid_key(client):
+                hist = await self.store.get(f"accounting_history/{client}") or {}
+                for hid, h in iter_records(hist):
+                    if (h.get("order_id") == oid and h.get("accounting_type") == "qisman" and not h.get("cur")
+                            and not h.get("settled") and money(h.get("partial_payment") or 0) == old):
+                        await self.store.update(f"accounting_history/{client}/{hid}", {
+                            "orig_partial": old, "partial_payment": usd, "cur": "uzs", "uzs": uzs, "rate": r, "migrated": True})
+                        break
+            order = await self.store.get(f"orders/{oid}") if oid else None
+            if isinstance(order, dict) and order.get("collect") not in (None, "") and order.get("collect_uzs") is None:
+                await self.store.update(f"orders/{oid}", {"orig_collect": order["collect"], "collect_uzs": int(round(money(order["collect"]) * 1000)),
+                                                          "collect": to_usd(order["collect"], r)})
+            if p.get("method") == "naqd" and p.get("worker_id") and usd != old:
+                await self._cash_add(worker_holder(p["worker_id"]), money(usd - old), {
+                    "kind": "fx_fix", "order_id": oid, "pay_id": pid,
+                    "text": f"{human_date(now_str())}: {fmt_usd(old)} → {fmt_usd(usd)} (so'mga o'tkazildi, kurs {int(r)})"})
+            done += 1
+        await self._audit(actor_id, "legacy_to_uzs", {"count": done, "rate": r})
+        return {"migrated": done, "skipped": skipped}
 
     async def transfers(self, *, status: str | None = None) -> list[dict]:
         rows = [dict(v, id=k) for k, v in iter_records(await self.store.get("cash_transfers") or {})
@@ -750,4 +849,4 @@ class WorkerService:
         await self.store.push("audit_log", {"action": action, **details, "by": str(actor_id), "at": now_str()})
 
 
-__all__ = ["MAX_PHOTOS", "METHODS", "WorkerService", "fmt_usd", "human_date", "staff_holder", "worker_holder"]
+__all__ = ["MAX_PHOTOS", "METHODS", "WorkerService", "fmt_usd", "fmt_uzs", "human_date", "staff_holder", "worker_holder"]

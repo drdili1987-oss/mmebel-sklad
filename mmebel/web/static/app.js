@@ -155,6 +155,86 @@ function syncBack() {
 if (tg && tg.BackButton) tg.BackButton.onClick(() => { const c = sheetStack[sheetStack.length - 1]; if (c) c(); });
 
 function field(label, input) { return el("label", { class: "field" }, el("span", {}, label), input); }
+
+/* ---------- so'm («ming so'm») kiritish va dollar kursi ----------
+   Mijozlardan pul so'mda olinadi: 48 534 yozilsa — 48 534 000 so'm. Server joriy kurs bilan $ ga o'giradi va qotiradi. */
+let FX_RATE = null;
+async function fxRate(force) {
+  if (FX_RATE && !force) return FX_RATE;
+  try { FX_RATE = (await api("GET", "/api/fx/convert?ming=1")).rate; } catch (e) { /* kurs olinmadi */ }
+  return FX_RATE;
+}
+function uzs(v) { return Math.round(Number(v || 0)).toLocaleString("ru-RU") + " so'm"; }
+function uzsInput(opts) {
+  const o = opts || {};
+  const input = el("input", { type: "number", min: "0", step: "any", inputmode: "decimal", placeholder: o.placeholder || "Ming so'mda. Masalan: 48 534", "data-autofocus": o.autofocus ? "" : null });
+  if (o.value != null && o.value !== "") input.value = String(o.value);
+  const hint = el("p", { class: "muted small", style: "margin:4px 2px 0" }, "");
+  const upd = () => {
+    const v = Number(input.value);
+    if (input.value === "" || isNaN(v)) { hint.textContent = "Ming so'mda yozing: 48 534 = 48 534 000 so'm"; return; }
+    const full = Math.round(v * 1000), r = FX_RATE;
+    hint.textContent = r ? `${uzs(full)} ≈ ${money(full / r)}  (kurs: 1$ = ${uzs(r)})` : uzs(full);
+  };
+  input.addEventListener("input", upd);
+  upd();
+  fxRate().then(upd);
+  return { input, hint, node: el("div", {}, input, hint), value: () => (input.value === "" ? NaN : Number(input.value)) };
+}
+
+/* Eski to'lovlar: «48 534» $ deb yozilgan, aslida ming so'm. Admin belgilaydi, 12 000 kurs bilan o'tkaziladi. */
+async function legacySheet() {
+  let d;
+  try { d = await api("GET", "/api/fx/legacy"); } catch (e) { toast(e.message, true); return; }
+  sheet((close) => {
+    const checks = [];
+    const list = d.items.map((r) => {
+      const cb = el("input", { type: "checkbox" });
+      checks.push([cb, r.pay_id]);
+      return el("label", { class: "row", style: "gap:10px;align-items:center" }, cb,
+        el("div", { class: "grow" }, el("div", {}, r.serial ? `№${r.serial} · ` : "", el("b", {}, plabel(r)), ` — ${r.client}`),
+          el("div", { class: "sub" }, `${fdate(r.ts)} · ${r.worker_name} · ${r.method}`)),
+        el("div", { class: "end" }, el("b", {}, String(r.amount)), el("div", { class: "sub" }, `→ ${uzs(r.amount * 1000)} ≈ ${money(r.amount * 1000 / d.rate)}`)));
+    });
+    const btn = el("button", { class: "btn", type: "button" }, "Tanlanganlarni o'tkazish");
+    btn.addEventListener("click", async () => {
+      const ids = checks.filter(([cb]) => cb.checked).map(([, id]) => id);
+      if (!ids.length) { toast("Kamida bittasini belgilang.", true); return; }
+      if (!(await confirmDlg(`${ids.length} ta to'lov ming so'm deb hisoblanib, ${uzs(d.rate)} kurs bilan $ ga o'tkazilsinmi?`))) return;
+      const r = await act(btn, () => api("POST", "/api/fx/legacy", { pay_ids: ids, rate: d.rate }), "O'tkazildi");
+      if (r) { close(); refresh(); }
+    });
+    return el("div", {}, el("h2", {}, "Eski to'lovlarni so'mga o'tkazish"),
+      el("p", { class: "muted small" }, `Faqat summasi aslida ming so'mda yozilganlarni belgilang (masalan 48 534). Kurs: ${uzs(d.rate)}. Asl qiymat saqlanadi.`),
+      d.items.length ? el("div", { class: "list" }, list) : empty("O'tkaziladigan eski to'lov yo'q."),
+      d.items.length ? el("div", { class: "actions" }, btn) : null);
+  });
+}
+
+/* Admin: dollar kursi. Yangisi kiritilguncha oxirgi kiritilgan kurs amal qiladi. */
+async function fxSheet(onDone) {
+  let info;
+  try { info = await api("GET", "/api/fx"); } catch (e) { toast(e.message, true); return; }
+  sheet((close) => {
+    const rate = el("input", { type: "number", min: "1000", step: "any", inputmode: "decimal", placeholder: "1$ necha so'm? Masalan: 12 500", "data-autofocus": "" });
+    if (info.is_set) rate.value = String(info.rate);
+    const btn = el("button", { class: "btn", type: "button" }, "Kursni saqlash");
+    btn.addEventListener("click", async () => {
+      const v = Number(rate.value);
+      if (!v || v < 1000) { toast("Kursni kiriting (masalan, 12500).", true); return; }
+      const r = await act(btn, () => api("POST", "/api/fx", { rate: v }), "Kurs saqlandi");
+      if (r) { FX_RATE = r.rate; close(); if (onDone) onDone(); }
+    });
+    return el("div", {}, el("h2", {}, "Dollar kursi"),
+      el("p", {}, info.is_set ? ["Hozirgi kurs: ", el("b", {}, uzs(info.rate)), ` (${info.at})`] : "Kurs hali kiritilmagan — vaqtincha 12 000 ishlatiladi."),
+      el("p", { class: "muted small" }, "Yangi kurs faqat shundan keyingi to'lovlarga ta'sir qiladi. Oldingi to'lovlar o'z kursida qotib qolgan."),
+      field("Yangi kurs (1$ = so'm)", rate), el("div", { class: "actions" }, btn),
+      el("div", { class: "actions" }, el("button", { class: "btn ghost", type: "button", on: { click: () => { close(); legacySheet(); } } },
+        "🔧 Eski to'lovlarni so'mga o'tkazish")),
+      info.log && info.log.length ? el("div", {}, el("div", { class: "section-title" }, "Kurs tarixi"),
+        info.log.slice(0, 8).map((x) => el("div", { class: "sub", style: "padding:2px 4px" }, `${x.at} — ${uzs(x.rate)}`))) : null);
+  });
+}
 function chips(values, current, onPick, fmt) {
   const wrap = el("div", { class: "chips" });
   values.forEach((v) => {
@@ -604,7 +684,9 @@ function deliverSheet(o, pickup, onDone) {
 function editOrderSheet(o, onDone, metaOnly) {
   sheet((close) => {
     const serial = el("input", { type: "text", maxlength: "20", value: o.serial || "", placeholder: "Masalan: 001" });
-    const collect = el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", value: o.collect != null ? o.collect : "", placeholder: "Bo'sh — belgilanmagan" });
+    const collectU = uzsInput({ value: o.collect_uzs != null ? o.collect_uzs / 1000 : "", placeholder: "Bo'sh — belgilanmagan" });
+    const collect = collectU.input;
+    const oldCollect = o.collect_uzs != null ? o.collect_uzs / 1000 : null;
     // Admin: mebel nomi va narxi ham tahrirlanadi (xato bo'lsa buyurtmani bekor qilib qayta ochish shart emas)
     const product = el("input", { type: "text", maxlength: "60", value: o.product_id || "", list: "models-dl3", autocomplete: "off" });
     const dl = el("datalist", { id: "models-dl3" }, (S.me.meta.models || []).map((x) => el("option", { value: x })));
@@ -619,7 +701,7 @@ function editOrderSheet(o, onDone, metaOnly) {
       const body = {};
       if (serial.value.trim() !== (o.serial || "")) body.serial = serial.value.trim();
       const cv = collect.value === "" ? null : Number(collect.value);
-      if (cv !== (o.collect != null ? Number(o.collect) : null)) body.collect = cv === null ? "" : cv;
+      if (cv !== oldCollect && !(cv === null && o.collect == null)) body.collect = cv === null ? "" : cv;
       if (price.value !== "" && Number(price.value) !== Number(o.price)) body.price = Number(price.value);
       if (!metaOnly) {
         if (product.value.trim() && product.value.trim() !== o.product_id) body.product = product.value.trim();
@@ -633,7 +715,7 @@ function editOrderSheet(o, onDone, metaOnly) {
       if (r) { close(); onDone(); }
     });
     return el("div", {}, el("h2", {}, `${plabel(o)} — o'zgartirish`),
-      el("div", { class: "actions two", style: "margin-top:0" }, field("Tartib raqam", serial), field("Mijozdan qoldiq ($)", collect)),
+      el("div", { class: "actions two", style: "margin-top:0" }, field("Tartib raqam", serial), field("Mijozdan qoldiq (ming so'm)", collectU.node)),
       metaOnly ? null : field("Mebel nomi", el("div", {}, product, dl)),
       field("1 dona narxi ($)", price),
       metaOnly ? el("p", { class: "muted small" }, "Narx o'zgarsa, diller qarzi avtomatik qayta hisoblanadi.") : null,
@@ -650,7 +732,7 @@ function newOrderSheet() {
       (m.clients || []).map((c) => el("option", { value: c }, c)), el("option", { value: "__new" }, "+ Yangi diller"));
     // Tartib raqam qo'lda kiritiladi (avtomatik berilmaydi); bitta diller ichida takrorlanmaydi
     const serial = el("input", { type: "text", maxlength: "20", placeholder: "Masalan: 001", autocomplete: "off" });
-    const collect = el("input", { type: "number", min: "0", step: "0.5", inputmode: "decimal", placeholder: "Masalan: 150 — yig'uvchi shu summani oladi" });
+    const collectU = uzsInput({ placeholder: "Ming so'mda. Masalan: 1 850 — yig'uvchi shu summani oladi" });
     const newClient = el("input", { type: "text", maxlength: "60", placeholder: "Yangi diller nomi", class: "hidden" });
     clientSel.addEventListener("change", () => newClient.classList.toggle("hidden", clientSel.value !== "__new"));
     const product = el("input", { type: "text", list: "models-dl", maxlength: "60", placeholder: "Ro'yxatdan tanlang yoki o'zingiz yozing" });
@@ -702,7 +784,7 @@ function newOrderSheet() {
       if (!product.value.trim()) { toast("Mebelni kiriting.", true); return; }
       const body = { client_name: client, serial: serial.value.trim(), product: product.value.trim(), amount: Number(amount.value), due_date: due.value,
         comment: comment.value, new_client: isNew, variant: [...chosen], changed };
-      if (collect.value !== "") body.collect = Number(collect.value);
+      if (!isNaN(collectU.value())) body.collect = collectU.value();
       if (changed && !comment.value.trim()) { toast("O'zgarishli mebel uchun izohga nimasi o'zgarganini yozing.", true); comment.focus(); return; }
       if (price.value !== "") body.price = Number(price.value);
       const r = await act(btn, () => api("POST", "/api/orders", body), "Buyurtma yaratildi");
@@ -716,7 +798,7 @@ function newOrderSheet() {
         el("p", { class: "muted small", style: "margin:4px 2px 0" }, "HA bo'lsa — buyurtma omborchi va xodimda «❗️O'zgarishli❗️» bo'limiga tushadi. Nimasi o'zgarganini izohga yozing."))),
       el("div", { class: "actions two", style: "margin-top:0" }, field("Soni", amount), field("Muddat", due)),
       field("1 dona narxi ($)", price),
-      field("Mijozdan olinadigan qoldiq ($)", collect), field("Izoh", comment), el("div", { class: "actions" }, btn));
+      field("Mijozdan olinadigan qoldiq (ming so'm)", collectU.node), field("Izoh", comment), el("div", { class: "actions" }, btn));
   });
 }
 
@@ -864,6 +946,11 @@ async function viewMoney() {
     const data = await api("GET", "/api/debts");
     const total = data.items.filter((r) => r.debt > 0).reduce((s, r) => s + r.debt, 0);
     view.appendChild(el("div", { class: "stats" }, el("div", { class: "stat wide" }, el("b", {}, money(total)), el("span", {}, "Dillerlarning jami qarzi"))));
+    const fx = await api("GET", "/api/fx");
+    view.appendChild(el("button", { class: "row", type: "button", on: { click: () => fxSheet(refresh) } },
+      el("div", { class: "grow" }, el("div", { style: "font-weight:600" }, "💱 Dollar kursi"),
+        el("div", { class: "sub" }, fx.is_set ? `Kiritilgan: ${fx.at}` : "Kiritilmagan — 12 000 ishlatilyapti")),
+      el("div", { class: "end" }, el("b", {}, uzs(fx.rate)))));
     view.appendChild(el("div", { class: "section-title" }, "Dillerlar"));
     const shown = data.items.filter((r) => r.debt !== 0 || r.unsettled || r.pending);
     if (!shown.length) view.appendChild(empty("Hech bir dillerda qarz yoki faol buyurtma yo'q."));
@@ -1005,9 +1092,15 @@ function rangeSettleSheet(client, last, onDone) {
       result.appendChild(el("div", { class: "list" },
         el("div", { class: "row" }, el("div", { class: "grow" }, "Mebellar soni"), el("div", { class: "end" }, `${p.count} ta`)),
         el("div", { class: "row" }, el("div", { class: "grow" }, "Narxi jami"), el("div", { class: "end" }, money(p.net_total))),
-        p.paid_total ? el("div", { class: "row" }, el("div", { class: "grow" }, "Allaqachon to'langan"), el("div", { class: "end" }, "−" + money(p.paid_total))) : null,
+        p.paid_total ? el("div", { class: "row" }, el("div", { class: "grow" }, "Allaqachon olingan", p.paid_uzs ? el("div", { class: "sub" }, `${uzs(p.paid_uzs)} (o'sha kundagi kurs bilan)`) : null), el("div", { class: "end" }, "−" + money(p.paid_total))) : null,
         p.from_advance ? el("div", { class: "row" }, el("div", { class: "grow" }, "Umumiy to'lovdan ayriladi"), el("div", { class: "end" }, "−" + money(p.from_advance))) : null,
-        el("div", { class: "row" }, el("div", { class: "grow" }, el("b", {}, "Olinadigan summa")), el("div", { class: "end" }, el("b", {}, money(p.to_receive))))));
+        el("div", { class: "row" }, el("div", { class: "grow" }, el("b", {}, p.to_receive < 0 ? "Ortiqcha to'langan" : "Olinadigan summa")), el("div", { class: "end" }, el("b", {}, money(Math.abs(p.to_receive))))),
+        p.overpaid && p.overpaid.length ? el("div", { class: "unread-banner", style: "display:block" }, `⚠️ ${p.overpaid.length} ta mebelda narxdan ko'p pul olingan. Tasdiqlashdan oldin ro'yxatni tekshiring.`) : null,
+        el("div", { class: "section-title" }, "Mebellar"),
+        p.rows.map((r) => el("div", { class: "row" },
+          el("div", { class: "grow" }, el("div", {}, r.serial ? `№${r.serial} · ` : "", el("b", {}, plabel(r)), ` × ${r.amount}`),
+            el("div", { class: "sub" }, `${fdate(r.delivered_at)} · narxi ${money(r.net)}` + (r.paid_uzs ? ` · olindi ${uzs(r.paid_uzs)} = ${money(r.paid_usd)}` : r.paid_usd ? ` · olindi ${money(r.paid_usd)}` : ""))),
+          el("div", { class: "end " + (r.paid_usd > r.net + 0.005 ? "neg" : "") }, money(r.net - r.paid_usd))))));
       const confirmBtn = el("button", { class: "btn", type: "button" }, "✅ Tasdiqlash: to'landi deb belgilash");
       confirmBtn.addEventListener("click", async () => {
         if (!(await confirmDlg(`${client}: ${fdate(p.from)} – ${fdate(p.to)} oralig'idagi ${p.count} ta mebel to'landi deb belgilansinmi? Buni qaytarib bo'lmaydi.`))) return;
@@ -1027,19 +1120,19 @@ function rangeSettleSheet(client, last, onDone) {
 
 function partialSheet(client, row, onDone) {
   sheet((close) => {
-    const amount = el("input", { type: "number", min: "0.01", step: "0.01", inputmode: "decimal", placeholder: "Summa, $", "data-autofocus": "" });
+    const amountU = uzsInput({ autofocus: true });
     const note = el("input", { type: "text", maxlength: "200", placeholder: "Izoh (ixtiyoriy)" });
     const btn = el("button", { class: "btn", type: "button" }, "To'lovni saqlash");
     btn.addEventListener("click", async () => {
-      const v = Number(amount.value);
-      if (!v || v <= 0) { toast("Summani kiriting.", true); return; }
+      const v = amountU.value();
+      if (!v || v <= 0) { toast("Summani kiriting (ming so'mda).", true); return; }
       const r = await act(btn, () => api("POST", `/api/accounts/${encodeURIComponent(client)}/partial`,
-        { amount: v, order_id: row ? row.order_id : null, note: note.value }), "To'lov saqlandi");
+        { uzs: v, order_id: row ? row.order_id : null, note: note.value }), "To'lov saqlandi");
       if (r) { close(); onDone(); }
     });
     return el("div", {}, el("h2", {}, "To'lov qabul qilish"),
       el("p", { class: "muted small" }, row ? `${client} · ${plabel(row)} × ${row.amount}` : `${client} · umumiy to'lov (qarzdan ayiriladi)`),
-      field("Summa ($)", amount), field("Izoh", note), el("div", { class: "actions" }, btn));
+      field("Olingan summa (ming so'm)", amountU.node), field("Izoh", note), el("div", { class: "actions" }, btn));
   });
 }
 
@@ -1413,11 +1506,11 @@ async function viewWHome() {
   view.appendChild(el("div", { class: "list" }, d.active.map((o) => {
     const tag = o.ret && o.ret.status === "pending" ? "⏳ skladga qaytarish tasdiqlanmoqda"
       : o.defect && o.defect.open ? "⚠️ kamchilikni tuzatish" : null;
-    const due = o.left != null ? o.left : o.collect;
+    const due = o.left_uzs != null ? o.left_uzs : o.collect_uzs;
     return el("button", { class: "row", type: "button", on: { click: () => wOrderSheet(o) } },
       el("div", { class: "grow" }, el("div", {}, o.serial ? el("span", { class: "serial" }, `№${o.serial}`) : null, el("b", {}, plabel(o)), ` × ${o.amount}`),
         el("div", { class: "sub" }, [tag, o.client_name, o.comment].filter(Boolean).join(" · "))),
-      el("div", { class: "end" }, due != null ? el("b", {}, money(due)) : "—"));
+      el("div", { class: "end" }, due != null ? el("b", {}, uzs(due)) : "—"));
   })));
   if (d.done.length) {
     view.appendChild(el("div", { class: "section-title" }, "Topshirilganlar"));
@@ -1439,7 +1532,7 @@ function wOrderSheet(o) {
     const kv = el("dl", { class: "kv" },
       el("dt", {}, "Diller"), el("dd", {}, o.client_name || "—"),
       o.comment ? [el("dt", {}, "Izoh"), el("dd", {}, o.comment)] : null,
-      el("dt", {}, "Olinadigan qoldiq"), el("dd", {}, o.collect != null ? el("b", {}, money(o.collect)) : "Belgilanmagan"),
+      el("dt", {}, "Olinadigan qoldiq"), el("dd", {}, o.left_uzs != null ? el("b", {}, uzs(o.left_uzs)) : o.collect != null ? el("b", {}, money(o.collect)) : "Belgilanmagan"),
       el("dt", {}, "Yuborildi"), el("dd", {}, fdate(o.assigned_at)));
     const box = el("div", {}, el("div", { class: "code-big" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} × ${o.amount}`));
     // Tugallanmagan mebel: oldingi yig'uvchi izohi va qolgan summa
@@ -1447,7 +1540,7 @@ function wOrderSheet(o) {
       box.appendChild(el("div", { class: "unread-banner", style: "display:block" },
         el("b", {}, "⚠️ Kamchilikni tuzatish kerak"),
         (o.defect.history || []).map((h) => el("div", { class: "small", style: "margin-top:4px" }, `${fdate(h.at)} · ${h.worker_name}: ${h.note}`)),
-        o.left != null ? el("div", { style: "margin-top:6px" }, `Mijozdan ${money(o.paid || 0)} olingan, sizga qolgan `, el("b", {}, money(o.left)), " ni olish kerak.") : null));
+        o.left_uzs != null ? el("div", { style: "margin-top:6px" }, "Sizga qolgan ", el("b", {}, uzs(o.left_uzs)), " ni olish kerak.") : null));
     }
     box.appendChild(kv);
     const actions = el("div", { class: "actions" });
@@ -1510,7 +1603,9 @@ function wDoneSheet(o) {
 /* Olingan summani tuzatish — admin/omborchi tasdiqlagach kuchga kiradi */
 function payEditSheet(p) {
   sheet((close) => {
-    const amount = el("input", { type: "number", min: "0", step: "0.01", inputmode: "decimal", value: p.amount });
+    const soum = p.uzs != null;     // so'mda olingan to'lov: «ming so'm»da tuzatiladi
+    const amountU = uzsInput({ value: soum ? p.uzs / 1000 : p.amount });
+    const amount = amountU.input;
     const note = el("textarea", { maxlength: "300", placeholder: "Nima uchun o'zgartiryapsiz" });
     const save = el("button", { class: "btn", type: "button" }, "Tasdiqlashga yuborish");
     save.addEventListener("click", async () => {
@@ -1521,8 +1616,8 @@ function payEditSheet(p) {
       if (r) { close(); refresh(); }
     });
     return el("div", {}, el("h2", {}, "Olingan summani tuzatish"),
-      el("p", { class: "muted small" }, `Hozir: ${money(p.amount)} (${p.method === "karta" ? "karta" : "naqd"})`),
-      field("Mijozdan olingan summa ($)", amount), field("Sabab", note),
+      el("p", { class: "muted small" }, `Hozir: ${soum ? uzs(p.uzs) : money(p.amount)} (${p.method === "karta" ? "karta" : "naqd"})`),
+      field(soum ? "Mijozdan olingan summa (ming so'm)" : "Mijozdan olingan summa ($)", soum ? amountU.node : amount), field("Sabab", note),
       el("p", { class: "muted small" }, "Admin yoki omborchi tasdiqlagandan keyingina hisob o'zgaradi."),
       el("div", { class: "actions" }, save));
   });
@@ -1559,13 +1654,14 @@ async function uploadPhoto(blob) {
    "extra" — mijoz qolgan pulni keyin berdi */
 function handoverSheet(o, mode) {
   const extra = mode === "extra", defectMode = mode === "defect";
-  const expected = o.left != null ? o.left : o.collect;   // tugallanmaganda: kutilgan − oldin olingan
+  const expected = o.left_uzs != null ? o.left_uzs : o.collect_uzs;   // so'm; tugallanmaganda: kutilgan − oldin olingan
   sheet((close) => {
     let correct = extra ? true : defectMode ? false : null;
     let card = false;
     const photos = [];  // {blob, url}
-    const amount = el("input", { type: "number", min: "0", step: "0.01", inputmode: "decimal", placeholder: "Summa, $" });
-    if (defectMode && expected != null) amount.max = String(expected);
+    const amountU = uzsInput();
+    const amount = amountU.input;
+    if (defectMode && expected != null) amount.max = String(expected / 1000);
     const note = el("textarea", { maxlength: "500", placeholder: defectMode ? "Masalan: fasad tirnalgan, fabrikaga qaytarish kerak" : "Qo'shimcha izoh" });
     const noteLabel = el("span", {}, defectMode ? "Kamchilik nima? (majburiy)" : "Qo'shimcha izoh");
     const form = el("div", { class: extra || defectMode ? "" : "hidden" });
@@ -1609,7 +1705,7 @@ function handoverSheet(o, mode) {
       if (correct === null) { toast("«Ha» yoki «Yo'q» ni tanlang.", true); return; }
       const v = amount.value === "" ? NaN : Number(amount.value);
       if (isNaN(v) || v < 0) { toast("Olingan summani kiriting (olinmagan bo'lsa 0).", true); amount.focus(); return; }
-      if (defectMode && expected != null && v > expected) { toast(`Qoldiq ${money(expected)} — undan ko'p yozib bo'lmaydi.`, true); return; }
+      if (defectMode && expected != null && Math.round(v * 1000) > expected) { toast(`Qoldiq ${uzs(expected)} — undan ko'p yozib bo'lmaydi.`, true); return; }
       if (!correct && !note.value.trim()) { toast(defectMode ? "Kamchilikni izohga yozing." : "Farq sababini izohga yozing.", true); note.focus(); return; }
       if (card && v > 0 && !photos.length) { toast("Karta to'lovi uchun skrinshot yuklang.", true); return; }
       save.disabled = true;
@@ -1627,13 +1723,13 @@ function handoverSheet(o, mode) {
       } catch (e) { toast(e.message, true); }
       finally { save.disabled = false; save.textContent = "Saqlash"; }
     });
-    const amountLabel = defectMode ? `Mijozdan qisman olingan pul ($)${expected != null ? " — ko'pi bilan " + money(expected) : ""}`
-      : extra ? "Olingan summa ($)" : "Olingan summa ($) — olinmagan bo'lsa 0";
-    form.append(field(amountLabel, amount), el("label", { class: "field" }, noteLabel, note), cardBtn, cardBox, el("div", { class: "actions" }, save));
+    const amountLabel = defectMode ? `Mijozdan qisman olingan pul (ming so'm)${expected != null ? " — ko'pi bilan " + uzs(expected) : ""}`
+      : extra ? "Olingan summa (ming so'm)" : "Olingan summa (ming so'm) — olinmagan bo'lsa 0";
+    form.append(field(amountLabel, amountU.node), el("label", { class: "field" }, noteLabel, note), cardBtn, cardBox, el("div", { class: "actions" }, save));
     const title = extra ? "Qo'shimcha to'lov" : defectMode ? "Mebelda kamchilik aniqlandi" : "Mebel mijozga topshirildi";
     return el("div", {}, el("h2", {}, title),
       el("p", { class: "muted small" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} · ${o.client_name}`),
-      expected != null && !extra ? el("p", {}, mode === "complete" || defectMode ? "Hozirgi qoldiq: " : "Olinadigan qoldiq: ", el("b", {}, money(expected))) : null,
+      expected != null && !extra ? el("p", {}, mode === "complete" || defectMode ? "Hozirgi qoldiq: " : "Olinadigan qoldiq: ", el("b", {}, uzs(expected))) : null,
       extra || defectMode ? null : el("div", {}, el("p", { style: "font-weight:600;margin:8px 2px" }, "Mebelning qoldiq summasi to'g'ri olindimi?"),
         chips([true, false], null, pick, (x) => (x ? "✅ Ha" : "❌ Yo'q"))),
       form);

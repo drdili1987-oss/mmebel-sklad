@@ -45,6 +45,7 @@ def w_order(oid: str, o: dict) -> dict:
         "variant": o.get("variant", ""), "amount": to_int(o.get("amount"), 1), "client_name": order_client(o),
         "comment": o.get("comment", ""), "due_date": o.get("due_date", ""), "status": o.get("status", ""),
         "collect": money(o["collect"]) if o.get("collect") not in (None, "") else None,
+        "collect_uzs": int(o["collect_uzs"]) if o.get("collect_uzs") not in (None, "") else None,
         "assigned_at": o.get("assigned_at", ""), "delivered_at": o.get("delivered_at", ""),
         "handover": {"at": hv.get("at", ""), "correct": hv.get("correct")} if hv else None,
         "ret": {k: ret.get(k) for k in ("status", "expense", "note", "at", "worker_name")} if ret else None,
@@ -56,7 +57,8 @@ def w_order(oid: str, o: dict) -> dict:
 
 def pay_out(p: dict) -> dict:
     out = {k: p.get(k) for k in ("pay_id", "order_id", "client", "serial", "product_id", "variant", "worker_id",
-                                 "worker_name", "kind", "ts", "correct", "amount", "method", "note", "expected",
+                                 "worker_name", "kind", "ts", "correct", "amount", "uzs", "rate", "method", "note", "expected",
+                                 "expected_uzs",
                                  "edit_req", "history")}
     out["photos"] = len(p.get("photos") or [])
     return out
@@ -83,7 +85,8 @@ async def w_me(request):
         "worker": {"id": wid, "name": w.get("name", ""), "phone": w.get("phone", "")},
         "cash": await S(request).workers.balance(holder),
         "active": [dict(w_order(k, v), paid=paid.get(k, 0.0),
-                        left=await S(request).workers.remaining(k, v)) for k, v in active],
+                        left=await S(request).workers.remaining(k, v),
+                        left_uzs=await S(request).workers.remaining_uzs(k, v)) for k, v in active],
         "done": [dict(w_order(k, v), paid=paid.get(k, 0.0), method="+".join(sorted(methods.get(k, set()))),
                       payments=[pay_out(p) for p in my_pays if p["order_id"] == k])
                  for k, v in done[:60]],
@@ -156,7 +159,7 @@ async def w_defect(request):
         actor(request), request.match_info["oid"], amount=d.get("amount"), method=str(d.get("method", "naqd")),
         note=str(d.get("note", "")), photos=d.get("photos"))
     await E(request).order_defect(res)
-    return web.json_response({"ok": True, "left": res["left"]})
+    return web.json_response({"ok": True, "left": res["left"], "left_uzs": res["left"]})
 
 
 @routes.post("/api/w/orders/{oid}/return")

@@ -23,6 +23,28 @@ from ..utils import (
 from .errors import Conflict, NotFound, ServiceError, run_tx
 
 MAX_PAYMENT = 10_000_000
+# Mijozlardan olinadigan pul so'mda va «ming so'm» birligida kiritiladi (48 534 = 48 534 000 so'm).
+# Dillerning qarzi dollarda hisoblanadi: har bir to'lov o'sha kunning kursi bilan o'giriladi va qotib qoladi.
+# Eski yozuvlar (cur maydoni yo'q) o'zgarmaydi — ularni faqat egasi tasdiqlagan ro'yxat bo'yicha ko'chiramiz (migrate_legacy).
+LEGACY_RATE = 12000.0
+MIN_RATE, MAX_RATE = 1000.0, 100000.0
+
+
+def entry_usd(h: dict) -> float:
+    """accounting_history «qisman» yozuvining dollardagi qiymati (manfiy bo'lishi mumkin — tuzatish)."""
+    return money(h.get("partial_payment") or 0)
+
+
+def entry_uzs(h: dict) -> int:
+    """To'lovning so'mdagi qiymati (so'mda kiritilmagan yozuvlar uchun 0)."""
+    if h.get("cur") == "uzs":
+        return int(round(float(h.get("uzs") or 0)))
+    return 0
+
+
+def to_usd(ming, rate: float) -> float:
+    """«ming so'm» ni dollarga o'giradi."""
+    return money(float(ming) * 1000 / float(rate))
 MAX_PENDING_PER_DILLER = 3  # adminlarni xabar bilan "bombardimon" qilmaslik uchun
 
 
@@ -89,16 +111,18 @@ def compute_account(client: str, orders: dict, history: dict | None, products: d
         if h.get("accounting_type") == "toliq" and h.get("order_id"):
             acc.accounted_ids.add(str(h["order_id"]))
     partial_by_order: dict[str, float] = {}
+    uzs_by_order: dict[str, int] = {}
     for _, h in hist:
         if h.get("accounting_type") != "qisman" or h.get("settled"):
             continue
         oid = str(h.get("order_id") or "")
         if oid and oid in acc.accounted_ids:
             continue
-        amt = money(h.get("partial_payment") or 0)
+        amt = entry_usd(h)
         acc.partial_total += amt
         if oid:
             partial_by_order[oid] = partial_by_order.get(oid, 0.0) + amt
+            uzs_by_order[oid] = uzs_by_order.get(oid, 0) + entry_uzs(h)
 
     total = 0.0
     for oid, o in iter_records(orders or {}):
@@ -116,10 +140,12 @@ def compute_account(client: str, orders: dict, history: dict | None, products: d
             "delivered_at": o.get("delivered_at", ""),
             "driver": o.get("driver", ""),
             "delivery_price": o.get("delivery_price", ""),
+            "serial": o.get("serial", ""),
             "gross": order_gross(o, products),
             "discount": order_discount(o),
             "net": order_net(o, products),
             "paid_partial": money(partial_by_order.get(oid, 0.0)),
+            "paid_uzs": int(uzs_by_order.get(oid, 0)),
         }
         if status in (ST_PREPARING, ST_READY):
             acc.pending.append(row)
@@ -185,9 +211,34 @@ class FinanceService:
         if not is_valid_key(client):
             raise ServiceError("Mijoz nomi noto'g'ri.")
         raw = await self.store.get(f"accounting_history/{client}") or {}
-        rows = [dict(v, id=k) for k, v in iter_records(raw)]
+        rows = [dict(v, id=k, usd=entry_usd(v), uzs_amount=entry_uzs(v)) for k, v in iter_records(raw)]
         rows.sort(key=lambda r: r.get("accounting_date", ""), reverse=True)
         return rows
+
+    # ---------- dollar kursi (faqat admin kiritadi; yangisi kiritilguncha shu kurs amal qiladi) ----------
+    async def current_rate(self) -> float:
+        cur = await self.store.get("fx/current")
+        try:
+            r = float((cur or {}).get("rate") or 0)
+        except (TypeError, ValueError):
+            r = 0.0
+        return r if MIN_RATE <= r <= MAX_RATE else LEGACY_RATE
+
+    async def fx_info(self) -> dict:
+        cur = await self.store.get("fx/current") or {}
+        log = [dict(v) for _, v in iter_records(await self.store.get("fx_log") or {})]
+        log.sort(key=lambda r: r.get("at", ""), reverse=True)
+        return {"rate": await self.current_rate(), "is_set": bool(cur.get("rate")), "at": cur.get("at", ""),
+                "legacy_rate": LEGACY_RATE, "log": log[:20]}
+
+    async def set_rate(self, actor_id, rate) -> dict:
+        r = parse_number(rate)
+        if r is None or not (MIN_RATE <= r <= MAX_RATE):
+            raise ServiceError(f"Kurs {MIN_RATE:g} dan {MAX_RATE:g} gacha bo'lishi kerak (1$ necha so'm).")
+        rec = {"rate": round(float(r), 2), "at": now_str(), "by": str(actor_id)}
+        await self.store.set("fx/current", rec)
+        await self.store.push("fx_log", rec)
+        return await self.fx_info()
 
     async def settle_order(self, actor_id, client: str, order_id: str) -> dict:
         acc = await self.account(client, save=False)
@@ -234,7 +285,7 @@ class FinanceService:
 
     async def _free_unlinked_total(self, client: str) -> float:
         history = await self.store.get(f"accounting_history/{client}") or {}
-        return money(sum(money(h.get("partial_payment") or 0) for _, h in iter_records(history)
+        return money(sum(entry_usd(h) for _, h in iter_records(history)
                          if h.get("accounting_type") == "qisman" and not h.get("settled") and not h.get("order_id")))
 
     async def last_settlement(self, client: str) -> dict | None:
@@ -299,13 +350,20 @@ class FinanceService:
             if d and start <= d <= end:
                 rows.append(r)
         rows.sort(key=lambda r: str(r.get("delivered_at") or ""))
-        remaining = money(sum(max(0.0, r["net"] - r["paid_partial"]) for r in rows))
-        from_advance = money(min(remaining, await self._free_unlinked_total(client)))
+        net_total = money(sum(r["net"] for r in rows))
+        paid_total = money(sum(r["paid_partial"] for r in rows))
+        remaining = money(net_total - paid_total)       # halol natija: ortiqcha to'langan bo'lsa manfiy bo'lishi mumkin
+        from_advance = money(min(max(0.0, remaining), await self._free_unlinked_total(client)))
         preview = {
             "from": start.isoformat(), "to": end.isoformat(), "count": len(rows),
-            "net_total": money(sum(r["net"] for r in rows)),
-            "paid_total": money(sum(r["paid_partial"] for r in rows)),
+            "net_total": net_total, "paid_total": paid_total,
+            "paid_uzs": int(sum(r.get("paid_uzs") or 0 for r in rows)),
             "from_advance": from_advance, "to_receive": money(remaining - from_advance),
+            "overpaid": [r["order_id"] for r in rows if r["paid_partial"] > r["net"] + 0.005],
+            "rows": [{"order_id": r["order_id"], "serial": r.get("serial", ""), "product_id": r["product_id"],
+                      "variant": r.get("variant", ""), "amount": r["amount"], "delivered_at": r["delivered_at"],
+                      "net": r["net"], "paid_usd": r["paid_partial"], "paid_uzs": r.get("paid_uzs") or 0}
+                     for r in rows],
         }
         if not confirm:
             return preview
@@ -345,7 +403,7 @@ class FinanceService:
         for hid, h in free:
             if used >= need:
                 break
-            amt = money(h.get("partial_payment") or 0)
+            amt = entry_usd(h)
             if amt <= 0:
                 continue
             take = min(amt, money(need - used))
@@ -354,22 +412,45 @@ class FinanceService:
             updates[f"accounting_history/{client}/{hid}/settled_by_order"] = order_id
             if take < amt:
                 key = self.store.new_key(f"accounting_history/{client}")
-                updates[f"accounting_history/{client}/{key}"] = {
-                    "order_id": "", "client_name": client, "partial_payment": money(amt - take),
+                rest = {
+                    "order_id": "", "client_name": client, "partial_payment": money(amt - take), "cur": "usd",
                     "comment": f"Umumiy to'lov qoldig'i ({order_id} yopilgandan keyin)",
                     "accounting_type": "qisman", "accounting_date": h.get("accounting_date", ts),
                     "status": "Qisman to'ladi", "by": h.get("by", ""),
                 }
+                if h.get("cur") == "uzs" and h.get("rate"):    # so'mdagi to'lov: qoldig'i ham o'sha kurs bilan
+                    rate = float(h["rate"])
+                    rest.update(cur="uzs", rate=rate, uzs=int(round((amt - take) * rate)))
+                updates[f"accounting_history/{client}/{key}"] = rest
         if updates:
             await self.store.update("", updates)
         return used
 
+    async def convert_uzs(self, ming) -> dict:
+        """«ming so'm» kiritilgan summani joriy kurs bilan dollarga o'giradi (saqlamaydi)."""
+        v = parse_number(ming)
+        if v is None or v == 0 or abs(v) > MAX_PAYMENT:
+            raise ServiceError("So'm summasi noto'g'ri.")
+        rate = await self.current_rate()
+        return {"uzs": int(round(v * 1000)), "rate": rate, "usd": to_usd(v, rate)}
+
     async def partial_payment(self, actor_id, client: str, amount, order_id: str | None = None,
-                              note: str = "") -> float:
-        amt = parse_number(amount)
-        if amt is None or amt <= 0 or amt > MAX_PAYMENT:
-            raise ServiceError("To'lov summasi musbat son bo'lishi kerak.")
-        amt = money(amt)
+                              note: str = "", *, uzs_ming=None, fx: dict | None = None) -> float:
+        """To'lovni yozadi. `uzs_ming` (ming so'm) berilsa — joriy kurs bilan $ ga o'giriladi va kurs qotadi;
+        `fx` ({"uzs","rate","usd"}) berilsa — tayyor o'girma ishlatiladi (yig'uvchi to'lovi). Aks holda `amount` — dollar."""
+        extra: dict = {"cur": "usd"}
+        if fx is None and uzs_ming not in (None, ""):
+            fx = await self.convert_uzs(uzs_ming)
+        if fx is not None:
+            amt = money(fx["usd"])
+            extra = {"cur": "uzs", "uzs": int(fx["uzs"]), "rate": float(fx["rate"])}
+            if fx["uzs"] <= 0 or amt <= 0:
+                raise ServiceError("To'lov summasi musbat son bo'lishi kerak.")
+        else:
+            amt = parse_number(amount)
+            if amt is None or amt <= 0 or amt > MAX_PAYMENT:
+                raise ServiceError("To'lov summasi musbat son bo'lishi kerak.")
+            amt = money(amt)
         order = {}
         if order_id:
             order = await self.store.get(f"orders/{order_id}") or {}
@@ -383,7 +464,7 @@ class FinanceService:
             "due_date": order.get("due_date", ""), "partial_payment": amt,
             "comment": clean_text(note, 200) or order.get("comment", ""),
             "accounting_type": "qisman", "accounting_date": ts, "status": "Qisman to'ladi",
-            "by": str(actor_id),
+            "by": str(actor_id), **extra,
         })
         await self.store.push(f"transactions/clients/{client}", {
             "type": "Kirim", "amount": amt, "timestamp": ts,
@@ -391,8 +472,14 @@ class FinanceService:
         })
         return await self.recalc(client)
 
-    async def adjust_order_payment(self, actor_id, client: str, order_id: str, delta: float, note: str = "") -> float:
-        """Buyurtmaga bog'langan to'lovni tuzatish (musbat yoki manfiy farq) — tasdiqlangan tahrirlar uchun."""
+    async def adjust_order_payment(self, actor_id, client: str, order_id: str, delta: float, note: str = "",
+                                   *, fx: dict | None = None) -> float:
+        """Buyurtmaga bog'langan to'lovni tuzatish (musbat yoki manfiy farq) — tasdiqlangan tahrirlar uchun.
+        `fx` — so'm farqi (manfiy bo'lishi mumkin): {"uzs","rate","usd"}."""
+        extra: dict = {"cur": "usd"}
+        if fx is not None:
+            delta = money(fx["usd"])
+            extra = {"cur": "uzs", "uzs": int(fx["uzs"]), "rate": float(fx["rate"])}
         delta = money(delta)
         if not delta:
             return await self.recalc(client)
@@ -402,7 +489,7 @@ class FinanceService:
             "order_id": order_id, "client_name": client, "product_id": order.get("product_id", ""),
             "variant": order.get("variant", ""), "amount": order.get("amount", ""), "partial_payment": delta,
             "comment": clean_text(note, 200), "accounting_type": "qisman", "accounting_date": ts,
-            "status": "To'lov tuzatildi", "by": str(actor_id),
+            "status": "To'lov tuzatildi", "by": str(actor_id), **extra,
         })
         await self.store.push(f"transactions/clients/{client}", {
             "type": "Kirim" if delta > 0 else "Chiqim", "amount": abs(delta), "timestamp": ts,

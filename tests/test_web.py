@@ -37,6 +37,7 @@ async def client(aiohttp_client):
         "users": {str(OMBOR): {"role": "omborchi"}, str(XODIM): {"role": "xodim"},
                   str(DILLER): {"role": "diller", "client_name": "Umid"}},
         "mebellar": {"BF07": {"id": "BF07", "nomi": "BF 07", "narxi": 340, "soni": 5}},
+        "fx": {"current": {"rate": 1000, "at": "2026-01-01 00:00", "by": "1"}},   # 1 ming so'm = 1$ — sodda hisob
     })
     s = settings()
     services, bot, dp, scheduler, events = assemble(s, store)

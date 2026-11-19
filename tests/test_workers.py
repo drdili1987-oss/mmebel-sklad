@@ -391,7 +391,7 @@ async def test_defect_reassign_and_completion(client):  # noqa: F811
     r = await client.post(f"/api/w/orders/{oid}/defect", headers=hdr(WORKER_UID),
                           json={"amount": 120, "method": "naqd", "note": "Fasad tirnalgan, fabrikaga qaytarish kerak"})
     assert r.status == 200, await r.text()
-    assert (await r.json())["left"] == 180
+    assert (await r.json())["left_uzs"] == 180000
     assert oid in await _scope_ids(client, "defect", OMBOR)
     assert (await services.finance.account("Umid")).debt == 340 - 120     # mebel mijozda — qarzga kiradi
     me1 = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
@@ -513,3 +513,66 @@ async def test_settlements_report_api_admin_only(client):  # noqa: F811
     f = await client.get(link["url"])                      # Authorization'siz, bir martalik havola
     assert f.status == 200 and f.headers["Content-Type"] == "application/pdf"
     assert (await f.read()).startswith(b"%PDF")
+
+
+# ---------- so'm va dollar kursi (API) ----------
+async def test_fx_endpoints_admin_only_and_convert(client):  # noqa: F811
+    r = await client.post("/api/fx", headers=hdr(OMBOR), json={"rate": 12500})
+    assert r.status == 403
+    assert (await client.get("/api/fx", headers=hdr(OMBOR))).status == 403
+    r = await client.post("/api/fx", headers=hdr(ADMIN), json={"rate": 12500})
+    assert r.status == 200 and (await r.json())["rate"] == 12500
+    assert (await client.post("/api/fx", headers=hdr(ADMIN), json={"rate": 3})).status == 400
+    r = await client.get("/api/fx/convert?ming=48534", headers=hdr(OMBOR))
+    j = await r.json()
+    assert j["uzs"] == 48_534_000 and j["rate"] == 12500 and j["usd"] == 3882.72
+
+
+async def test_worker_pays_in_uzs_rate_frozen_and_checked(client):  # noqa: F811
+    await client.post("/api/fx", headers=hdr(ADMIN), json={"rate": 12000})
+    wid = await make_worker(client)
+    oid = (await (await new_order(client, "090", collect=1800)).json())["id"]      # 1 800 000 so'm = 150$
+    o = next(x for x in (await (await client.get("/api/orders", headers=hdr(ADMIN))).json())["items"] if x["id"] == oid)
+    assert o["collect_uzs"] == 1_800_000 and o["collect"] == 150
+    xo = next(x for x in (await (await client.get("/api/orders", headers=hdr(XODIM))).json())["items"] if x["id"] == oid)
+    assert "collect" not in xo and "collect_uzs" not in xo                      # xodim qoldiqni ko'rmaydi
+    await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": wid})
+    r = await client.post(f"/api/w/orders/{oid}/handover", headers=hdr(WORKER_UID),
+                          json={"correct": True, "amount": 1500, "method": "naqd"})
+    assert r.status == 400 and "1 800 000" in (await r.json())["error"]         # kutilganidan farq — izoh shart
+    await client.post("/api/fx", headers=hdr(ADMIN), json={"rate": 13000})      # kurs o'zgardi
+    r = await client.post(f"/api/w/orders/{oid}/handover", headers=hdr(WORKER_UID),
+                          json={"correct": False, "amount": 1500, "method": "naqd", "note": "300 ming keyin beradi"})
+    assert r.status == 200, await r.text()
+    pays = await client.app["services"].workers.payments(order_id=oid)
+    assert pays[0]["uzs"] == 1_500_000 and pays[0]["rate"] == 13000 and pays[0]["amount"] == 115.38
+    hist = [h for h in await client.app["services"].finance.history("Umid") if h["order_id"] == oid]
+    assert hist[0]["uzs"] == 1_500_000 and hist[0]["rate"] == 13000 and hist[0]["partial_payment"] == 115.38
+    assert await client.app["services"].workers.remaining_uzs(oid, await client.app["services"].orders.get(oid)) == 300_000
+
+
+async def test_legacy_payment_migration_to_uzs(client):  # noqa: F811
+    svc = client.app["services"]
+    wid = await make_worker(client)
+    oid = (await (await new_order(client, "095", collect=1000)).json())["id"]     # rate 1000: 1000$
+    await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": wid})
+    await client.post(f"/api/w/orders/{oid}/handover", headers=hdr(WORKER_UID), json={"correct": True, "amount": 1000, "method": "naqd"})
+    # eski yozuvga o'xshatamiz: so'm maydonlarini olib tashlaymiz
+    pay = (await svc.workers.payments(order_id=oid))[0]
+    await svc.store.update(f"wpay/{pay['id']}", {"uzs": None, "rate": None})
+    hist = [h for h in await svc.finance.history("Umid") if h["order_id"] == oid][0]
+    await svc.store.update(f"accounting_history/Umid/{hist['id']}", {"cur": None, "uzs": None, "rate": None})
+    r = await client.get("/api/fx/legacy", headers=hdr(OMBOR))
+    assert r.status == 403
+    items = (await (await client.get("/api/fx/legacy", headers=hdr(ADMIN))).json())["items"]
+    assert [i["pay_id"] for i in items] == [pay["id"]]
+    r = await client.post("/api/fx/legacy", headers=hdr(ADMIN), json={"pay_ids": [pay["id"]], "rate": 12000})
+    assert (await r.json())["migrated"] == 1
+    p2 = await svc.workers.payment(pay["id"])
+    assert p2["uzs"] == 1_000_000 and p2["amount"] == 83.33 and p2["orig_amount"] == 1000
+    h2 = [h for h in await svc.finance.history("Umid") if h["order_id"] == oid][0]
+    assert h2["partial_payment"] == 83.33 and h2["uzs"] == 1_000_000
+    from mmebel.services.workers import worker_holder
+    assert await svc.workers.balance(worker_holder(wid)) == 83.33                 # kassa ham so'm kursiga to'g'rilandi
+    again = await (await client.post("/api/fx/legacy", headers=hdr(ADMIN), json={"pay_ids": [pay["id"]]})).json()
+    assert again["migrated"] == 0                                                 # ikki marta o'tkazilmaydi

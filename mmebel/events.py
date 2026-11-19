@@ -5,6 +5,7 @@ from .bot import keyboards as kb
 from .bot.texts import order_card
 from .constants import ROLE_ADMIN, ROLE_OMBORCHI, ROLE_XODIM, SELF_PICKUP_DRIVER
 from .services.finance import order_client
+from .services.workers import fmt_uzs
 from .utils import fmt_money, format_date, h, product_label
 
 FIELD_LABELS = {"amount": "Soni", "due_date": "Muddati", "comment": "Izohi", "changed": "O'zgarishli",
@@ -110,7 +111,8 @@ class Events:
     async def order_assigned(self, oid: str, o: dict, actor_id: int) -> None:
         w = o.get("_worker") or {}
         serial = f"№{h(o['serial'])} · " if o.get("serial") else ""
-        collect = f"\n💵 Mijozdan olinadigan qoldiq: <b>{fmt_money(o['collect'])}</b>" if o.get("collect") else ""
+        collect = (f"\n💵 Mijozdan olinadigan qoldiq: <b>{fmt_uzs(o['collect_uzs'])}</b>" if o.get("collect_uzs")
+                   else f"\n💵 Mijozdan olinadigan qoldiq: <b>{fmt_money(o['collect'])}</b>" if o.get("collect") else "")
         text = (f"🧰 <b>Sizga yig'ish uchun mebel yuborildi</b>\n{serial}📦 {h(product_label(o))} — {h(o.get('amount'))} ta\n"
                 f"🧑 {h(order_client(o))}" + (f"\n📝 {h(o['comment'])}" if o.get("comment") else "") + collect
                 + "\n\nMijozga topshirgach, ilovada «Mebel mijozga topshirildi» tugmasini bosing.")
@@ -170,11 +172,11 @@ class Events:
     async def order_defect(self, res: dict) -> None:
         o, w = res["order"], res["worker"]
         method = "💳 karta" if res["method"] == "karta" else "💵 naqd"
-        left = f"\n⏳ Mijozdan yana olinadi: <b>{fmt_money(res['left'])}</b>" if res.get("left") is not None else ""
+        left = f"\n⏳ Mijozdan yana olinadi: <b>{fmt_uzs(res['left'])}</b>" if res.get("left") is not None else ""
         await self.n.to_roles([ROLE_ADMIN, ROLE_OMBORCHI],
                               f"⚠️ <b>Mebelda kamchilik aniqlandi — tugallanmagan</b>\n📦 {self._olabel(o)}\n"
                               f"🧑 {h(order_client(o))} · 🧰 {h(w.get('name'))}\n📝 {h(res.get('note', ''))}\n"
-                              f"Qisman olindi: <b>{fmt_money(res['amount'])}</b> {method}{left}\n\n"
+                              f"Qisman olindi: <b>{fmt_uzs(res.get('uzs'))}</b> ({fmt_money(res['amount'])}) {method}{left}\n\n"
                               "Ilovada «Tugallanmagan» bo'limidan boshqa yig'uvchiga yuboring.",
                               sound="cancel", mark=(res["order_id"], "edit"))
 

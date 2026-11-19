@@ -213,6 +213,7 @@ def order_out(oid: str, o: dict, role: str) -> dict:
             out.pop(f, None)
     if role == ROLE_XODIM:
         out.pop("collect", None)
+        out.pop("collect_uzs", None)
     for f in ("created_by", "delivered_by", "ready_by", "cancelled_by", "client_tg_id", "assigned_by"):
         out.pop(f, None)
     return out
@@ -637,8 +638,49 @@ async def account_settle(request):
 async def account_partial(request):
     d = await body(request)
     debt = await S(request).finance.partial_payment(actor(request), request.match_info["client"], d.get("amount"),
-                                                    order_id=d.get("order_id") or None, note=d.get("note", ""))
+                                                    order_id=d.get("order_id") or None, note=d.get("note", ""),
+                                                    uzs_ming=d.get("uzs"))
     return web.json_response({"debt": debt})
+
+
+@routes.get("/api/fx")
+@requires(ROLE_ADMIN)
+async def fx_get(request):
+    return web.json_response(await S(request).finance.fx_info())
+
+
+@routes.post("/api/fx")
+@requires(ROLE_ADMIN)
+async def fx_set(request):
+    d = await body(request)
+    return web.json_response(await S(request).finance.set_rate(actor(request), d.get("rate")))
+
+
+@routes.get("/api/fx/legacy")
+@requires(ROLE_ADMIN)
+async def fx_legacy(request):
+    return web.json_response({"items": await S(request).workers.legacy_payments(), "rate": 12000})
+
+
+@routes.post("/api/fx/legacy")
+@requires(ROLE_ADMIN)
+async def fx_legacy_run(request):
+    d = await body(request)
+    ids = d.get("pay_ids")
+    if not isinstance(ids, list) or not ids:
+        raise ServiceError("Kamida bitta to'lovni tanlang.")
+    return web.json_response(await S(request).workers.migrate_legacy(actor(request), ids, d.get("rate")))
+
+
+@routes.get("/api/fx/convert")
+async def fx_convert(request):
+    """So'mni (ming) joriy kurs bilan $ ga o'girib ko'rsatadi — kiritish oynasidagi oldindan ko'rish uchun."""
+    rate = await S(request).finance.current_rate()
+    try:
+        ming = float(request.query.get("ming", "0") or 0)
+    except ValueError:
+        ming = 0.0
+    return web.json_response({"rate": rate, "uzs": int(round(ming * 1000)), "usd": round(ming * 1000 / rate, 2)})
 
 
 @routes.post("/api/accounts/{client}/settle_range")
