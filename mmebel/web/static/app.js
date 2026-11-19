@@ -925,6 +925,7 @@ async function accountSheet(client) {
         "🗓 Sana bo'yicha to'landi"));
     }
     actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => reportSheet(client) } }, "📄 Yetkazilganlar: PDF / nusxa"));
+    actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => settlementsSheet(client) } }, "📑 Hisob-kitoblar tarixi (PDF)"));
     box.appendChild(actions);
     box.appendChild(el("div", { class: "section-title" }, `To'lanmagan (yetkazilgan) — ${a.unsettled.length} ta`));
     if (!a.unsettled.length) box.appendChild(empty("Hammasi to'langan."));
@@ -962,6 +963,26 @@ async function accountSheet(client) {
 function lastSettlementNote(ls) {
   const when = ls.at ? ` (${fdate(ls.at)} kuni bosilgan)` : "";
   return el("p", { class: "muted small" }, `🕘 Oxirgi hisob-kitob: ${fdate(ls.from)} – ${fdate(ls.to)}, ${ls.count} ta mebel${when}`);
+}
+
+/* Hisob-kitoblar tarixi: qachon va qaysi sana oralig'ida bosilgan; PDF — admin o'zini tekshirishi uchun */
+async function settlementsSheet(client) {
+  let data;
+  try { data = await api("GET", `/api/reports/settlements?client=${encodeURIComponent(client)}`); } catch (e) { toast(e.message, true); return; }
+  sheet(() => {
+    const pdf = el("button", { class: "btn", type: "button" }, "📄 PDF yuklash");
+    pdf.addEventListener("click", async () => {
+      const r = await act(pdf, () => api("POST", "/api/reports/settlements/link", { client }));
+      if (r) { try { await openFile(r.url, "hisob-kitoblar.pdf"); } catch (e) { toast(e.message, true); } }
+    });
+    const list = !data.items.length ? empty("Hali hisob-kitob qilinmagan.") :
+      el("div", { class: "list" }, data.items.map((b) => el("div", { class: "row" },
+        el("div", { class: "grow" }, el("b", {}, b.range_label === "noma'lum" ? "Sana oralig'i noma'lum" : b.range_label),
+          el("div", { class: "sub" }, `${b.at_label} · ${b.count} ta mebel · ${b.by_name}${b.legacy ? " · eski" : ""}`)),
+        el("div", { class: "end" }, b.received === null ? "—" : money(b.received)))));
+    return el("div", {}, el("h2", {}, "Hisob-kitoblar tarixi"), el("p", { class: "muted small" }, `${client} · ${data.items.length} ta`),
+      el("div", { class: "actions" }, pdf), list);
+  });
 }
 
 /* Sana bo'yicha «To'landi»: avval ko'rinish, keyin tasdiqlash. Yetkazilgan sana bo'yicha, ikkala chegara ham kiradi. */

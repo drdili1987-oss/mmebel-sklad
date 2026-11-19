@@ -354,3 +354,34 @@ async def test_settle_all_records_last_settlement(svc):
     await svc.finance.settle_all(ADMIN, "Umid")
     last = await svc.finance.last_settlement("Umid")
     assert last["from"] == "2026-11-03" and last["to"] == "2026-11-12" and last["kind"] == "hammasi"
+
+
+@pytest.mark.asyncio
+async def test_settlement_history_batches_and_pdf(svc):
+    from datetime import date
+    from mmebel.services.settlement_report import as_pdf, settlement_report
+    a = await _delivered(svc, "BF09", "2026-11-01")      # 200$
+    b = await _delivered(svc, "BF07", "2026-11-19")      # 340$
+    c = await _delivered(svc, "BF09", "2026-11-20")      # 200$ — alohida «To'landi» (oraliqsiz, eski usul)
+    await svc.finance.settle_range(ADMIN, "Umid", date(2026, 11, 1), date(2026, 11, 19), confirm=True)
+    await svc.finance.settle_order(ADMIN, "Umid", c)
+
+    batches = await settlement_report(svc, "Umid")
+    assert len(batches) == 2
+    davr = next(x for x in batches if not x["legacy"])
+    assert davr["from"] == "2026-11-01" and davr["to"] == "2026-11-19" and davr["count"] == 2
+    assert sorted(davr["order_ids"]) == sorted([a, b]) and davr["price_total"] == 540
+    assert davr["range_label"] == "01.11.2026 – 19.11.2026" and davr["by_name"] == str(ADMIN)
+    eski = next(x for x in batches if x["legacy"])
+    assert eski["kind"] == "eski" and eski["received"] is None and eski["order_ids"] == [c]
+    assert eski["range_label"] == "noma'lum" and eski["price_total"] == 200
+    # hech bir buyurtma ikki hisob-kitobda chiqmaydi
+    assert not set(davr["order_ids"]) & set(eski["order_ids"])
+
+    pdf = as_pdf("Umid", batches)
+    assert pdf.startswith(b"%PDF") and len(pdf) > 1500
+    assert as_pdf("Umid", []).startswith(b"%PDF")        # bo'sh tarix ham xatosiz
+    pypdf = pytest.importorskip("pypdf")
+    import io
+    text = "".join(p.extract_text() for p in pypdf.PdfReader(io.BytesIO(pdf)).pages)
+    assert "01.11.2026" in text and "noma'lum" in text

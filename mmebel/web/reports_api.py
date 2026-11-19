@@ -14,6 +14,8 @@ from aiohttp import web
 from ..constants import ROLE_ADMIN
 from ..services import NotFound, ServiceError
 from ..services.delivered_report import as_csv, as_pdf, as_text, delivered_rows
+from ..services.settlement_report import as_pdf as settlements_pdf
+from ..services.settlement_report import settlement_report
 from ..utils import is_valid_key, now, parse_date
 from .api import actor, body, requires
 
@@ -71,6 +73,32 @@ async def delivered_link(request):
     return web.json_response({"url": f"/files/report/{token}", "expires_in": LINK_TTL})
 
 
+def _client(src) -> str:
+    client = str(src.get("client", "")).strip()
+    if not client or not is_valid_key(client):
+        raise ServiceError("Dillerni tanlang.")
+    return client
+
+
+@routes.get("/api/reports/settlements")
+@requires(ROLE_ADMIN)
+async def settlements(request):
+    items = await settlement_report(request.app["services"], _client(request.query))
+    slim = [{k: v for k, v in b.items() if k not in ("rows", "order_ids")} for b in items]
+    return web.json_response({"items": slim})
+
+
+@routes.post("/api/reports/settlements/link")
+@requires(ROLE_ADMIN)
+async def settlements_link(request):
+    d = await body(request)
+    token = secrets.token_urlsafe(24)
+    await request.app["services"].store.set(f"report_links/{token}", {
+        "client": _client(d), "kind": "settlements", "format": "pdf", "by": str(actor(request)),
+        "exp": int(time.time()) + LINK_TTL})
+    return web.json_response({"url": f"/files/report/{token}", "expires_in": LINK_TTL})
+
+
 @routes.get("/files/report/{token}")
 async def delivered_file(request):
     token = request.match_info["token"]
@@ -78,9 +106,15 @@ async def delivered_file(request):
     rec = await store.get(f"report_links/{token}") if is_valid_key(token) and len(token) >= 20 else None
     if not isinstance(rec, dict) or rec.get("exp", 0) < time.time():
         raise web.HTTPNotFound(text="Havola eskirgan. Ilovada qayta yuklab oling.")
-    rows = await _rows(request.app["services"], rec)
     stamp = now().strftime("%Y%m%d")
     safe = "".join(ch for ch in rec["client"] if ch.isascii() and ch.isalnum()) or "diller"
+    if rec.get("kind") == "settlements":
+        batches = await settlement_report(request.app["services"], rec["client"])
+        data, ctype, name = settlements_pdf(rec["client"], batches), "application/pdf", f"{safe}_hisob_kitoblar_{stamp}.pdf"
+        return web.Response(body=data, headers={
+            "Content-Type": ctype, "Content-Disposition": f'attachment; filename="{name}"',
+            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+    rows = await _rows(request.app["services"], rec)
     if rec["format"] == "csv":
         data, ctype, name = as_csv(rows), "text/csv; charset=utf-8", f"{safe}_yetkazilgan_{stamp}.csv"
     else:

@@ -244,11 +244,43 @@ class FinanceService:
         return max(rows, key=lambda v: v.get("at", "")) if rows else None
 
     async def _record_settlement(self, actor_id, client: str, start: str, end: str, count: int,
-                                 received: float, kind: str) -> None:
+                                 received: float, kind: str, order_ids: list[str]) -> None:
         await self.store.push(f"settlements/{client}", {
             "from": start, "to": end, "count": count, "received": received, "kind": kind,
-            "at": now_str(), "by": str(actor_id),
+            "at": now_str(), "by": str(actor_id), "order_ids": list(order_ids),
         })
+
+    async def settlement_batches(self, client: str) -> list[dict]:
+        """Barcha hisob-kitoblar, yangisi birinchi. Sana oralig'i saqlangan yangi yozuvlar + eskilari
+        (oralig'i noma'lum: faqat yopilgan kun bo'yicha guruhlanadi)."""
+        if not is_valid_key(client):
+            raise ServiceError("Mijoz nomi noto'g'ri.")
+        out: list[dict] = []
+        known: set[str] = set()
+        raw = await self.store.get(f"settlements/{client}") or {}
+        for _, v in iter_records(raw):
+            if not isinstance(v, dict):
+                continue
+            ids = [str(x) for x in (v.get("order_ids") or [])]
+            known.update(ids)
+            out.append({"at": v.get("at", ""), "from": v.get("from", ""), "to": v.get("to", ""),
+                        "count": int(v.get("count") or len(ids)), "received": money(v.get("received") or 0),
+                        "by": str(v.get("by", "")), "kind": v.get("kind", ""), "order_ids": ids, "legacy": False})
+        history = await self.store.get(f"accounting_history/{client}") or {}
+        legacy: dict[str, dict] = {}
+        for _, h in iter_records(history):
+            oid = str(h.get("order_id") or "")
+            if h.get("accounting_type") != "toliq" or not oid or oid in known:
+                continue
+            at = str(h.get("accounting_date", ""))
+            g = legacy.setdefault(at[:10], {"at": at, "from": "", "to": "", "count": 0, "received": None,
+                                            "by": str(h.get("by", "")), "kind": "eski", "order_ids": [], "legacy": True})
+            g["order_ids"].append(oid)
+            g["count"] += 1
+            g["at"] = max(g["at"], at)
+        out += legacy.values()
+        out.sort(key=lambda b: b["at"], reverse=True)
+        return out
 
     async def settle_range(self, actor_id, client: str, start: date | None, end: date | None, *,
                            confirm: bool = False) -> dict:
@@ -281,6 +313,7 @@ class FinanceService:
             raise Conflict("Bu sanalarda hisob-kitob qilinmagan yetkazilgan buyurtma yo'q.")
         settled = skipped = 0
         received = 0.0
+        done_ids: list[str] = []
         for r in rows:
             try:
                 rec, _ = await self._settle_row(actor_id, client, r)
@@ -288,9 +321,11 @@ class FinanceService:
                 skipped += 1
                 continue
             settled += 1
+            done_ids.append(r["order_id"])
             received = money(received + rec)
         if settled:
-            await self._record_settlement(actor_id, client, preview["from"], preview["to"], settled, received, "davr")
+            await self._record_settlement(actor_id, client, preview["from"], preview["to"], settled, received,
+                                          "davr", done_ids)
         debt = await self.recalc(client)
         return {**preview, "settled": settled, "skipped": skipped, "received": received, "debt": debt}
 
@@ -406,7 +441,7 @@ class FinanceService:
         dates = sorted(d for r in acc.unsettled if (d := parse_date(r.get("delivered_at"))))
         if settled and dates:
             await self._record_settlement(actor_id, client, dates[0].isoformat(), dates[-1].isoformat(),
-                                          settled, received, "hammasi")
+                                          settled, received, "hammasi", [r["order_id"] for r in acc.unsettled])
         if received > 0:
             await self.store.push(f"transactions/clients/{client}", {
                 "type": "Kirim", "amount": received, "timestamp": ts,

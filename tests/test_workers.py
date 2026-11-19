@@ -500,3 +500,16 @@ async def test_settle_range_api_admin_only(client):  # noqa: F811
     assert r.status == 409
     acc = await (await client.get("/api/accounts/Umid", headers=hdr(ADMIN))).json()
     assert acc["last_settlement"] is None
+
+
+async def test_settlements_report_api_admin_only(client):  # noqa: F811
+    for h in (hdr(OMBOR),):
+        assert (await client.get("/api/reports/settlements?client=Umid", headers=h)).status == 403
+        assert (await client.post("/api/reports/settlements/link", headers=h, json={"client": "Umid"})).status == 403
+    r = await client.get("/api/reports/settlements?client=Umid", headers=hdr(ADMIN))
+    assert r.status == 200 and (await r.json())["items"] == []
+    assert (await client.post("/api/reports/settlements/link", headers=hdr(ADMIN), json={})).status == 400
+    link = await (await client.post("/api/reports/settlements/link", headers=hdr(ADMIN), json={"client": "Umid"})).json()
+    f = await client.get(link["url"])                      # Authorization'siz, bir martalik havola
+    assert f.status == 200 and f.headers["Content-Type"] == "application/pdf"
+    assert (await f.read()).startswith(b"%PDF")
