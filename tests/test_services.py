@@ -258,3 +258,37 @@ async def test_admin_custom_product_order(svc):
         raise AssertionError
     except ServiceError:
         pass
+
+
+@pytest.mark.asyncio
+async def test_previous_settlement_not_counted_again(svc):
+    """Oy boshida hisob-kitob qilingan buyurtmalar keyingi hisob-kitobga qayta qo'shilmaydi."""
+    # 1-davr: 2 ta yetkazilgan buyurtma (200$ + 340$), biriga 50$ qisman to'lov
+    o1 = await svc.orders.create(ADMIN, client_name="Umid", product="BF09", amount=1, due_date=due())
+    o2 = await svc.orders.create(ADMIN, client_name="Umid", product="BF07", amount=1, due_date=due())
+    for o in (o1, o2):
+        await svc.orders.deliver(ADMIN, o["order_id"], driver="Baxrom", price=6)
+    await svc.finance.partial_payment(ADMIN, "Umid", 50, order_id=o1["order_id"])
+    first = await svc.finance.settle_all(ADMIN, "Umid")
+    assert first["settled"] == 2 and first["received"] == 490 and first["debt"] == 0
+
+    # 2-davr: bitta yangi buyurtma (200$)
+    o3 = await svc.orders.create(ADMIN, client_name="Umid", product="BF09", amount=1, due_date=due())
+    await svc.orders.deliver(ADMIN, o3["order_id"], driver="Baxrom", price=6)
+    acc = await svc.finance.account("Umid")
+    assert [r["order_id"] for r in acc.unsettled] == [o3["order_id"]]   # eskilari ko'rinmaydi
+    assert acc.debt == 200                                              # 540 qayta qo'shilmadi
+
+    # hisobotda ham faqat yangisi (yopilmaganlar filtri)
+    from mmebel.services.delivered_report import delivered_rows
+    rows = await delivered_rows(svc, client="Umid", unsettled_only=True)
+    assert [r["order_id"] for r in rows] == [o3["order_id"]]
+
+    # 2-hisob-kitob faqat yangisini yopadi, summa faqat 200$
+    second = await svc.finance.settle_all(ADMIN, "Umid")
+    assert second["settled"] == 1 and second["received"] == 200 and second["debt"] == 0
+    # eski buyurtmani qayta yopib bo'lmaydi, uchinchi marta bosilsa hech narsa yopilmaydi
+    with pytest.raises(Conflict):
+        await svc.finance.settle_order(ADMIN, "Umid", o1["order_id"])
+    third = await svc.finance.settle_all(ADMIN, "Umid")
+    assert third["settled"] == 0 and third["received"] == 0 and third["debt"] == 0
