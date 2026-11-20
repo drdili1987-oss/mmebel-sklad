@@ -577,3 +577,13 @@ async def test_legacy_payment_migration_to_uzs(client):  # noqa: F811
     assert await svc.workers.balance(worker_holder(wid)) == 83.33                 # kassa ham so'm kursiga to'g'rilandi
     again = await (await client.post("/api/fx/legacy", headers=hdr(ADMIN), json={"pay_ids": [pay["id"]]})).json()
     assert again["migrated"] == 0                                                 # ikki marta o'tkazilmaydi
+
+
+async def test_legacy_collect_is_ming_uzs_without_rate(client):  # noqa: F811
+    svc = client.app["services"]
+    await client.post("/api/fx", headers=hdr(ADMIN), json={"rate": 12500})
+    oid = (await (await new_order(client, "096", collect=1)).json())["id"]
+    await svc.store.update(f"orders/{oid}", {"collect": 2000, "collect_uzs": None})      # eski yozuv: 2 000
+    o = await svc.orders.get(oid)
+    assert svc.workers.expected_uzs(o, 12500) == 2_000_000                               # kurs ishtirok etmaydi
+    assert await svc.workers.remaining_uzs(oid, o) == 2_000_000

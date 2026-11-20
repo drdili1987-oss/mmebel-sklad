@@ -321,7 +321,7 @@ class OrderService:
             c_val, c_uzs = await self._collect_fields(collect)
             old_uzs = order.get("collect_uzs")
             if old_uzs is None and order.get("collect") not in (None, ""):
-                old_uzs = None      # eski (dollarlik) yozuv: har qanday yangi qiymat o'zgarish hisoblanadi
+                old_uzs = int(round(float(order["collect"]) * 1000))     # eski yozuv: «48 534» = 48 534 000 so'm
             if c_uzs != (int(old_uzs) if old_uzs not in (None, "") else None):
                 updates["collect"] = c_val
                 updates["collect_uzs"] = c_uzs

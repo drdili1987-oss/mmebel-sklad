@@ -45,7 +45,8 @@ def w_order(oid: str, o: dict) -> dict:
         "variant": o.get("variant", ""), "amount": to_int(o.get("amount"), 1), "client_name": order_client(o),
         "comment": o.get("comment", ""), "due_date": o.get("due_date", ""), "status": o.get("status", ""),
         "collect": money(o["collect"]) if o.get("collect") not in (None, "") else None,
-        "collect_uzs": int(o["collect_uzs"]) if o.get("collect_uzs") not in (None, "") else None,
+        "collect_uzs": (int(o["collect_uzs"]) if o.get("collect_uzs") not in (None, "")
+                        else int(round(float(o["collect"]) * 1000)) if o.get("collect") not in (None, "") else None),
         "assigned_at": o.get("assigned_at", ""), "delivered_at": o.get("delivered_at", ""),
         "handover": {"at": hv.get("at", ""), "correct": hv.get("correct")} if hv else None,
         "ret": {k: ret.get(k) for k in ("status", "expense", "note", "at", "worker_name")} if ret else None,

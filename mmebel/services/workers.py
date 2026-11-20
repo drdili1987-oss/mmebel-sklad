@@ -373,7 +373,7 @@ class WorkerService:
             return int(round(float(order["collect_uzs"])))
         if order.get("collect") in (None, ""):
             return None
-        return int(round(money(order["collect"]) * rate))
+        return int(round(float(order["collect"]) * 1000))     # eski yozuv: «48 534» = 48 534 000 so'm (kurs ishtirok etmaydi)
 
     async def paid_uzs_for(self, order_id: str, rate: float) -> int:
         tot = 0

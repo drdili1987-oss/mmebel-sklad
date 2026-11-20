@@ -684,9 +684,10 @@ function deliverSheet(o, pickup, onDone) {
 function editOrderSheet(o, onDone, metaOnly) {
   sheet((close) => {
     const serial = el("input", { type: "text", maxlength: "20", value: o.serial || "", placeholder: "Masalan: 001" });
-    const collectU = uzsInput({ value: o.collect_uzs != null ? o.collect_uzs / 1000 : "", placeholder: "Bo'sh — belgilanmagan" });
+    const oldUzs = o.collect_uzs != null ? o.collect_uzs : o.collect != null ? Number(o.collect) * 1000 : null;
+    const collectU = uzsInput({ value: oldUzs != null ? oldUzs / 1000 : "", placeholder: "Bo'sh — belgilanmagan" });
     const collect = collectU.input;
-    const oldCollect = o.collect_uzs != null ? o.collect_uzs / 1000 : null;
+    const oldCollect = oldUzs != null ? oldUzs / 1000 : null;
     // Admin: mebel nomi va narxi ham tahrirlanadi (xato bo'lsa buyurtmani bekor qilib qayta ochish shart emas)
     const product = el("input", { type: "text", maxlength: "60", value: o.product_id || "", list: "models-dl3", autocomplete: "off" });
     const dl = el("datalist", { id: "models-dl3" }, (S.me.meta.models || []).map((x) => el("option", { value: x })));
