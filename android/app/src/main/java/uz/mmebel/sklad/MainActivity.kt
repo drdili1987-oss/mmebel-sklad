@@ -110,6 +110,10 @@ class MainActivity : ComponentActivity() {
             }
         }
         web.webViewClient = PanelClient()
+        web.setDownloadListener { url, _, contentDisposition, mime, _ ->
+            val u = Uri.parse(url)
+            if (isOwn(u) && (u.path ?: "").startsWith("/files/report/")) downloadReport(url, contentDisposition, mime)
+        }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -189,6 +193,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Hisobot (PDF/CSV) ni telefonning «Yuklanmalar» papkasiga yuklaydi. */
+    private fun downloadReport(url: String, contentDisposition: String?, mime: String?) {
+        try {
+            val uri = Uri.parse(url)
+            val name = android.webkit.URLUtil.guessFileName(url, contentDisposition, mime)
+            val req = android.app.DownloadManager.Request(uri)
+                .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, name)
+            if (mime != null) req.setMimeType(mime)
+            (getSystemService(DOWNLOAD_SERVICE) as android.app.DownloadManager).enqueue(req)
+            Toast.makeText(this, "Yuklanmoqda: $name (Yuklanmalar papkasi)", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Faylni yuklab bo'lmadi: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
     /** Panel JS kodi chaqiradigan ko'prik: window.MMebelApp.openExternal(url) */
     inner class AppBridge {
         @JavascriptInterface
@@ -196,6 +216,15 @@ class MainActivity : ComponentActivity() {
             val uri = Uri.parse(url)
             // Faqat Telegram havolalariga ruxsat — boshqa sxemalar ochilmaydi
             if (uri.scheme == "https" && uri.host == "t.me") runOnUiThread { openExternal(url) }
+        }
+
+        /** Faqat o'z serverimizdagi bir martalik hisobot havolasi */
+        @JavascriptInterface
+        fun downloadFile(url: String) {
+            val uri = Uri.parse(url)
+            if (isOwn(uri) && (uri.path ?: "").startsWith("/files/report/")) {
+                runOnUiThread { downloadReport(url, null, null) }
+            }
         }
     }
 

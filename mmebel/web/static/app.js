@@ -1352,14 +1352,12 @@ async function settingsSection(holder) {
 /* Fayl Authorization sarlavhasisiz ochilishi uchun bir martalik qisqa havola olinadi */
 async function openFile(path, filename) {
   const url = location.origin + path;
-  if (window.MMebelApp && window.MMebelApp.openExternal) { window.MMebelApp.openExternal(url); return; }  // Android ilova
+  if (window.MMebelApp && window.MMebelApp.downloadFile) { window.MMebelApp.downloadFile(url); return; }  // Android ilova: Yuklanmalar papkasiga
+  if (window.MMebelApp && window.MMebelApp.openExternal) { window.MMebelApp.openExternal(url); return; }
   if (IN_TELEGRAM && tg.openLink) { tg.openLink(url); return; }
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Faylni yuklab bo'lmadi.");
-  const blobUrl = URL.createObjectURL(await res.blob());
-  const a = el("a", { href: blobUrl, download: filename });
+  // Telefon brauzeri/PWA: havola «attachment» bilan keladi — sahifadan chiqmasdan yuklanadi (blob yuklash iPhone'da ishlamaydi)
+  const a = el("a", { href: url, download: filename, rel: "noopener" });
   document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
 }
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); toast("Nusxa olindi — Excel yoki Telegram'ga joylashtiring"); return; } catch (_) { /* quyida */ }
@@ -1386,7 +1384,7 @@ function reportSheet(client) {
         clear(preview).appendChild(d.items.length ? el("div", { class: "list" }, d.items.slice(0, 50).map((r) => el("div", { class: "row" },
           el("div", { class: "grow" }, el("div", {}, r.serial ? el("span", { class: "serial" }, `№${r.serial}`) : "— ", plabel({ product_id: r.product, variant: r.variant })),
             el("div", { class: "sub" }, `${fdate(r.delivered_at)}${r.settled ? " · ✅ hisob-kitob" : ""}`)),
-          el("div", { class: "end" }, money(r.price), el("div", { class: "sub" }, `olindi ${money(r.collected)}`))))) : empty("Ro'yxat bo'sh."));
+          el("div", { class: "end" }, money(r.price), el("div", { class: "sub" }, `olindi ${uzs(r.collected_uzs || 0)}`))))) : empty("Ro'yxat bo'sh."));
         preview.dataset.text = d.text;
       } catch (e) { info.textContent = e.message; }
     };
