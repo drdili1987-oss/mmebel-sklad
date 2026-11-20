@@ -1677,7 +1677,9 @@ function handoverSheet(o, mode) {
       addPhoto.classList.toggle("is-disabled", photos.length >= 5);
     };
     fileInput.addEventListener("change", async () => {
-      for (const f of Array.from(fileInput.files || [])) {
+      const picked = Array.from(fileInput.files || []);
+      if (picked.length) toast(`Rasm yuklanmoqda (${picked.length} ta)…`);
+      for (const f of picked) {
         if (photos.length >= 5) { toast("Ko'pi bilan 5 ta rasm.", true); break; }
         try { const blob = await compressImage(f); photos.push({ blob, url: URL.createObjectURL(blob) }); } catch (e) { toast(`${e.message} [${f.name || "?"}, ${f.type || "tur yo'q"}, ${f.size}B]`, true); }
       }

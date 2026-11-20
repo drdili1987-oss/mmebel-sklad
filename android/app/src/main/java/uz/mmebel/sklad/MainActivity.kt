@@ -47,8 +47,16 @@ class MainActivity : ComponentActivity() {
     /** <input type="file"> (skrinshot yuklash) uchun: WebView o'zi rasm tanlash oynasini ochmaydi. */
     private var fileCallback: ValueCallback<Array<Uri>>? = null
     private val pickFiles = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
-        val uris = WebChromeClient.FileChooserParams.parseResult(res.resultCode, res.data)
-        fileCallback?.onReceiveValue(uris)
+        // Galereya ba'zan faqat clipData (ko'p rasm), ba'zan data (bitta rasm) qaytaradi — ikkalasini o'zimiz o'qiymiz
+        val d = res.data
+        val list = ArrayList<Uri>()
+        if (res.resultCode == RESULT_OK && d != null) {
+            val clip = d.clipData
+            if (clip != null) for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let { list.add(it) }
+            else d.data?.let { list.add(it) }
+        }
+        Toast.makeText(this, if (list.isEmpty()) "Rasm tanlanmadi" else "Tanlandi: ${list.size} ta rasm", Toast.LENGTH_SHORT).show()
+        fileCallback?.onReceiveValue(if (list.isEmpty()) null else list.toTypedArray())
         fileCallback = null
     }
 
