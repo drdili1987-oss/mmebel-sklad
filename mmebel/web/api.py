@@ -672,6 +672,12 @@ async def fx_legacy_run(request):
     return web.json_response(await S(request).workers.migrate_legacy(actor(request), ids, d.get("rate")))
 
 
+@routes.delete("/api/orders/{id}/purge")
+@requires(ROLE_ADMIN)
+async def order_purge(request):
+    return web.json_response(await S(request).workers.purge_order(actor(request), request.match_info["id"]))
+
+
 @routes.get("/api/fx/cash")
 @requires(ROLE_ADMIN)
 async def fx_cash(request):

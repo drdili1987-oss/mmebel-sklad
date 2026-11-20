@@ -605,3 +605,23 @@ async def test_cash_migration_to_uzs_x1000_ignores_fx_fix(client):  # noqa: F811
     r = await client.post("/api/fx/cash", headers=hdr(ADMIN), json={"holders": [h]})
     assert (await r.json())["migrated"] == 0 and await svc.workers.balance(h) == 2_000_000   # ikki marta qo'shilmaydi
     assert await svc.store.get(f"cash/{h}") == 2000                                      # eski zaxira joyida
+
+
+async def test_admin_purges_delivered_order_and_reverses_cash(client):  # noqa: F811
+    svc = client.app["services"]
+    wid = await make_worker(client)
+    oid = (await (await new_order(client, "097", collect=300)).json())["id"]
+    await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": wid})
+    r = await client.post(f"/api/w/orders/{oid}/handover", headers=hdr(WORKER_UID), json={"correct": True, "amount": 300, "method": "naqd"})
+    assert r.status == 200, await r.text()
+    h = f"w_{wid}"
+    assert await svc.workers.balance(h) == 300_000
+    assert (await client.delete(f"/api/orders/{oid}/purge", headers=hdr(OMBOR))).status == 403
+    r = await client.delete(f"/api/orders/{oid}/purge", headers=hdr(ADMIN))
+    assert r.status == 200 and (await r.json())["cash_reversed_uzs"] == 300_000
+    assert await svc.workers.balance(h) == 0                                  # kassadan ayirildi
+    assert await svc.store.get(f"orders/{oid}") is None
+    assert not [x for x in await svc.finance.history("Umid") if x.get("order_id") == oid]
+    assert await svc.workers.payments(order_id=oid) == []
+    assert (await svc.finance.account("Umid")).debt == 0
+    assert (await client.delete(f"/api/orders/{oid}/purge", headers=hdr(ADMIN))).status == 404

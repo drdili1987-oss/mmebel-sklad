@@ -617,6 +617,15 @@ async function orderSheet(id) {
       } } }, "Buyurtmani bekor qilish"));
     } else if (role === "admin" && o.status !== "Bekor qilindi") {
       actions.appendChild(el("button", { class: "btn ghost", type: "button", on: { click: () => editOrderSheet(o, done, true) } }, "✏️ Narx / tartib raqam / qoldiqni to'g'rilash"));
+      if (o.status !== "Hisob kitob qilindi" && !ACTIVE.includes(o.status)) {
+        const del = el("button", { class: "btn ghost", type: "button", style: "color:var(--st-late)" }, "🗑 Tarixdan butunlay o'chirish");
+        del.addEventListener("click", async () => {
+          if (!(await confirmDlg("Bu buyurtma butunlay o'chiriladi: diller hisobidagi to'lovlari va yig'uvchi to'lovlari ham, naqdi yig'uvchi kassasidan ayiriladi. Qaytarib bo'lmaydi. O'chirilsinmi?"))) return;
+          const r = await act(del, () => api("DELETE", `/api/orders/${encodeURIComponent(o.id)}/purge`), "O'chirildi");
+          if (r) done();
+        });
+        actions.appendChild(del);
+      }
     }
     const pays = el("div");
     if (staff && (o.worker_id || o.handover) && !isActive) loadOrderPays(o.id, pays);

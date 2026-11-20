@@ -27,6 +27,7 @@ from ..constants import (
     ROLE_MIJOZ,
     ROLE_OMBORCHI,
     ROLE_YIGUVCHI,
+    ST_CANCELLED,
     ST_SETTLED,
 )
 from ..store import Store
@@ -707,6 +708,45 @@ class WorkerService:
         new = await self.store.transaction(f"cash_uzs/{holder}", lambda cur: int(round(float(cur or 0))) + d)
         await self.store.push(f"cash_log_uzs/{holder}", {**entry, "amount": d, "ts": now_str(), "balance": int(new)})
         return int(new)
+
+    # ---------- yetkazilgan buyurtmani tarixdan butunlay o'chirish (faqat admin) ----------
+    async def purge_order(self, actor_id, order_id: str) -> dict:
+        """Yetkazilgan/bekor qilingan buyurtmani butunlay o'chiradi: diller hisobidagi to'lovlari, yig'uvchi to'lovlari
+        (naqdi yig'uvchi kassasidan ayiriladi). Hisob-kitob qilingan (yopilgan) buyurtma o'chirilmaydi."""
+        order = await self.orders.get(order_id)
+        if order.get("status") not in DELIVERED_STATUSES and order.get("status") != ST_CANCELLED:
+            raise ServiceError("Faqat yetkazilgan yoki bekor qilingan buyurtmani o'chirib bo'ladi.")
+        client = order_client(order)
+        hist_path = f"accounting_history/{client}"
+        hist = [(k, h) for k, h in iter_records(await self.store.get(hist_path) or {}) if h.get("order_id") == order_id] \
+            if client and is_valid_key(client) else []
+        if order.get("status") == ST_SETTLED or any(h.get("accounting_type") != "qisman" or h.get("settled") for _, h in hist):
+            raise ServiceError("Hisob-kitob qilingan buyurtmani o'chirib bo'lmaydi.")
+        pays = await self.payments(order_id=order_id)
+        reversed_uzs = 0
+        for p in pays:
+            if p.get("method") == "naqd" and p.get("worker_id"):
+                u = int(round(float(p["uzs"]))) if p.get("uzs") is not None else int(round(float(p.get("amount") or 0) * 1000))
+                if u:
+                    await self._cash_add(worker_holder(p["worker_id"]), -u, {
+                        "kind": "order_deleted", "order_id": order_id,
+                        "text": f"{human_date(now_str())}: buyurtma o'chirildi, {fmt_uzs(u)} kassadan ayirildi ({order.get('product_id', '')}"
+                                + (f", №{order['serial']}" if order.get("serial") else "") + ")"})
+                    reversed_uzs += u
+            await self.store.delete(f"wpay/{p['id']}")
+        for k, _ in hist:
+            await self.store.delete(f"{hist_path}/{k}")
+        if client and is_valid_key(client):
+            for k, t in iter_records(await self.store.get(f"transactions/clients/{client}") or {}):
+                if f": {order_id}" in str(t.get("note", "")):
+                    await self.store.delete(f"transactions/clients/{client}/{k}")
+        await self.store.delete(f"orders/{order_id}")
+        await self._audit(actor_id, "order_purge", {"order_id": order_id, "client": client, "serial": order.get("serial", ""),
+                                                    "product_id": order.get("product_id", ""), "status": order.get("status", ""),
+                                                    "cash_reversed_uzs": reversed_uzs, "payments": len(pays)})
+        if client and is_valid_key(client):
+            await self.finance.recalc(client)
+        return {"deleted": order_id, "cash_reversed_uzs": reversed_uzs}
 
     # ---------- eski dollarlik kassani so'mga o'tkazish (admin tasdig'i bilan; zaxira `cash`/`cash_log` saqlanadi) ----------
     async def _legacy_cash_entries(self, holder: str) -> list[dict]:
