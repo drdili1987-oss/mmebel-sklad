@@ -44,12 +44,12 @@ def w_order(oid: str, o: dict) -> dict:
         "id": oid, "serial": o.get("serial", ""), "product_id": o.get("product_id", ""),
         "variant": o.get("variant", ""), "amount": to_int(o.get("amount"), 1), "client_name": order_client(o),
         "comment": o.get("comment", ""), "due_date": o.get("due_date", ""), "status": o.get("status", ""),
-        "collect": money(o["collect"]) if o.get("collect") not in (None, "") else None,
         "collect_uzs": (int(o["collect_uzs"]) if o.get("collect_uzs") not in (None, "")
                         else int(round(float(o["collect"]) * 1000)) if o.get("collect") not in (None, "") else None),
         "assigned_at": o.get("assigned_at", ""), "delivered_at": o.get("delivered_at", ""),
         "handover": {"at": hv.get("at", ""), "correct": hv.get("correct")} if hv else None,
-        "ret": {k: ret.get(k) for k in ("status", "expense", "note", "at", "worker_name")} if ret else None,
+        "ret": ({**{k: ret.get(k) for k in ("status", "note", "at", "worker_name")},
+                 "expense_uzs": int(round(float(ret.get("expense") or 0) * 1000))} if ret else None),
         "defect": {"open": bool(defect.get("open")), "note": defect.get("note", ""), "at": defect.get("at", ""),
                    "worker_name": defect.get("worker_name", ""),
                    "history": defect.get("history") or []} if defect else None,
@@ -64,9 +64,20 @@ def pay_out(p: dict, admin: bool = False) -> dict:
     out["photos"] = len(p.get("photos") or [])
     if admin:
         out["rate"] = p.get("rate")
-    else:   # kurs faqat adminga ko'rinadi
-        if out.get("edit_req"):
-            out["edit_req"] = {k: v for k, v in out["edit_req"].items() if k != "rate"}
+    else:   # kurs va dollar faqat adminga ko'rinadi; eski yozuvda summa ming so'm deb olinadi
+        if out.get("uzs") is None:
+            out["uzs"] = int(round(float(p.get("amount") or 0) * 1000))
+        out["expected_uzs"] = out.get("expected_uzs") or int(round(float(p.get("expected") or 0) * 1000))
+        for k in ("amount", "expected"):
+            out.pop(k, None)
+        er = out.get("edit_req")
+        if er:
+            er = dict(er)
+            er.setdefault("old_uzs", int(round(float(er.get("old_amount") or 0) * 1000)))
+            er.setdefault("new_uzs", int(round(float(er.get("new_amount") or 0) * 1000)))
+            for k in ("old_amount", "new_amount", "rate"):
+                er.pop(k, None)
+            out["edit_req"] = er
     return out
 
 
@@ -78,11 +89,14 @@ async def w_me(request):
     active, done = await S(request).workers.orders_for(wid)
     holder = worker_holder(wid)
     paid: dict[str, float] = {}
+    paid_uzs: dict[str, int] = {}
     methods: dict[str, set] = {}
     my_pays = await S(request).workers.payments(wid=wid)
     for p in await S(request).workers.payments():  # boshqa yig'uvchi olgan qism ham qoldiqqa ta'sir qiladi
         if p.get("worker_id") != wid:
             paid[p["order_id"]] = money(paid.get(p["order_id"], 0) + (p.get("amount") or 0))
+        paid_uzs[p["order_id"]] = paid_uzs.get(p["order_id"], 0) + (
+            int(round(float(p["uzs"]))) if p.get("uzs") is not None else int(round(float(p.get("amount") or 0) * 1000)))
     for p in my_pays:
         paid[p["order_id"]] = money(paid.get(p["order_id"], 0) + (p.get("amount") or 0))
         methods.setdefault(p["order_id"], set()).add(p.get("method", ""))
@@ -90,10 +104,9 @@ async def w_me(request):
     return web.json_response({
         "worker": {"id": wid, "name": w.get("name", ""), "phone": w.get("phone", "")},
         "cash": await S(request).workers.balance(holder),
-        "active": [dict(w_order(k, v), paid=paid.get(k, 0.0),
-                        left=await S(request).workers.remaining(k, v),
+        "active": [dict(w_order(k, v), paid_uzs=paid_uzs.get(k, 0),
                         left_uzs=await S(request).workers.remaining_uzs(k, v)) for k, v in active],
-        "done": [dict(w_order(k, v), paid=paid.get(k, 0.0), method="+".join(sorted(methods.get(k, set()))),
+        "done": [dict(w_order(k, v), paid_uzs=paid_uzs.get(k, 0), method="+".join(sorted(methods.get(k, set()))),
                       payments=[pay_out(p) for p in my_pays if p["order_id"] == k])
                  for k, v in done[:60]],
         "log": (await S(request).workers.log(holder))[:100],

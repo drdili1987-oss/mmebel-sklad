@@ -437,17 +437,17 @@ function approvalsSheet(d) {
       box.appendChild(el("div", { class: "section-title" }, "↩️ Skladga qaytdi"));
       box.appendChild(el("div", { class: "list" }, d.returns.map((x) => el("div", { class: "row", style: "flex-wrap:wrap" },
         el("div", { class: "grow" }, el("b", {}, lbl(x)), el("div", { class: "sub" }, [`🧰 ${x.worker_name}`, fdate(x.at), x.note].filter(Boolean).join(" · "))),
-        el("div", { class: "end" }, x.expense ? el("b", {}, `xarajat ${money(x.expense)}`) : "xarajatsiz"),
+        el("div", { class: "end" }, x.expense ? el("b", {}, `xarajat ${uzs(x.expense * 1000)}`) : "xarajatsiz"),
         resolveBtns(`/api/orders/${encodeURIComponent(x.order_id)}/return/resolve`, "Tasdiqlandi — «Qaytgan mebellar» ga tushdi",
-          `Mebel skladga qaytganini tasdiqlaysizmi?${x.expense ? " Xarajat " + money(x.expense) + " fabrika hisobidan yoziladi." : ""}`, "Rad etilsinmi? Mebel yig'uvchida qoladi.")))));
+          `Mebel skladga qaytganini tasdiqlaysizmi?${x.expense ? " Xarajat " + uzs(x.expense * 1000) + " fabrika hisobidan yoziladi." : ""}`, "Rad etilsinmi? Mebel yig'uvchida qoladi.")))));
     }
     if (d.edits.length) {
       box.appendChild(el("div", { class: "section-title" }, "✏️ Olingan summani tuzatish"));
       box.appendChild(el("div", { class: "list" }, d.edits.map((x) => el("div", { class: "row", style: "flex-wrap:wrap" },
         el("div", { class: "grow" }, el("b", {}, lbl(x)), el("div", { class: "sub" }, [`🧰 ${x.worker_name}`, x.method === "karta" ? "💳 karta" : "💵 naqd", x.note].filter(Boolean).join(" · "))),
-        el("div", { class: "end" }, `${money(x.old_amount)} → `, el("b", {}, money(x.new_amount))),
+        el("div", { class: "end" }, `${uzs(x.old_uzs)} → `, el("b", {}, uzs(x.new_uzs))),
         resolveBtns(`/api/wpay/${encodeURIComponent(x.pay_id)}/edit/resolve`, "Tasdiqlandi — hisob yangilandi",
-          `${money(x.old_amount)} → ${money(x.new_amount)} tasdiqlansinmi? Diller qarzi va yig'uvchi kassasi o'zgaradi.`, "Rad etilsinmi?")))));
+          `${uzs(x.old_uzs)} → ${uzs(x.new_uzs)} tasdiqlansinmi? Diller qarzi va yig'uvchi kassasi o'zgaradi.`, "Rad etilsinmi?")))));
     }
     if (d.transfers.length) {
       box.appendChild(el("div", { class: "section-title" }, "💰 Pul topshirish"));
@@ -571,7 +571,7 @@ async function orderSheet(id) {
     const info = el("div");
     if (staff && o.ret && o.ret.status === "pending") {
       info.appendChild(el("div", { class: "unread-banner", style: "display:block" }, el("b", {}, `↩️ ${o.ret.worker_name}: skladga qaytdi — tasdiqlang`),
-        el("div", { class: "small" }, [o.ret.expense ? "Xarajat " + money(o.ret.expense) : "Xarajat yo'q", o.ret.note].filter(Boolean).join(" · "))));
+        el("div", { class: "small" }, [o.ret.expense ? "Xarajat " + uzs(o.ret.expense * 1000) : "Xarajat yo'q", o.ret.note].filter(Boolean).join(" · "))));
       const resolve = (approve) => async (e) => {
         if (!(await confirmDlg(approve ? "Skladga qaytganini tasdiqlaysizmi?" : "Rad etilsinmi? Mebel yig'uvchida qoladi."))) return;
         if (await act(e.target, () => api("POST", `/api/orders/${encodeURIComponent(o.id)}/return/resolve`, { approve }), approve ? "Tasdiqlandi" : "Rad etildi")) done();
@@ -1571,7 +1571,7 @@ async function viewWHome() {
         el("div", { class: "grow" }, el("div", {}, o.serial ? el("span", { class: "serial" }, `№${o.serial}`) : null, el("b", {}, plabel(o))),
           el("div", { class: "sub" }, [fdate(o.delivered_at), o.client_name, o.defect && o.defect.open ? "⚠️ tugallanmagan" : (o.handover && o.handover.correct === false ? "⚠️ chala" : null),
             pend ? "⏳ tuzatish tasdiqlanmoqda" : null].filter(Boolean).join(" · "))),
-        el("div", { class: "end" }, money(o.paid), el("div", { class: "sub" }, o.method === "karta" ? "💳" : o.method ? "💵" : "")));
+        el("div", { class: "end" }, uzs(o.paid_uzs || 0), el("div", { class: "sub" }, o.method === "karta" ? "💳" : o.method ? "💵" : "")));
     })));
   }
 }
@@ -1583,7 +1583,7 @@ function wOrderSheet(o) {
     const kv = el("dl", { class: "kv" },
       el("dt", {}, "Diller"), el("dd", {}, o.client_name || "—"),
       o.comment ? [el("dt", {}, "Izoh"), el("dd", {}, o.comment)] : null,
-      el("dt", {}, "Olinadigan qoldiq"), el("dd", {}, o.left_uzs != null ? el("b", {}, uzs(o.left_uzs)) : o.collect != null ? el("b", {}, money(o.collect)) : "Belgilanmagan"),
+      el("dt", {}, "Olinadigan qoldiq"), el("dd", {}, o.left_uzs != null ? el("b", {}, uzs(o.left_uzs)) : "Belgilanmagan"),
       el("dt", {}, "Yuborildi"), el("dd", {}, fdate(o.assigned_at)));
     const box = el("div", {}, el("div", { class: "code-big" }, `${o.serial ? "№" + o.serial + " · " : ""}${plabel(o)} × ${o.amount}`));
     // Tugallanmagan mebel: oldingi yig'uvchi izohi va qolgan summa
@@ -1596,7 +1596,7 @@ function wOrderSheet(o) {
     box.appendChild(kv);
     const actions = el("div", { class: "actions" });
     if (pendingRet) {
-      actions.appendChild(el("p", { class: "muted" }, `⏳ Skladga qaytarish tasdiqlanishi kutilmoqda${o.ret.expense ? " (xarajat " + money(o.ret.expense) + ")" : ""}.`));
+      actions.appendChild(el("p", { class: "muted" }, `⏳ Skladga qaytarish tasdiqlanishi kutilmoqda${o.ret.expense_uzs ? " (xarajat " + uzs(o.ret.expense_uzs) + ")" : ""}.`));
     } else {
       actions.append(
         el("button", { class: "btn", type: "button", on: { click: () => { close(); handoverSheet(o, defect ? "complete" : "handover"); } } }, "✅ Mebel mijozga topshirildi"),
@@ -1632,16 +1632,16 @@ function wDoneSheet(o) {
       el("dl", { class: "kv" },
         el("dt", {}, "Diller"), el("dd", {}, o.client_name),
         el("dt", {}, "Topshirildi"), el("dd", {}, fdate(o.delivered_at)),
-        el("dt", {}, "Kutilgan qoldiq"), el("dd", {}, o.collect != null ? money(o.collect) : "—"),
-        el("dt", {}, "Olingan (jami)"), el("dd", {}, el("b", {}, money(o.paid)))));
+        el("dt", {}, "Kutilgan qoldiq"), el("dd", {}, o.collect_uzs != null ? uzs(o.collect_uzs) : "—"),
+        el("dt", {}, "Olingan (jami)"), el("dd", {}, el("b", {}, uzs(o.paid_uzs || 0)))));
     const mine = o.payments || [];
     if (mine.length) {
       box.appendChild(el("div", { class: "section-title" }, "Siz kiritgan to'lovlar"));
       box.appendChild(el("div", { class: "list" }, mine.map((p) => {
         const pend = p.edit_req && p.edit_req.status === "pending";
         return el("div", { class: "row", style: "flex-wrap:wrap" },
-          el("div", { class: "grow" }, el("b", {}, money(p.amount)), ` · ${p.method === "karta" ? "💳 karta" : "💵 naqd"}`,
-            el("div", { class: "sub" }, [fdate(p.ts), pend ? `⏳ ${money(p.edit_req.old_amount)} → ${money(p.edit_req.new_amount)} tasdiqlanmoqda`
+          el("div", { class: "grow" }, el("b", {}, uzs(p.uzs)), ` · ${p.method === "karta" ? "💳 karta" : "💵 naqd"}`,
+            el("div", { class: "sub" }, [fdate(p.ts), pend ? `⏳ ${uzs(p.edit_req.old_uzs)} → ${uzs(p.edit_req.new_uzs)} tasdiqlanmoqda`
               : p.edit_req && p.edit_req.status === "rejected" ? "❌ oxirgi tuzatish rad etilgan" : null].filter(Boolean).join(" · "))),
           pend ? null : el("button", { class: "btn ghost", type: "button", style: "width:auto;padding:6px 12px", on: { click: () => { close(); payEditSheet(p); } } }, "✏️ Tahrirlash"));
       })));
@@ -1654,8 +1654,8 @@ function wDoneSheet(o) {
 /* Olingan summani tuzatish — admin/omborchi tasdiqlagach kuchga kiradi */
 function payEditSheet(p) {
   sheet((close) => {
-    const soum = p.uzs != null;     // so'mda olingan to'lov: «ming so'm»da tuzatiladi
-    const amountU = uzsInput({ value: soum ? p.uzs / 1000 : p.amount });
+    const soum = true;     // so'mda olingan to'lov: «ming so'm»da tuzatiladi
+    const amountU = uzsInput({ value: p.uzs / 1000 });
     const amount = amountU.input;
     const note = el("textarea", { maxlength: "300", placeholder: "Nima uchun o'zgartiryapsiz" });
     const save = el("button", { class: "btn", type: "button" }, "Tasdiqlashga yuborish");
@@ -1667,7 +1667,7 @@ function payEditSheet(p) {
       if (r) { close(); refresh(); }
     });
     return el("div", {}, el("h2", {}, "Olingan summani tuzatish"),
-      el("p", { class: "muted small" }, `Hozir: ${soum ? uzs(p.uzs) : money(p.amount)} (${p.method === "karta" ? "karta" : "naqd"})`),
+      el("p", { class: "muted small" }, `Hozir: ${uzs(p.uzs)} (${p.method === "karta" ? "karta" : "naqd"})`),
       field(soum ? "Mijozdan olingan summa (ming so'm)" : "Mijozdan olingan summa ($)", soum ? amountU.node : amount), field("Sabab", note),
       el("p", { class: "muted small" }, "Admin yoki omborchi tasdiqlagandan keyingina hisob o'zgaradi."),
       el("div", { class: "actions" }, save));

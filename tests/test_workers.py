@@ -120,7 +120,7 @@ async def test_full_flow_cash_card_and_transfers(client):  # noqa: F811
         assert r.status == 200, await r.text()
     me = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
     assert {o["id"] for o in me["active"]} == {oid, oid2}
-    assert "price" not in me["active"][0] and me["active"][0]["collect"] in (300, 200)
+    assert "price" not in me["active"][0] and me["active"][0]["collect_uzs"] in (300000, 200000)
     client.sent.clear()
 
     # «Yo'q» — izohsiz saqlanmaydi; «Ha» — kutilgandan boshqa summa izohsiz saqlanmaydi
@@ -167,7 +167,7 @@ async def test_full_flow_cash_card_and_transfers(client):  # noqa: F811
     assert (await services.finance.account("Umid")).debt == 230
     me = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
     assert me["cash"] == 300000                             # karta yig'uvchi kassasiga qo'shilmaydi
-    assert {o["id"]: o["paid"] for o in me["done"]} == {oid: 300, oid2: 150}
+    assert {o["id"]: o["paid_uzs"] for o in me["done"]} == {oid: 300000, oid2: 150000}
 
     # qolgan 50$ ni keyin naqd oldi
     r = await client.post(f"/api/w/orders/{oid2}/payment", headers=hdr(WORKER_UID),
@@ -401,7 +401,7 @@ async def test_defect_reassign_and_completion(client):  # noqa: F811
     assert r.status == 200, await r.text()
     me2 = await (await client.get("/api/w/me", headers=hdr(78))).json()
     o2 = me2["active"][0]
-    assert o2["id"] == oid and o2["left"] == 180 and "Fasad" in o2["defect"]["note"]
+    assert o2["id"] == oid and o2["left_uzs"] == 180000 and "Fasad" in o2["defect"]["note"]
     r = await client.post(f"/api/w/orders/{oid}/handover", headers=hdr(78),
                           json={"correct": True, "amount": 180, "method": "naqd"})
     assert r.status == 200, await r.text()
@@ -638,3 +638,22 @@ def test_pdf_collected_column_is_uzs_only():
     page = PdfReader(io.BytesIO(as_pdf(rows, title="T", subtitle="S"))).pages[0].extract_text()
     assert "2 060 000 so'm" in page and "50 $" not in page      # olingan pul faqat so'mda, narxi $ da
     assert "100 $" in page
+
+
+async def test_worker_sees_no_dollars(client):  # noqa: F811
+    wid = await make_worker(client)
+    oid = (await (await new_order(client, "098", collect=300)).json())["id"]
+    await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": wid})
+    await client.post(f"/api/w/orders/{oid}/handover", headers=hdr(WORKER_UID), json={"correct": True, "amount": 300, "method": "naqd"})
+    me = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
+    def keys(x):
+        if isinstance(x, dict):
+            for k, v in x.items():
+                yield k
+                yield from keys(v)
+        elif isinstance(x, list):
+            for v in x:
+                yield from keys(v)
+    assert not ({"paid", "left", "collect", "rate", "expected"} & set(keys(me)))     # yig'uvchiga dollar/kurs maydonlari chiqmaydi
+    d = me["done"][0]
+    assert d["paid_uzs"] == 300_000 and d["collect_uzs"] == 300_000

@@ -387,7 +387,7 @@ class WorkerService:
             if p.get("uzs") is not None:
                 tot += int(round(float(p["uzs"])))
             else:
-                tot += int(round(money(p.get("amount") or 0) * float(p.get("rate") or rate)))
+                tot += int(round(money(p.get("amount") or 0) * 1000))      # eski yozuv: ming so'm
         return tot
 
     async def remaining_uzs(self, order_id: str, order: dict) -> int | None:
@@ -618,7 +618,11 @@ class WorkerService:
                 returned.append(oid)
         edits = [{"pay_id": k, "order_id": v.get("order_id"), "serial": v.get("serial", ""),
                   "product_id": v.get("product_id", ""), "client": v.get("client", ""), "method": v.get("method"),
-                  **v["edit_req"]}
+                  **v["edit_req"],
+                  "old_uzs": v["edit_req"].get("old_uzs") if v["edit_req"].get("old_uzs") is not None
+                  else int(round(float(v["edit_req"].get("old_amount") or 0) * 1000)),
+                  "new_uzs": v["edit_req"].get("new_uzs") if v["edit_req"].get("new_uzs") is not None
+                  else int(round(float(v["edit_req"].get("new_amount") or 0) * 1000))}
                  for k, v in iter_records(await self.store.get("wpay") or {})
                  if (v.get("edit_req") or {}).get("status") == "pending"]
         return {"returns": returns, "edits": edits, "defect_count": len(defects), "returned_count": len(returned)}
