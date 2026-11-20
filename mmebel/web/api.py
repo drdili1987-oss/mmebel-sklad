@@ -672,6 +672,21 @@ async def fx_legacy_run(request):
     return web.json_response(await S(request).workers.migrate_legacy(actor(request), ids, d.get("rate")))
 
 
+@routes.get("/api/fx/cash")
+@requires(ROLE_ADMIN)
+async def fx_cash(request):
+    return web.json_response({"items": await S(request).workers.cash_migration_preview()})
+
+
+@routes.post("/api/fx/cash")
+@requires(ROLE_ADMIN)
+async def fx_cash_run(request):
+    d = await body(request)
+    if not isinstance(d.get("holders"), list) or not d["holders"]:
+        raise ServiceError("Kamida bitta kassani tanlang.")
+    return web.json_response(await S(request).workers.cash_migration_apply(actor(request), d["holders"]))
+
+
 @routes.get("/api/fx/convert")
 @requires(ROLE_ADMIN)
 async def fx_convert(request):

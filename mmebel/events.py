@@ -151,7 +151,7 @@ class Events:
 
     async def transfer_requested(self, t: dict) -> None:
         who = "Mebel yig'uvchi" if t.get("from_kind") == "worker" else "Omborchi"
-        text = (f"💰 <b>{who} {h(t['from_name'])} sizga {fmt_money(t['amount'])} topshirdi.</b>\n"
+        text = (f"💰 <b>{who} {h(t['from_name'])} sizga {fmt_uzs(t['amount'])} topshirdi.</b>\n"
                 f"Pulni qabul qilgan bo'lsangiz — ilovada tasdiqlang (Asosiy → Kassa).")
         await self.n.to_roles([t["to_role"]], text, sound="new")
 
@@ -161,7 +161,7 @@ class Events:
         if t["status"] == "approved":
             msg = f"✅ <b>Topshirish tasdiqlandi</b>\n{h(t.get('text', ''))}"
         else:
-            msg = (f"❌ <b>Topshirish rad etildi</b> ({fmt_money(t['amount'])}).\n"
+            msg = (f"❌ <b>Topshirish rad etildi</b> ({fmt_uzs(t['amount'])}).\n"
                    f"Rad etgan: {h(t.get('resolved_name', ''))}. Iltimos, bog'laning.")
         await self.n.send(int(t["from_uid"]), msg)
 
@@ -196,7 +196,7 @@ class Events:
         o = res["order"]
         ok = res["status"] == "approved"
         await self.n.send(int(uid), (f"✅ Skladga qaytarish tasdiqlandi: {self._olabel(o)}"
-                                     + (f"\n💸 Xarajat {fmt_money(res['expense'])} kassangizdan ayirildi (sex hisobidan)."
+                                     + (f"\n💸 Xarajat {fmt_uzs(res['expense'] * 1000)} kassangizdan ayirildi (fabrika hisobidan)."
                                         if ok and res.get("expense") else ""))
                           if ok else f"❌ Skladga qaytarish rad etildi: {self._olabel(o)}. "
                                      f"Rad etgan: {h(res.get('resolved_name', ''))}.")

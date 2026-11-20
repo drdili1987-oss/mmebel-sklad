@@ -166,7 +166,7 @@ async def test_full_flow_cash_card_and_transfers(client):  # noqa: F811
     # diller qarzi: 2 × 340 − 300 (naqd) − 150 (karta)
     assert (await services.finance.account("Umid")).debt == 230
     me = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
-    assert me["cash"] == 300                             # karta yig'uvchi kassasiga qo'shilmaydi
+    assert me["cash"] == 300000                             # karta yig'uvchi kassasiga qo'shilmaydi
     assert {o["id"]: o["paid"] for o in me["done"]} == {oid: 300, oid2: 150}
 
     # qolgan 50$ ni keyin naqd oldi
@@ -174,7 +174,7 @@ async def test_full_flow_cash_card_and_transfers(client):  # noqa: F811
                           json={"amount": 50, "method": "naqd", "note": "qoldig'i"})
     assert r.status == 200
     assert (await services.finance.account("Umid")).debt == 180
-    assert (await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json())["cash"] == 350
+    assert (await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json())["cash"] == 350000
 
     # rasm: yig'uvchi o'zinikini, admin hammasini ko'radi; xodim ko'rmaydi
     pays = (await (await client.get(f"/api/orders/{oid2}/wpay", headers=hdr(ADMIN))).json())["items"]
@@ -207,14 +207,14 @@ async def test_full_flow_cash_card_and_transfers(client):  # noqa: F811
     r = await client.post(f"/api/cash/transfers/{tid}/resolve", headers=hdr(OMBOR), json={"approve": True})
     assert r.status == 200, await r.text()
     res = await r.json()
-    assert "Javohir omborchiga 350$ topshirdi" in res["text"]
+    assert "Javohir omborchiga 350 000 so'm topshirdi" in res["text"]
     assert (await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json())["cash"] == 0
     r = await client.post(f"/api/cash/transfers/{tid}/resolve", headers=hdr(OMBOR), json={"approve": True})
     assert r.status == 409                               # ikki marta tasdiqlanmaydi
 
     # omborchi kassasidan adminga
     summary = await (await client.get("/api/workers", headers=hdr(OMBOR))).json()
-    assert summary["my_cash"] == 350
+    assert summary["my_cash"] == 350000
     r = await client.post("/api/cash/transfer", headers=hdr(OMBOR), json={"amount": 350})
     assert r.status == 201
     tid2 = (await r.json())["transfer_id"]
@@ -223,8 +223,8 @@ async def test_full_flow_cash_card_and_transfers(client):  # noqa: F811
     r = await client.post(f"/api/cash/transfers/{tid2}/resolve", headers=hdr(ADMIN), json={"approve": True})
     assert r.status == 200
     summary = await (await client.get("/api/workers", headers=hdr(ADMIN))).json()
-    assert summary["total_cash"] == 0 and summary["workers"][0]["month_cash"] == 350
-    assert summary["workers"][0]["month_card"] == 150
+    assert summary["total_cash"] == 0 and summary["workers"][0]["month_cash"] == 350000
+    assert summary["workers"][0]["month_card"] == 150000
 
 
 async def test_unassigned_order_cannot_be_handed_over(client):  # noqa: F811
@@ -355,7 +355,7 @@ async def test_return_to_warehouse_with_expense(client):  # noqa: F811
     assert r.status == 200
     assert oid in await _scope_ids(client, "returned") and oid not in await _scope_ids(client, "assigned")
     me = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
-    assert me["active"] == [] and me["cash"] == -20            # xarajatni sex ko'taradi — sex unga qarzdor
+    assert me["active"] == [] and me["cash"] == -20000            # xarajatni sex ko'taradi — sex unga qarzdor
     assert (await services.finance.account("Umid")).debt == 0  # yetkazilmagan — dillerga qarz yo'q
     # qaytgan mebel qayta yuboriladi
     r = await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": wid})
@@ -395,7 +395,7 @@ async def test_defect_reassign_and_completion(client):  # noqa: F811
     assert oid in await _scope_ids(client, "defect", OMBOR)
     assert (await services.finance.account("Umid")).debt == 340 - 120     # mebel mijozda — qarzga kiradi
     me1 = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
-    assert me1["active"] == [] and me1["cash"] == 120 and [o["id"] for o in me1["done"]] == [oid]
+    assert me1["active"] == [] and me1["cash"] == 120000 and [o["id"] for o in me1["done"]] == [oid]
     # boshqa yig'uvchiga qayta yuboriladi — izoh va qolgan summa ko'rinadi
     r = await client.post(f"/api/orders/{oid}/assign", headers=hdr(OMBOR), json={"worker_id": w2})
     assert r.status == 200, await r.text()
@@ -408,7 +408,7 @@ async def test_defect_reassign_and_completion(client):  # noqa: F811
     assert oid not in await _scope_ids(client, "defect")
     assert (await services.finance.account("Umid")).debt == 340 - 300
     me2 = await (await client.get("/api/w/me", headers=hdr(78))).json()
-    assert me2["cash"] == 180 and me2["active"] == []
+    assert me2["cash"] == 180000 and me2["active"] == []
 
 
 async def test_worker_edit_needs_approval_and_is_audited(client):  # noqa: F811
@@ -434,7 +434,7 @@ async def test_worker_edit_needs_approval_and_is_audited(client):  # noqa: F811
     assert r.status == 200, await r.text()
     assert (await services.finance.account("Umid")).debt == 90
     me = await (await client.get("/api/w/me", headers=hdr(WORKER_UID))).json()
-    assert me["cash"] == 250
+    assert me["cash"] == 250000
     p = await services.workers.payment(pid)
     assert p["amount"] == 250 and p["history"][0]["from"] == 300 and p["history"][0]["to"] == 250
 
@@ -574,7 +574,7 @@ async def test_legacy_payment_migration_to_uzs(client):  # noqa: F811
     h2 = [h for h in await svc.finance.history("Umid") if h["order_id"] == oid][0]
     assert h2["partial_payment"] == 83.33 and h2["uzs"] == 1_000_000
     from mmebel.services.workers import worker_holder
-    assert await svc.workers.balance(worker_holder(wid)) == 83.33                 # kassa ham so'm kursiga to'g'rilandi
+    assert await svc.workers.balance(worker_holder(wid)) == 1_000_000                       # kassa so'mda: 1 000 ming so'm
     again = await (await client.post("/api/fx/legacy", headers=hdr(ADMIN), json={"pay_ids": [pay["id"]]})).json()
     assert again["migrated"] == 0                                                 # ikki marta o'tkazilmaydi
 
@@ -587,3 +587,21 @@ async def test_legacy_collect_is_ming_uzs_without_rate(client):  # noqa: F811
     o = await svc.orders.get(oid)
     assert svc.workers.expected_uzs(o, 12500) == 2_000_000                               # kurs ishtirok etmaydi
     assert await svc.workers.remaining_uzs(oid, o) == 2_000_000
+
+
+async def test_cash_migration_to_uzs_x1000_ignores_fx_fix(client):  # noqa: F811
+    svc = client.app["services"]
+    wid = await make_worker(client)
+    h = worker_holder(wid) if "worker_holder" in globals() else f"w_{wid}"
+    await svc.store.set(f"cash/{h}", 2000)
+    await svc.store.push(f"cash_log/{h}", {"kind": "collect", "amount": 5000, "ts": "2026-11-10 10:00", "text": "olindi"})
+    await svc.store.push(f"cash_log/{h}", {"kind": "transfer_out", "amount": -3000, "ts": "2026-11-11 10:00", "text": "topshirdi"})
+    await svc.store.push(f"cash_log/{h}", {"kind": "fx_fix", "amount": -4000, "ts": "2026-11-20 10:00", "text": "buzilgan tuzatish"})
+    assert (await client.get("/api/fx/cash", headers=hdr(OMBOR))).status == 403
+    items = (await (await client.get("/api/fx/cash", headers=hdr(ADMIN))).json())["items"]
+    assert items[0]["new_uzs"] == 2_000_000 and items[0]["entries"] == 2        # 5000−3000 = 2000 → 2 000 000
+    r = await client.post("/api/fx/cash", headers=hdr(ADMIN), json={"holders": [h]})
+    assert (await r.json())["migrated"] == 1 and await svc.workers.balance(h) == 2_000_000
+    r = await client.post("/api/fx/cash", headers=hdr(ADMIN), json={"holders": [h]})
+    assert (await r.json())["migrated"] == 0 and await svc.workers.balance(h) == 2_000_000   # ikki marta qo'shilmaydi
+    assert await svc.store.get(f"cash/{h}") == 2000                                      # eski zaxira joyida

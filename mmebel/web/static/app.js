@@ -164,7 +164,12 @@ async function fxRate(force) {
   try { FX_RATE = (await api("GET", "/api/fx/convert?ming=1")).rate; } catch (e) { /* kurs olinmadi */ }
   return FX_RATE;
 }
+if (typeof window !== "undefined") setTimeout(() => { try { if (S.me && S.me.role === "admin") fxRate(); } catch (e) {} }, 1500);
 function uzs(v) { return Math.round(Number(v || 0)).toLocaleString("ru-RU") + " so'm"; }
+function uzsUsd(v) {   // so'm; admin uchun qavsda dollar ekvivalenti (joriy kurs)
+  const t = uzs(v);
+  return S.me && S.me.role === "admin" && FX_RATE ? `${t} (${money(v / FX_RATE)})` : t;
+}
 function uzsInput(opts) {
   const o = opts || {};
   const input = el("input", { type: "number", min: "0", step: "any", inputmode: "decimal", placeholder: o.placeholder || "Ming so'mda. Masalan: 48 534", "data-autofocus": o.autofocus ? "" : null });
@@ -211,6 +216,34 @@ async function legacySheet() {
   });
 }
 
+/* Eski dollarlik kassani so'mga o'tkazish: eski summalar ×1000 (2 000 → 2 000 000). */
+async function cashMigSheet() {
+  let d;
+  try { d = await api("GET", "/api/fx/cash"); } catch (e) { toast(e.message, true); return; }
+  sheet((close) => {
+    const checks = [];
+    const list = d.items.map((r) => {
+      const cb = el("input", { type: "checkbox", disabled: r.done ? "" : null });
+      if (r.done) cb.checked = true;
+      checks.push([cb, r.holder, r.done]);
+      return el("label", { class: "row", style: "gap:10px;align-items:center" }, cb,
+        el("div", { class: "grow" }, el("b", {}, r.name), el("div", { class: "sub" }, `${r.entries} ta yozuv · eski: ${r.old_usd}`)),
+        el("div", { class: "end" }, r.done ? el("span", { class: "muted" }, "o'tkazilgan") : el("b", {}, uzs(r.new_uzs))));
+    });
+    const btn = el("button", { class: "btn", type: "button" }, "Tanlanganlarni o'tkazish");
+    btn.addEventListener("click", async () => {
+      const hs = checks.filter(([cb, , done]) => cb.checked && !done).map(([, h]) => h);
+      if (!hs.length) { toast("Kamida bittasini belgilang.", true); return; }
+      if (!(await confirmDlg(`${hs.length} ta kassa so'mga o'tkazilsinmi? Eski ma'lumot zaxirada qoladi.`))) return;
+      const r = await act(btn, () => api("POST", "/api/fx/cash", { holders: hs }), "O'tkazildi");
+      if (r) { close(); refresh(); }
+    });
+    return el("div", {}, el("h2", {}, "Kassani so'mga o'tkazish"),
+      el("p", { class: "muted small" }, "Eski summalar ming so'm deb olinadi (2 000 → 2 000 000 so'm). Kurs bilan hisoblanmaydi. O'ngdagi — yangi kassa qoldig'i."),
+      d.items.length ? el("div", { class: "list" }, list) : empty("Eski kassa yo'q."), d.items.length ? el("div", { class: "actions" }, btn) : null);
+  });
+}
+
 /* Admin: dollar kursi. Yangisi kiritilguncha oxirgi kiritilgan kurs amal qiladi. */
 async function fxSheet(onDone) {
   let info;
@@ -231,6 +264,8 @@ async function fxSheet(onDone) {
       field("Yangi kurs (1$ = so'm)", rate), el("div", { class: "actions" }, btn),
       el("div", { class: "actions" }, el("button", { class: "btn ghost", type: "button", on: { click: () => { close(); legacySheet(); } } },
         "🔧 Eski to'lovlarni so'mga o'tkazish")),
+      el("div", { class: "actions" }, el("button", { class: "btn ghost", type: "button", on: { click: () => { close(); cashMigSheet(); } } },
+        "💰 Kassani so'mga o'tkazish")),
       info.log && info.log.length ? el("div", {}, el("div", { class: "section-title" }, "Kurs tarixi"),
         info.log.slice(0, 8).map((x) => el("div", { class: "sub", style: "padding:2px 4px" }, `${x.at} — ${uzs(x.rate)}`))) : null);
   });
@@ -404,7 +439,7 @@ function approvalsSheet(d) {
         el("div", { class: "grow" }, el("b", {}, lbl(x)), el("div", { class: "sub" }, [`🧰 ${x.worker_name}`, fdate(x.at), x.note].filter(Boolean).join(" · "))),
         el("div", { class: "end" }, x.expense ? el("b", {}, `xarajat ${money(x.expense)}`) : "xarajatsiz"),
         resolveBtns(`/api/orders/${encodeURIComponent(x.order_id)}/return/resolve`, "Tasdiqlandi — «Qaytgan mebellar» ga tushdi",
-          `Mebel skladga qaytganini tasdiqlaysizmi?${x.expense ? " Xarajat " + money(x.expense) + " sex hisobidan yoziladi." : ""}`, "Rad etilsinmi? Mebel yig'uvchida qoladi.")))));
+          `Mebel skladga qaytganini tasdiqlaysizmi?${x.expense ? " Xarajat " + money(x.expense) + " fabrika hisobidan yoziladi." : ""}`, "Rad etilsinmi? Mebel yig'uvchida qoladi.")))));
     }
     if (d.edits.length) {
       box.appendChild(el("div", { class: "section-title" }, "✏️ Olingan summani tuzatish"));
@@ -418,9 +453,9 @@ function approvalsSheet(d) {
       box.appendChild(el("div", { class: "section-title" }, "💰 Pul topshirish"));
       box.appendChild(el("div", { class: "list" }, d.transfers.map((t) => el("div", { class: "row", style: "flex-wrap:wrap" },
         el("div", { class: "grow" }, el("b", {}, `${t.from_name} → ${t.to_role === "admin" ? "admin" : "omborchi"}`), el("div", { class: "sub" }, fdate(t.ts))),
-        el("div", { class: "end" }, el("b", {}, money(t.amount))),
+        el("div", { class: "end" }, el("b", {}, uzs(t.amount))),
         (S.me.role === "admin" || t.to_role === S.me.role) ? resolveBtns(`/api/cash/transfers/${encodeURIComponent(t.id)}/resolve`, "Tasdiqlandi",
-          `Siz ${t.from_name} dan ${money(t.amount)} oldingizmi? Tasdiqlaysizmi?`, `${t.from_name}: ${money(t.amount)} rad etilsinmi?`) : null))));
+          `Siz ${t.from_name} dan ${uzs(t.amount)} oldingizmi? Tasdiqlaysizmi?`, `${t.from_name}: ${uzs(t.amount)} rad etilsinmi?`) : null))));
     }
     if (!d.returns.length && !d.edits.length && !d.transfers.length) box.appendChild(empty("Hammasi ko'rib chiqilgan."));
     return box;
@@ -524,7 +559,7 @@ async function orderSheet(id) {
       o.changed ? [el("dt", {}, "Turi"), el("dd", {}, el("span", { class: "chgtag", style: "margin:0" }, "❗️ O'zgarishli mebel"))] : null,
       o.comment ? [el("dt", {}, "Izoh"), el("dd", {}, o.comment)] : null,
       role === "admin" && o.total_price ? [el("dt", {}, "Narxi"), el("dd", {}, `${money(o.price)} × ${o.amount} = ${money(o.total_price)}`)] : null,
-      staff && o.collect != null ? [el("dt", {}, "Mijozdan qoldiq"), el("dd", {}, money(o.collect))] : null,
+      staff && o.collect != null ? [el("dt", {}, "Mijozdan qoldiq"), el("dd", {}, o.collect_uzs != null ? uzsUsd(o.collect_uzs) : uzsUsd(Number(o.collect) * 1000))] : null,
       o.worker_name && ACTIVE.includes(o.status) ? [el("dt", {}, "Yig'uvchi"), el("dd", {}, `🧰 ${o.worker_name}`)] : null,
       o.driver ? [el("dt", {}, o.worker_name ? "Yig'uvchi" : "Haydovchi"), el("dd", {}, `${o.driver}${o.delivery_price && o.delivery_price !== "0$" ? " · " + o.delivery_price : ""}`)] : null,
       o.delivered_at ? [el("dt", {}, "Yetkazilgan"), el("dd", {}, fdate(o.delivered_at))] : null,
@@ -601,8 +636,13 @@ function payList(items, showOrder) {
   return el("div", { class: "list" }, items.map((p) => el("div", { class: "row", style: "flex-wrap:wrap" },
     el("div", { class: "grow" },
       el("div", {}, showOrder ? el("b", {}, `${p.serial ? "№" + p.serial + " · " : ""}${plabel(p)} — ${p.client}`) : el("b", {}, p.kind === "extra" ? "Qo'shimcha to'lov" : (p.correct ? "✅ Qoldiq to'g'ri olindi" : "⚠️ Qoldiq to'liq olinmadi"))),
-      el("div", { class: "sub" }, [fdate(p.ts), p.method === "karta" ? "💳 karta" : "💵 naqd", p.expected ? `kutilgan ${money(p.expected)}` : null, p.note].filter(Boolean).join(" · "))),
-    el("div", { class: "end" }, el("b", {}, money(p.amount))),
+      el("div", { class: "sub", style: "white-space:normal;overflow:visible" }, [fdate(p.ts), p.method === "karta" ? "💳 karta" : "💵 naqd",
+        p.expected_uzs ? `kutilgan ${uzs(p.expected_uzs)}` : p.expected ? `kutilgan ${uzs(p.expected * 1000)}` : null, p.note].filter(Boolean).join(" · "))),
+    el("div", { class: "end" }, (() => {
+      const u = p.uzs != null ? p.uzs : Math.round(Number(p.amount || 0) * 1000);
+      const isAdm = S.me && S.me.role === "admin";
+      return [el("b", {}, uzs(u)), isAdm && p.uzs != null ? el("div", { class: "sub" }, `(${money(p.amount)}, kurs ${uzs(p.rate || 0)})`) : null];
+    })()),
     p.photos ? el("div", { class: "thumbs", style: "width:100%" }, Array.from({ length: p.photos }, (_, i) => photoThumb(p.pay_id, i))) : null)));
 }
 /* Rasm avtorizatsiya bilan yuklanadi (img src ga token qo'yib bo'lmaydi) */
@@ -1371,9 +1411,9 @@ async function viewWorkers(target) {
   clear(view);
   const isAdmin = S.me.role === "admin";
   view.appendChild(el("div", { class: "stats" },
-    el("div", { class: "stat wide" + (d.total_cash ? " late" : "") }, el("b", {}, money(d.total_cash)), el("span", {}, "Topshirilmagan naqd pul (jami)")),
+    el("div", { class: "stat wide" + (d.total_cash ? " late" : "") }, el("b", {}, uzs(d.total_cash)), el("span", {}, "Topshirilmagan naqd pul (jami)")),
     el("div", { class: "stat" }, el("b", {}, d.month_delivered), el("span", {}, `Shu oy topshirildi (${d.month})`)),
-    el("div", { class: "stat" }, el("b", {}, money(d.month_cash)), el("span", {}, "Shu oy naqd")),
+    el("div", { class: "stat" }, el("b", {}, uzs(d.month_cash)), el("span", {}, "Shu oy naqd")),
     el("div", { class: "stat wide" }, el("b", {}, money(d.month_card)), el("span", {}, "Shu oy karta orqali"))));
   // Tasdiqlash kutayotgan topshirishlar
   const pending = (d.pending || []).filter((t) => t.from_holder !== `u_${S.me.id}`);
@@ -1384,10 +1424,10 @@ async function viewWorkers(target) {
       const row = el("div", { class: "row", style: "flex-wrap:wrap" },
         el("div", { class: "grow" }, el("div", { style: "font-weight:600" }, `${t.from_name} → ${t.to_role === "admin" ? "admin" : "omborchi"}`),
           el("div", { class: "sub" }, `${t.from_kind === "worker" ? "Mebel yig'uvchi" : "Omborchi"} · ${fdate(t.ts)}`)),
-        el("div", { class: "end" }, el("b", {}, money(t.amount))));
+        el("div", { class: "end" }, el("b", {}, uzs(t.amount))));
       if (canResolve) {
         const resolve = (approve) => async (e) => {
-          if (!(await confirmDlg(approve ? `Siz ${t.from_name} dan ${money(t.amount)} oldingizmi? Tasdiqlaysizmi?` : `${t.from_name}: ${money(t.amount)} rad etilsinmi?`))) return;
+          if (!(await confirmDlg(approve ? `Siz ${t.from_name} dan ${uzs(t.amount)} oldingizmi? Tasdiqlaysizmi?` : `${t.from_name}: ${uzs(t.amount)} rad etilsinmi?`))) return;
           const r = await act(e.target, () => api("POST", `/api/cash/transfers/${encodeURIComponent(t.id)}/resolve`, { approve }),
             approve ? "Tasdiqlandi" : "Rad etildi");
           if (r) refresh();
@@ -1405,14 +1445,14 @@ async function viewWorkers(target) {
     const row = el("div", { class: "row", style: "flex-wrap:wrap" },
       el("div", { class: "grow" }, "Yig'uvchilardan qabul qilingan, adminga topshirilmagan",
         d.my_pending ? el("div", { class: "sub" }, `⏳ ${money(d.my_pending.amount)} adminga topshirildi — tasdiq kutilmoqda`) : null),
-      el("div", { class: "end" }, el("b", {}, money(d.my_cash || 0))));
+      el("div", { class: "end" }, el("b", {}, uzs(d.my_cash || 0))));
     if (d.my_cash > 0 && !d.my_pending) row.appendChild(el("div", { class: "actions", style: "width:100%;margin-top:6px" },
       el("button", { class: "btn", type: "button", on: { click: () => cashTransferSheet(d.my_cash, ["admin"], "/api/cash/transfer") } }, "Adminga topshirish")));
     view.appendChild(el("div", { class: "list" }, row));
   } else if ((d.staff || []).length) {
     view.appendChild(el("div", { class: "section-title" }, "Omborchilar kassasi"));
     view.appendChild(el("div", { class: "list" }, d.staff.map((s) => el("div", { class: "row" },
-      el("div", { class: "grow" }, s.name), el("div", { class: "end" }, el("b", {}, money(s.cash)))))));
+      el("div", { class: "grow" }, s.name), el("div", { class: "end" }, el("b", {}, uzs(s.cash)))))));
   }
   view.appendChild(el("div", { class: "section-title" }, `Yig'uvchilar — ${d.workers.length}`));
   view.appendChild(el("div", { class: "actions" }, el("button", { class: "btn ghost", type: "button", on: { click: newWorkerSheet } }, "＋ Yig'uvchi qo'shish")));
@@ -1420,9 +1460,9 @@ async function viewWorkers(target) {
   view.appendChild(el("div", { class: "list" }, d.workers.map((w) => el("button", { class: "row" + (w.active ? "" : " muted"), type: "button", on: { click: () => workerSheet(w.id) } },
     el("div", { class: "grow" }, el("div", { style: "font-weight:600" }, w.name, w.active ? "" : " (o'chirilgan)"),
       el("div", { class: "sub" }, [`${w.assigned} ta yig'ishda`, `shu oy ${w.month_delivered} ta`, w.linked ? null : "⚠️ botga kirmagan"].filter(Boolean).join(" · "))),
-    el("div", { class: "end " + (w.cash > 0 ? "pos" : "muted") }, money(w.cash))))));
+    el("div", { class: "end " + (w.cash > 0 ? "pos" : "muted") }, uzs(w.cash))))));
   view.appendChild(el("p", { class: "muted small", style: "margin:6px 4px" },
-    "O'ngdagi summa — yig'uvchi qo'lidagi naqd pul (sexga topshirishi kerak). Karta orqali to'lovlar bunga qo'shilmaydi."));
+    "O'ngdagi summa — yig'uvchi qo'lidagi naqd pul (fabrikaga topshirishi kerak). Karta orqali to'lovlar bunga qo'shilmaydi."));
 }
 
 function newWorkerSheet() {
@@ -1447,8 +1487,8 @@ async function workerSheet(wid) {
   sheet((close) => {
     const box = el("div", {}, el("h2", {}, w.name),
       el("p", { class: "muted small" }, `+${w.phone || "—"} · ${w.linked ? "✅ botga ulangan" : "⚠️ hali botga kirmagan"}`),
-      el("div", { class: "code-big " + (w.cash > 0 ? "pos" : "") }, money(w.cash)),
-      el("p", { class: "muted small" }, "Qo'lidagi naqd pul — sexga topshirishi kerak"));
+      el("div", { class: "code-big " + (w.cash > 0 ? "pos" : "") }, uzs(w.cash)),
+      el("p", { class: "muted small" }, "Qo'lidagi naqd pul — fabrikaga topshirishi kerak"));
     if (S.me.role === "admin") {
       box.appendChild(el("div", { class: "actions" }, el("button", { class: "btn ghost", type: "button", on: { click: async (e) => {
         if (!(await confirmDlg(w.active ? `${w.name} profili o'chirilsinmi? Yangi mebel yuborib bo'lmaydi.` : `${w.name} profili qayta yoqilsinmi?`))) return;
@@ -1471,27 +1511,28 @@ async function workerSheet(wid) {
 function cashLogList(log) {
   if (!log.length) return empty("Tarix bo'sh.");
   return el("div", { class: "list" }, log.map((h) => el("div", { class: "row" },
-    el("div", { class: "grow" }, h.text || h.kind, el("div", { class: "sub" }, `${fdate(h.ts)} · qoldiq ${money(h.balance)}`)),
-    el("div", { class: "end " + (h.amount < 0 ? "neg" : "pos") }, (h.amount > 0 ? "+" : "−") + money(Math.abs(h.amount))))));
+    el("div", { class: "grow" }, h.text || h.kind, el("div", { class: "sub" }, `${fdate(h.ts)} · qoldiq ${uzs(h.balance)}`)),
+    el("div", { class: "end " + (h.amount < 0 ? "neg" : "pos") }, (h.amount > 0 ? "+" : "−") + uzs(Math.abs(h.amount))))));
 }
 
 function cashTransferSheet(balance, targets, path) {
   sheet((close) => {
     let to = targets.length === 1 ? targets[0] : null;
-    const amount = el("input", { type: "number", min: "0.01", step: "0.01", inputmode: "decimal", value: balance });
+    const amountU = uzsInput({ value: balance / 1000 });
+    const amount = amountU.input;
     const btn = el("button", { class: "btn", type: "button" }, "Topshirish");
     btn.addEventListener("click", async () => {
       if (!to) { toast("Kimga topshirishni tanlang.", true); return; }
       const v = Number(amount.value);
       if (!(v > 0)) { toast("Summani kiriting.", true); return; }
-      if (!(await confirmDlg(`${money(v)} ${to === "admin" ? "adminga" : "omborchiga"} topshirilsinmi? U tasdiqlagach kassangizdan ayiriladi.`))) return;
+      if (!(await confirmDlg(`${uzs(v * 1000)} ${to === "admin" ? "adminga" : "omborchiga"} topshirilsinmi? U tasdiqlagach kassangizdan ayiriladi.`))) return;
       const r = await act(btn, () => api("POST", path, { to, amount: v }), "Yuborildi. Tasdiqlashni kuting.");
       if (r) { close(); refresh(); }
     });
     return el("div", {}, el("h2", {}, "Qarzni topshirish"),
-      el("p", { class: "muted small" }, `Kassangizda: ${money(balance)}`),
+      el("p", { class: "muted small" }, `Kassangizda: ${uzs(balance)}`),
       targets.length > 1 ? field("Kimga topshirasiz?", chips(targets, null, (v) => { to = v; }, (v) => (v === "admin" ? "👤 Adminga" : "📦 Omborchiga"))) : null,
-      field("Summa ($)", amount), el("div", { class: "actions" }, btn));
+      field("Summa (ming so'm)", amountU.node), el("div", { class: "actions" }, btn));
   });
 }
 
@@ -1501,7 +1542,7 @@ async function viewWHome() {
   markSeen();
   const view = clear($("view"));
   view.appendChild(el("button", { class: "stat wide" + (d.cash > 0 ? " late" : ""), type: "button", style: "width:100%", on: { click: () => go("w_cash") } },
-    el("b", {}, money(Math.abs(d.cash))), el("span", {}, d.cash < 0 ? "Sex sizga qarzdor (xarajatlar)" : "Sexga topshirishingiz kerak (naqd)")));
+    el("b", {}, uzs(Math.abs(d.cash))), el("span", {}, d.cash < 0 ? "Fabrika sizga qarzdor (xarajatlar)" : "Fabrikaga topshirishingiz kerak (naqd)")));
   view.appendChild(el("div", { class: "section-title" }, `Yig'ish uchun yuborilgan — ${d.active.length} ta`));
   if (!d.active.length) view.appendChild(empty("Hozircha sizga yuborilgan mebel yo'q."));
   view.appendChild(el("div", { class: "list" }, d.active.map((o) => {
@@ -1742,11 +1783,11 @@ function handoverSheet(o, mode) {
 async function viewWCash() {
   const d = await api("GET", "/api/w/me");
   const view = clear($("view"));
-  view.appendChild(el("div", { class: "code-big " + (d.cash > 0 ? "pos" : "") }, money(Math.abs(d.cash))));
+  view.appendChild(el("div", { class: "code-big " + (d.cash > 0 ? "pos" : "") }, uzs(Math.abs(d.cash))));
   view.appendChild(el("p", { class: "muted small", style: "text-align:center" }, d.cash < 0
-    ? "Sex sizga qarzdor (tasdiqlangan xarajatlar)" : "Qo'lingizdagi naqd pul — sexga topshirishingiz kerak"));
+    ? "Fabrika sizga qarzdor (tasdiqlangan xarajatlar)" : "Qo'lingizdagi naqd pul — fabrikaga topshirishingiz kerak"));
   if (d.pending_transfer) {
-    view.appendChild(el("div", { class: "unread-banner" }, el("b", {}, `⏳ ${money(d.pending_transfer.amount)} ${d.pending_transfer.to_role === "admin" ? "adminga" : "omborchiga"} topshirildi`),
+    view.appendChild(el("div", { class: "unread-banner" }, el("b", {}, `⏳ ${uzs(d.pending_transfer.amount)} ${d.pending_transfer.to_role === "admin" ? "adminga" : "omborchiga"} topshirildi`),
       el("span", {}, " — tasdiqlanishi kutilmoqda")));
   } else if (d.cash > 0) {
     view.appendChild(el("div", { class: "actions" }, el("button", { class: "btn", type: "button",

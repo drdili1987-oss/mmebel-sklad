@@ -71,6 +71,11 @@ def fmt_uzs(v) -> str:
     return f"{int(round(float(v or 0))):,}".replace(",", " ") + " so'm"
 
 
+def _uzs_of(p: dict) -> int:
+    """To'lovning so'mdagi qiymati: yangisida `uzs`, eskisida summa ming so'm deb olinadi."""
+    return int(round(float(p["uzs"]))) if p.get("uzs") is not None else int(round(float(p.get("amount") or 0) * 1000))
+
+
 def worker_holder(wid: str) -> str:
     return f"w_{wid}"
 
@@ -502,9 +507,9 @@ class WorkerService:
             ts = res["ret"]["resolved_at"]
             label = f"{res.get('product_id', '')}" + (f", №{res['serial']}" if res.get("serial") else "")
             # Xarajatni sex ko'taradi: yig'uvchi o'z qo'lidagi puldan to'lagan — qarzidan ayiriladi
-            await self._cash_add(worker_holder(snap["worker_id"]), -exp, {
+            await self._cash_add(worker_holder(snap["worker_id"]), -int(round(exp * 1000)), {
                 "kind": "expense", "order_id": order_id,
-                "text": f"{human_date(ts)}: skladga qaytarish xarajati {fmt_usd(exp)} sex hisobidan ({label})"})
+                "text": f"{human_date(ts)}: skladga qaytarish xarajati {fmt_uzs(exp * 1000)} fabrika hisobidan ({label})"})
             await self.store.push("expenses", {"order_id": order_id, "worker_id": snap["worker_id"],
                                                "worker_name": snap.get("worker_name", ""), "amount": exp,
                                                "note": snap.get("note", ""), "approved_by": actor_name, "ts": ts,
@@ -587,10 +592,15 @@ class WorkerService:
                 await self.finance.adjust_order_payment(actor_id, client, snap["order_id"], delta, fx=fx,
                                                         note=f"Yig'uvchi tahriri: {fmt_usd(old)} → {fmt_usd(new)}")
             if delta and snap.get("method") == "naqd":
-                await self._cash_add(worker_holder(snap["worker_id"]), delta, {
+                if req.get("new_uzs") is not None:
+                    d_uzs, o_uzs, n_uzs = int(req["new_uzs"]) - int(req["old_uzs"]), int(req["old_uzs"]), int(req["new_uzs"])
+                else:      # eski (so'mi yozilmagan) to'lov: summa ming so'm deb olinadi
+                    o_uzs, n_uzs = int(round(old * 1000)), int(round(new * 1000))
+                    d_uzs = n_uzs - o_uzs
+                await self._cash_add(worker_holder(snap["worker_id"]), d_uzs, {
                     "kind": "edit", "order_id": snap["order_id"], "pay_id": pay_id,
                     "text": f"{human_date(res['edit_req']['resolved_at'])}: olingan summa tuzatildi "
-                            f"{fmt_usd(old)} → {fmt_usd(new)} ({snap.get('product_id', '')})"})
+                            f"{fmt_uzs(o_uzs)} → {fmt_uzs(n_uzs)} ({snap.get('product_id', '')})"})
         await self._audit(actor_id, "pay_edit_resolve", {"pay_id": pay_id, "approve": approve})
         return res
 
@@ -662,7 +672,7 @@ class WorkerService:
                                                note=f"Mijozdan ostatka ({label}) — {w['name']}"
                                                     + (f". {pay['note']}" if pay["note"] else ""))
         if amt > 0 and pay["method"] == "naqd":
-            await self._cash_add(worker_holder(wid), amt, {
+            await self._cash_add(worker_holder(wid), pay["uzs"], {
                 "kind": "collect", "order_id": order_id, "pay_id": pid, "serial": order.get("serial", ""),
                 "text": f"{human_date(ts)}: mijozdan {fmt_uzs(pay['uzs'])} naqd olindi ({order.get('product_id', '')}"
                         + (f", №{order['serial']}" if order.get("serial") else "") + ")"})
@@ -683,19 +693,74 @@ class WorkerService:
         return rec
 
     # ---------- kassa ----------
-    async def balance(self, holder: str) -> float:
-        return money(await self.store.get(f"cash/{holder}") or 0)
+    # Kassa so'mda yuritiladi (`cash_uzs`, `cash_log_uzs`). Eski dollarlik `cash`/`cash_log` zaxira sifatida qoladi.
+    async def balance(self, holder: str) -> int:
+        return int(round(float(await self.store.get(f"cash_uzs/{holder}") or 0)))
 
     async def log(self, holder: str, limit: int = 200) -> list[dict]:
-        rows = [dict(v, id=k) for k, v in iter_records(await self.store.get(f"cash_log/{holder}") or {})]
+        rows = [dict(v, id=k) for k, v in iter_records(await self.store.get(f"cash_log_uzs/{holder}") or {})]
         rows.sort(key=lambda r: r.get("ts", ""), reverse=True)
         return rows[:limit]
 
-    async def _cash_add(self, holder: str, delta: float, entry: dict) -> float:
-        new = await self.store.transaction(f"cash/{holder}", lambda cur: money(money(cur or 0) + money(delta)))
-        await self.store.push(f"cash_log/{holder}", {**entry, "amount": money(delta), "ts": now_str(),
-                                                     "balance": money(new)})
-        return money(new)
+    async def _cash_add(self, holder: str, delta_uzs, entry: dict) -> int:
+        d = int(round(float(delta_uzs)))
+        new = await self.store.transaction(f"cash_uzs/{holder}", lambda cur: int(round(float(cur or 0))) + d)
+        await self.store.push(f"cash_log_uzs/{holder}", {**entry, "amount": d, "ts": now_str(), "balance": int(new)})
+        return int(new)
+
+    # ---------- eski dollarlik kassani so'mga o'tkazish (admin tasdig'i bilan; zaxira `cash`/`cash_log` saqlanadi) ----------
+    async def _legacy_cash_entries(self, holder: str) -> list[dict]:
+        pays = {k: v for k, v in iter_records(await self.store.get("wpay") or {})}
+        rows = [dict(v, id=k) for k, v in iter_records(await self.store.get(f"cash_log/{holder}") or {})]
+        rows.sort(key=lambda r: r.get("ts", ""))
+        out = []
+        for r in rows:
+            if r.get("kind") == "fx_fix":
+                continue            # buzilgan kurs bo'yicha tuzatish — hisoblanmaydi
+            pay = pays.get(r.get("pay_id", "")) or {}
+            if r.get("kind") == "collect" and pay.get("uzs") is not None:
+                u = int(round(float(pay["uzs"])))
+            else:
+                u = int(round(float(r.get("amount") or 0) * 1000))
+            out.append(dict(r, uzs_amount=u))
+        return out
+
+    async def cash_migration_preview(self) -> list[dict]:
+        holders = set((await self.store.get("cash") or {}).keys()) | set((await self.store.get("cash_log") or {}).keys())
+        done = await self.store.get("cash_migrated") or {}
+        workers = await self.all()
+        res = []
+        for holder in sorted(holders):
+            ents = await self._legacy_cash_entries(holder)
+            if holder.startswith("w_"):
+                name = (workers.get(holder[2:]) or {}).get("name", holder)
+            else:
+                name = ((await self.users.get(holder[2:])) or {}).get("name") or holder
+            res.append({"holder": holder, "name": name, "old_usd": money((await self.store.get(f"cash/{holder}")) or 0),
+                        "new_uzs": sum(e["uzs_amount"] for e in ents), "entries": len(ents), "done": bool(done.get(holder))})
+        return res
+
+    async def cash_migration_apply(self, actor_id, holders) -> dict:
+        n = 0
+        for holder in holders or []:
+            if not isinstance(holder, str) or not holder.startswith(("w_", "u_")) or not is_valid_key(holder):
+                continue
+            if (await self.store.get(f"cash_migrated/{holder}")):
+                continue
+            ents = await self._legacy_cash_entries(holder)
+            add = sum(e["uzs_amount"] for e in ents)
+            base = await self.balance(holder)
+            run = 0
+            for e in ents:
+                run += e["uzs_amount"]
+                await self.store.push(f"cash_log_uzs/{holder}", {
+                    "kind": e.get("kind", ""), "text": e.get("text", ""), "ts": e.get("ts", ""), "amount": e["uzs_amount"],
+                    "balance": run, "migrated": True, "order_id": e.get("order_id", "")})
+            await self.store.set(f"cash_uzs/{holder}", base + add)
+            await self.store.set(f"cash_migrated/{holder}", {"at": now_str(), "by": str(actor_id), "added": add})
+            n += 1
+        await self._audit(actor_id, "cash_to_uzs", {"holders": n})
+        return {"migrated": n}
 
     # ---------- eski «ming so'm $ deb yozilgan» to'lovlarni so'mga o'tkazish (faqat admin tasdig'i bilan) ----------
     async def legacy_payments(self) -> list[dict]:
@@ -736,10 +801,6 @@ class WorkerService:
             if isinstance(order, dict) and order.get("collect") not in (None, "") and order.get("collect_uzs") is None:
                 await self.store.update(f"orders/{oid}", {"orig_collect": order["collect"], "collect_uzs": int(round(money(order["collect"]) * 1000)),
                                                           "collect": to_usd(order["collect"], r)})
-            if p.get("method") == "naqd" and p.get("worker_id") and usd != old:
-                await self._cash_add(worker_holder(p["worker_id"]), money(usd - old), {
-                    "kind": "fx_fix", "order_id": oid, "pay_id": pid,
-                    "text": f"{human_date(now_str())}: {fmt_usd(old)} → {fmt_usd(usd)} (so'mga o'tkazildi, kurs {int(r)})"})
             done += 1
         await self._audit(actor_id, "legacy_to_uzs", {"count": done, "rate": r})
         return {"migrated": done, "skipped": skipped}
@@ -747,6 +808,10 @@ class WorkerService:
     async def transfers(self, *, status: str | None = None) -> list[dict]:
         rows = [dict(v, id=k) for k, v in iter_records(await self.store.get("cash_transfers") or {})
                 if not status or v.get("status") == status]
+        for r in rows:      # eski (dollarlik) so'rovlar: summa ming so'm deb olinadi
+            if r.get("unit") != "uzs":
+                r["amount"] = int(round(float(r.get("amount") or 0) * 1000))
+                r["unit"] = "uzs"
         rows.sort(key=lambda r: r.get("ts", ""), reverse=True)
         return rows
 
@@ -755,17 +820,17 @@ class WorkerService:
         if to_role not in TO_ROLES or (from_kind == "omborchi" and to_role != ROLE_ADMIN):
             raise ServiceError("Kimga topshirishni tanlang.")
         bal = await self.balance(holder)
-        amt = parse_number(amount) if amount not in (None, "") else bal
-        if amt is None or amt <= 0:
+        ming = parse_number(amount) if amount not in (None, "") else bal / 1000      # summa «ming so'm»da
+        if ming is None or ming <= 0:
             raise ServiceError("Topshiriladigan summa 0 dan katta bo'lishi kerak.")
-        amt = money(amt)
+        amt = int(round(ming * 1000))
         if amt > bal:
-            raise ServiceError(f"Kassangizda {fmt_usd(bal)} bor — undan ko'p topshirib bo'lmaydi.")
+            raise ServiceError(f"Kassangizda {fmt_uzs(bal)} bor — undan ko'p topshirib bo'lmaydi.")
         if any(t.get("from_holder") == holder for t in await self.transfers(status="pending")):
             raise Conflict("Oldingi topshirish hali tasdiqlanmagan. Tasdiqlanishini kuting.")
         tid = self.store.new_key("cash_transfers")
         rec = {"transfer_id": tid, "from_holder": holder, "from_name": from_name, "from_kind": from_kind,
-               "from_uid": str(from_uid), "to_role": to_role, "amount": amt, "status": "pending", "ts": now_str()}
+               "from_uid": str(from_uid), "to_role": to_role, "amount": amt, "unit": "uzs", "status": "pending", "ts": now_str()}
         await self.store.set(f"cash_transfers/{tid}", rec)
         return rec
 
@@ -795,17 +860,18 @@ class WorkerService:
         if not approve:
             return res
         # Tasdiqlashgacha kassa o'zgargan bo'lishi mumkin — mavjudidan ko'p yechilmaydi
-        amt = min(money(snapshot["amount"]), await self.balance(snapshot["from_holder"]))
+        snap_amt = int(snapshot["amount"]) if snapshot.get("unit") == "uzs" else int(round(float(snapshot["amount"]) * 1000))
+        amt = min(snap_amt, await self.balance(snapshot["from_holder"]))
         who = TO_ROLES.get(actor_role, "adminga")
         kind_label = "mebel yig'uvchi" if snapshot.get("from_kind") == "worker" else "omborchi"
-        text = f"{human_date(res['resolved_at'])}, {kind_label} {snapshot['from_name']} {who} {fmt_usd(amt)} topshirdi"
+        text = f"{human_date(res['resolved_at'])}, {kind_label} {snapshot['from_name']} {who} {fmt_uzs(amt)} topshirdi"
         if actor_role == ROLE_OMBORCHI:
             text += f" ({actor_name})"
         await self._cash_add(snapshot["from_holder"], -amt, {"kind": "transfer_out", "transfer_id": tid, "text": text})
         if actor_role == ROLE_OMBORCHI:
             await self._cash_add(staff_holder(actor_id), amt, {
                 "kind": "transfer_in", "transfer_id": tid,
-                "text": f"{human_date(res['resolved_at'])}: {snapshot['from_name']} dan {fmt_usd(amt)} qabul qilindi"})
+                "text": f"{human_date(res['resolved_at'])}: {snapshot['from_name']} dan {fmt_uzs(amt)} qabul qilindi"})
         await self.store.push("cash_journal", {"transfer_id": tid, "text": text, "amount": amt,
                                                "ts": res["resolved_at"]})
         return dict(res, amount=amt, text=text)
@@ -814,7 +880,7 @@ class WorkerService:
         """Admin/omborchi: barcha yig'uvchilar kassasi + shu oy statistikasi."""
         month = month_key()
         workers = await self.all()
-        cash = await self.store.get("cash") or {}
+        cash = await self.store.get("cash_uzs") or {}
         pays = [v for _, v in iter_records(await self.store.get("wpay") or {})]
         orders = await self.orders.all()
         rows = []
@@ -825,24 +891,24 @@ class WorkerService:
             rows.append({
                 "id": wid, "name": w.get("name", ""), "phone": w.get("phone", ""), "linked": bool(w.get("uid")),
                 "active": w.get("active", True) is not False,
-                "cash": money((cash or {}).get(worker_holder(wid), 0) if isinstance(cash, dict) else 0),
+                "cash": int(round(float((cash or {}).get(worker_holder(wid), 0) if isinstance(cash, dict) else 0))),
                 "assigned": active,
                 "month_delivered": sum(1 for p in mine if p.get("kind") == "handover"),
-                "month_cash": money(sum(p.get("amount", 0) for p in mine if p.get("method") == "naqd")),
-                "month_card": money(sum(p.get("amount", 0) for p in mine if p.get("method") == "karta")),
+                "month_cash": sum(_uzs_of(p) for p in mine if p.get("method") == "naqd"),
+                "month_card": sum(_uzs_of(p) for p in mine if p.get("method") == "karta"),
             })
         rows.sort(key=lambda r: (not r["active"], -r["cash"], r["name"].lower()))
         staff = []
         if isinstance(cash, dict):
             for holder, bal in cash.items():
-                if holder.startswith("u_") and money(bal):
+                if holder.startswith("u_") and int(round(float(bal or 0))):
                     u = await self.users.get(holder[2:]) or {}
                     staff.append({"holder": holder, "uid": holder[2:], "name": u.get("name") or holder[2:],
-                                  "cash": money(bal)})
+                                  "cash": int(round(float(bal)))})
         return {"month": month, "workers": rows, "staff": staff,
-                "total_cash": money(sum(r["cash"] for r in rows) + sum(s["cash"] for s in staff)),
-                "month_cash": money(sum(r["month_cash"] for r in rows)),
-                "month_card": money(sum(r["month_card"] for r in rows)),
+                "total_cash": sum(r["cash"] for r in rows) + sum(s["cash"] for s in staff),
+                "month_cash": sum(r["month_cash"] for r in rows),
+                "month_card": sum(r["month_card"] for r in rows),
                 "month_delivered": sum(r["month_delivered"] for r in rows)}
 
     async def _audit(self, actor_id, action: str, details: dict) -> None:
