@@ -34,8 +34,13 @@ async def delivered_rows(services, *, client: str, start: date | None = None, en
             for oid, o in iter_records(month):
                 orders.setdefault(oid, o)
     paid: dict[str, float] = {}
+    paid_uzs: dict[str, int] = {}
     for _, p in iter_records(await store.get("wpay") or {}):
-        paid[p.get("order_id", "")] = money(paid.get(p.get("order_id", ""), 0) + (p.get("amount") or 0))
+        oid_ = p.get("order_id", "")
+        paid[oid_] = money(paid.get(oid_, 0) + (p.get("amount") or 0))
+        # so'mdagi summa; eski yozuvda (so'mi yo'q) summa ming so'm deb olinadi
+        u = float(p["uzs"]) if p.get("uzs") is not None else float(p.get("amount") or 0) * 1000
+        paid_uzs[oid_] = paid_uzs.get(oid_, 0) + int(round(u))
     target = client.strip().lower()
     rows = []
     for oid, o in orders.items():
@@ -50,7 +55,7 @@ async def delivered_rows(services, *, client: str, start: date | None = None, en
         rows.append({
             "order_id": oid, "serial": str(o.get("serial", "") or ""), "product": o.get("product_id", ""),
             "variant": o.get("variant", ""), "amount": o.get("amount", 1), "price": order_gross(o),
-            "collected": paid.get(oid, 0.0), "delivered_at": str(o.get("delivered_at", ""))[:10],
+            "collected": paid.get(oid, 0.0), "collected_uzs": paid_uzs.get(oid, 0), "delivered_at": str(o.get("delivered_at", ""))[:10],
             "settled": st == ST_SETTLED, "worker": o.get("worker_name") or o.get("driver", ""),
         })
     rows.sort(key=lambda r: (r["serial"] == "", serial_key(r["serial"]), r["delivered_at"]))
@@ -66,6 +71,10 @@ def _name(r: dict) -> str:
     return name + (f" × {qty}" if qty != 1 else "")
 
 
+def _uzs(v) -> str:
+    return f"{int(round(float(v or 0))):,}".replace(",", " ") + " so'm"
+
+
 def _usd(v) -> str:
     v = money(v)
     return (f"{v:,.2f}".rstrip("0").rstrip(".").replace(",", " ")) + " $"
@@ -73,17 +82,17 @@ def _usd(v) -> str:
 
 def as_text(rows: list[dict]) -> str:
     """Excel/Telegram'ga nusxa olish uchun (TAB bilan ajratilgan)."""
-    lines = ["Tartib raqam\tMebel\tNarxi ($)\tMijozdan olingan ($)\tYetkazilgan"]
-    lines += [f"{r['serial'] or '—'}\t{_name(r)}\t{r['price']:g}\t{r['collected']:g}\t{r['delivered_at']}" for r in rows]
+    lines = ["Tartib raqam\tMebel\tNarxi ($)\tMijozdan olingan (so'm)\tYetkazilgan"]
+    lines += [f"{r['serial'] or '—'}\t{_name(r)}\t{r['price']:g}\t{r['collected_uzs']}\t{r['delivered_at']}" for r in rows]
     return "\n".join(lines)
 
 
 def as_csv(rows: list[dict]) -> bytes:
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")  # Excel (ru/uz lokal) ; ni ajratuvchi sifatida ochadi
-    w.writerow(["Tartib raqam", "Mebel", "Narxi ($)", "Mijozdan olingan ($)", "Yetkazilgan", "Hisob-kitob", "Yig'uvchi"])
+    w.writerow(["Tartib raqam", "Mebel", "Narxi ($)", "Mijozdan olingan (so'm)", "Yetkazilgan", "Hisob-kitob", "Yig'uvchi"])
     for r in rows:
-        w.writerow([r["serial"], _name(r), f"{r['price']:g}", f"{r['collected']:g}", r["delivered_at"],
+        w.writerow([r["serial"], _name(r), f"{r['price']:g}", r["collected_uzs"], r["delivered_at"],
                     "ha" if r["settled"] else "yo'q", r["worker"]])
     return "﻿".encode() + buf.getvalue().encode("utf-8")  # BOM — Excel UTF-8 ni to'g'ri o'qishi uchun
 
@@ -140,7 +149,7 @@ def as_pdf(rows: list[dict], *, title: str, subtitle: str) -> bytes:
         y -= row_h
         c.setFont("DejaVu", 12)
         for r in chunk:
-            vals = [r["serial"] or "—", _name(r), _usd(r["price"]), _usd(r["collected"])]
+            vals = [r["serial"] or "—", _name(r), _usd(r["price"]), _uzs(r["collected_uzs"])]
             x = margin
             for (_, w, al), v in zip(cols, vals, strict=True):
                 text = v
@@ -160,11 +169,11 @@ def as_pdf(rows: list[dict], *, title: str, subtitle: str) -> bytes:
         c.line(margin, y, margin + sum(w for _, w, _ in cols), y)
         c.setFont("DejaVu-Bold", 12)
         price_sum = money(sum(r["price"] for r in chunk))
-        paid_sum = money(sum(r["collected"] for r in chunk))
+        paid_sum = sum(r["collected_uzs"] for r in chunk)
         x_price = margin + cols[0][1] + cols[1][1]
         c.drawString(margin + 3 * mm, y - 7 * mm, f"Varoq jami ({len(chunk)} ta mebel):")
         c.drawRightString(x_price + cols[2][1] - 3 * mm, y - 7 * mm, _usd(price_sum))
-        c.drawRightString(x_price + cols[2][1] + cols[3][1] - 3 * mm, y - 7 * mm, _usd(paid_sum))
+        c.drawRightString(x_price + cols[2][1] + cols[3][1] - 3 * mm, y - 7 * mm, _uzs(paid_sum))
         c.showPage()
     c.save()
     return out.getvalue()

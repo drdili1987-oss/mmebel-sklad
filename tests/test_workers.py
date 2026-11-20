@@ -276,7 +276,7 @@ async def test_delivered_report_sorted_by_serial_pdf_csv(client):  # noqa: F811
 def test_pdf_pages_have_20_rows_and_page_totals():
     from mmebel.services.delivered_report import as_pdf
     rows = [{"serial": f"{i:03d}", "product": "BF07", "variant": "", "amount": 1, "price": 100.0,
-             "collected": 50.0, "delivered_at": "2026-11-12", "settled": False, "worker": ""} for i in range(1, 46)]
+             "collected": 50.0, "collected_uzs": 600000, "delivered_at": "2026-11-12", "settled": False, "worker": ""} for i in range(1, 46)]
     pdf = as_pdf(rows, title="Yetkazilgan mebellar", subtitle="Comfort")
     import re
     assert len(re.findall(rb"/Type /Page\b(?!s)", pdf)) == 3            # 45 ta mebel -> 20 + 20 + 5
@@ -625,3 +625,16 @@ async def test_admin_purges_delivered_order_and_reverses_cash(client):  # noqa: 
     assert await svc.workers.payments(order_id=oid) == []
     assert (await svc.finance.account("Umid")).debt == 0
     assert (await client.delete(f"/api/orders/{oid}/purge", headers=hdr(ADMIN))).status == 404
+
+
+def test_pdf_collected_column_is_uzs_only():
+    from mmebel.services.delivered_report import as_pdf, as_text
+    rows = [{"serial": "001", "product": "BF07", "variant": "", "amount": 1, "price": 100.0, "collected": 50.0,
+             "collected_uzs": 2_060_000, "delivered_at": "2026-11-12", "settled": False, "worker": ""}]
+    txt = as_text(rows)
+    assert "2060000" in txt and "(so'm)" in txt and "olingan ($)" not in txt
+    import io
+    from pypdf import PdfReader
+    page = PdfReader(io.BytesIO(as_pdf(rows, title="T", subtitle="S"))).pages[0].extract_text()
+    assert "2 060 000 so'm" in page and "50 $" not in page      # olingan pul faqat so'mda, narxi $ da
+    assert "100 $" in page
