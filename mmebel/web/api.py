@@ -103,7 +103,7 @@ async def api_middleware(request: web.Request, handler):
     settings = request.app["settings"]
     if request.path.startswith("/api/auth/"):
         # Ochiq endpointlar (ilovaga kirish) — mijoz IP si bo'yicha va umumiy cheklov
-        kind = "poll" if request.path in ("/api/auth/poll", "/api/auth/phone/verify") else "start"
+        kind = "poll" if request.path in ("/api/auth/poll", "/api/auth/phone/verify", "/api/auth/code/verify") else "start"
         if not (request.app["auth_global"].allow("all")
                 and request.app["auth_limiter"].allow((kind, client_ip(request)))):
             return _json_error(429, "Juda ko'p urinish. Bir daqiqadan so'ng qayta urinib ko'ring.")
@@ -258,6 +258,15 @@ async def auth_phone_verify(request):
     d = await body(request)
     res = await S(request).sessions.phone_verify(str(d.get("request_id", "")), str(d.get("code", "")))
     log.info("phone login approved: user=%s", res["user_id"])
+    return web.json_response(res)
+
+
+@routes.post("/api/auth/code/verify")
+async def auth_code_verify(request):
+    d = await body(request)
+    res = await S(request).sessions.code_verify(str(d.get("code", "")), str(d.get("poll_secret", "")),
+                                                str(d.get("entered", "")))
+    log.info("tg code login approved: user=%s", res["user_id"])
     return web.json_response(res)
 
 

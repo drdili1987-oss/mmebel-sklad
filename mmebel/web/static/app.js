@@ -2108,12 +2108,54 @@ function showLogin(note) {
   const status = el("p", { class: "muted small", role: "status" }, note || "");
   const device = navigator.userAgent.slice(0, 110);
 
-  /* ---- 1-usul: telefon raqam + botga keladigan kod ---- */
+  /* ---- Asosiy usul: Telegram bot -> 6 xonali kod ---- */
+  let verifyCall = null;      // kodni tekshiruvchi so'rov (Telegram yoki telefon usuli)
+  const code = el("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6",
+    placeholder: "6 xonali kod", "aria-label": "Kod", class: "otp" });
+  const enter = el("button", { class: "btn", type: "button" }, "Kirish");
+  const codeBox = el("div", { class: "hidden" });
+  const verify = async () => {
+    if (!verifyCall) return;
+    const v = code.value.replace(/\D/g, "");
+    if (v.length !== 6) { status.textContent = "Kod 6 ta raqamdan iborat."; return; }
+    enter.disabled = true;
+    try {
+      const r = await verifyCall(v);
+      setToken(r.token); haptic("success"); boot();
+    } catch (e) { status.textContent = e.message; enter.disabled = false; code.select(); }
+  };
+  enter.addEventListener("click", verify);
+  code.addEventListener("input", () => { code.value = code.value.replace(/\D/g, "").slice(0, 6); if (code.value.length === 6) verify(); });
+  codeBox.append(field("Telegram'ga kelgan kod", code), el("div", { class: "actions" }, enter));
+  const showCodeBox = () => { codeBox.classList.remove("hidden"); enter.disabled = false; code.value = ""; code.focus(); };
+
+  const tgBtn = el("button", { class: "btn", type: "button" }, "Telegram orqali kirish");
+  let tgReq = null;
+  tgBtn.addEventListener("click", async () => {
+    if (tgReq) { openExternal(tgReq); return; }   // so'rov bor — botni qayta ochamiz (yangi kod bot o'zi beradi)
+    tgBtn.disabled = true;
+    status.textContent = "Bot ochilmoqda…";
+    let s;
+    try { s = await api("POST", "/api/auth/start", { device }); }
+    catch (e) { status.textContent = e.message; tgBtn.disabled = false; return; }
+    tgReq = s;
+    verifyCall = (v) => api("POST", "/api/auth/code/verify", { code: s.code, poll_secret: s.poll_secret, entered: v });
+    openExternal(s);
+    tgBtn.disabled = false;
+    tgBtn.textContent = "Botni qayta ochish";
+    clear(status).append(
+      "Telegram'da bot ochiladi. «START» tugmasini bosing — bot sizga kod yuboradi. Kodni shu yerga kiriting.",
+      el("div", { class: "actions" },
+        el("a", { class: "btn ghost", href: IN_APP ? (s.tg_link || s.bot_link) : s.bot_link,
+          style: "display:block;text-align:center;text-decoration:none" }, "Telegram ochilmadimi? Shu yerni bosing")));
+    showCodeBox();
+  });
+
+  /* ---- Zaxira usul: telefon raqam (botga avval START bosilgan va raqam ulashilgan bo'lsa) ---- */
   const phone = el("input", { type: "tel", inputmode: "tel", autocomplete: "tel", value: "+998 ", maxlength: "20",
     placeholder: "+998 90 123 45 67", "aria-label": "Telefon raqam" });
-  const getCode = el("button", { class: "btn", type: "button" }, "Kod olish");
-  const codeBox = el("div", { class: "hidden" });
-  let req = null;
+  const getCode = el("button", { class: "btn ghost", type: "button" }, "Kod olish");
+  const phoneBox = el("div", { class: "login-form hidden" }, field("Telefon raqam", phone), el("div", { class: "actions" }, getCode));
   let resendTimer = null;
   const startCooldown = (sec) => {
     clearInterval(resendTimer);
@@ -2131,72 +2173,28 @@ function showLogin(note) {
     if (digits.length < 9) { status.textContent = "Telefon raqamingizni to'liq kiriting."; phone.focus(); return; }
     getCode.disabled = true;
     status.textContent = "Kod yuborilmoqda…";
+    let req;
     try { req = await api("POST", "/api/auth/phone/start", { phone: phone.value, device }); }
     catch (e) { status.textContent = e.message; getCode.disabled = false; return; }
+    verifyCall = (v) => api("POST", "/api/auth/phone/verify", { request_id: req.request_id, code: v });
     startCooldown(60);
-    const botHref = (IN_APP || (IS_IOS && IS_STANDALONE)) ? (req.tg_link || req.bot_link) : req.bot_link;
-    clear(status).append(
-      "Kod Telegram'dagi botimizga yuborildi. Botni ochib kodni shu yerga kiriting.",
-      el("div", { class: "actions" }, el("a", { class: "btn ghost", href: botHref,
-        style: "display:block;text-align:center;text-decoration:none" }, "Botni ochish")),
-      el("p", { class: "muted small" }, "Kod kelmadimi? Botga «START» bosing va «📱 Raqamni ulashish» tugmasi orqali raqamingizni yuboring, so'ng kodni qayta oling."));
-    codeBox.classList.remove("hidden");
-    code.value = "";
-    code.focus();
+    clear(status).append("Kod Telegram'dagi botimizga yuborilgan bo'lishi kerak. Kodni shu yerga kiriting. "
+      + "Kod kelmasa — yuqoridagi «Telegram orqali kirish» tugmasini bosing.");
+    showCodeBox();
   });
-  const code = el("input", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6",
-    placeholder: "6 xonali kod", "aria-label": "Kod", class: "otp" });
-  const enter = el("button", { class: "btn", type: "button" }, "Kirish");
-  const verify = async () => {
-    if (!req) return;
-    const v = code.value.replace(/\D/g, "");
-    if (v.length !== 6) { status.textContent = "Kod 6 ta raqamdan iborat."; return; }
-    enter.disabled = true;
-    try {
-      const r = await api("POST", "/api/auth/phone/verify", { request_id: req.request_id, code: v });
-      setToken(r.token); haptic("success"); clearInterval(resendTimer); boot();
-    } catch (e) { status.textContent = e.message; enter.disabled = false; code.select(); }
-  };
-  enter.addEventListener("click", verify);
-  code.addEventListener("input", () => { code.value = code.value.replace(/\D/g, "").slice(0, 6); if (code.value.length === 6) verify(); });
   phone.addEventListener("keydown", (e) => { if (e.key === "Enter") getCode.click(); });
-  codeBox.append(field("Telegram'ga kelgan kod", code), el("div", { class: "actions" }, enter));
-
-  /* ---- 2-usul: Telegram tugmasi (avvalgidek) ---- */
-  const tgBtn = el("button", { class: "linkbtn", type: "button", style: "padding:0;font-size:14px" }, "Telegram orqali kirish");
-  tgBtn.addEventListener("click", async () => {
-    tgBtn.disabled = true;
-    status.textContent = "Bot ochilmoqda…";
-    let s;
-    try { s = await api("POST", "/api/auth/start", { device }); }
-    catch (e) { status.textContent = e.message; tgBtn.disabled = false; return; }
-    openExternal(s);
-    clear(status).append(
-      "Telegram'da botni oching, «START» va «✅ Ha, men kiryapman» ni bosing, so'ng shu yerga qayting. Kutilmoqda…",
-      el("div", { class: "actions" },
-        el("a", { class: "btn ghost", href: IN_APP ? (s.tg_link || s.bot_link) : s.bot_link,
-          style: "display:block;text-align:center;text-decoration:none" }, "Telegram ochilmadimi? Shu yerni bosing")));
-    const deadline = Date.now() + s.expires_in * 1000;
-    const tick = async () => {
-      if (Date.now() > deadline) { clear(status).append("Vaqt tugadi. Qaytadan bosing."); tgBtn.disabled = false; return; }
-      try {
-        const r = await api("POST", "/api/auth/poll", { code: s.code, poll_secret: s.poll_secret });
-        if (r.status === "approved") { setToken(r.token); haptic("success"); boot(); return; }
-        if (r.status === "rejected") { status.textContent = "Kirish rad etildi."; tgBtn.disabled = false; return; }
-        if (r.status === "expired") { status.textContent = "Vaqt tugadi. Qaytadan bosing."; tgBtn.disabled = false; return; }
-      } catch (_) { /* tarmoq uzilishi — keyingi urinish */ }
-      loginTimer = setTimeout(tick, 2000);
-    };
-    loginTimer = setTimeout(tick, 2000);
-  });
+  const phoneToggle = el("button", { class: "linkbtn", type: "button", style: "padding:0;font-size:14px" }, "telefon raqam bilan kirish");
+  phoneToggle.addEventListener("click", () => { phoneBox.classList.toggle("hidden"); });
 
   clear($("view")).appendChild(el("div", { class: "gate" },
     el("img", { class: "gate-logo", src: "/panel/static/logo-full.png", alt: "Munosib Mebel" }),
     el("h1", {}, "Hisobingizga kiring"),
-    el("p", { class: "muted" }, "Telefon raqamingizni kiriting — kirish kodi Telegram'dagi botimizga keladi."),
-    el("div", { class: "login-form" }, field("Telefon raqam", phone), el("div", { class: "actions" }, getCode), codeBox),
+    el("p", { class: "muted" }, "Telegram botimiz orqali kiring: bot sizga kirish kodini yuboradi. Botga birinchi marta kirayotgan bo'lsangiz, «START» ni bosing."),
+    el("div", { class: "actions" }, tgBtn),
+    codeBox,
     status,
-    el("p", { class: "muted small" }, "yoki ", tgBtn),
+    el("p", { class: "muted small" }, "yoki ", phoneToggle),
+    phoneBox,
     iosInstallHint() || ""));
   showInstallButton();
 }

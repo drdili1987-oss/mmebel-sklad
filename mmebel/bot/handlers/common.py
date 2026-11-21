@@ -41,8 +41,8 @@ def describe_device(ua: str) -> str:
 
 @router.message(CommandStart(deep_link=True, magic=F.args.startswith("login_")))
 async def app_login(message: Message, command: CommandObject, state: FSMContext, role: str, services):
-    """Mobil ilovaga kirish so'rovi. Tasdiq alohida tugma bilan — begona yuborgan havola bilan
-    bexosdan uning qurilmasiga kirish berib qo'ymaslik uchun (fishing himoyasi)."""
+    """Ilovaga kirish: «START» bosilganda bot shu akkauntga 6 xonali kod yuboradi (botni birinchi marta
+    ochgan foydalanuvchi ham shu orqali boshlaydi). Kod faqat so'rovni boshlagan qurilmada ishlaydi."""
     from ...services import ServiceError
     await state.clear()
     code = (command.args or "")[6:]
@@ -58,17 +58,17 @@ async def app_login(message: Message, command: CommandObject, state: FSMContext,
                              reply_markup=kb.main_menu(role))
         return
     try:
-        rec = await services.sessions.peek(code)
+        digits, rec = await services.sessions.send_code(code, message.from_user.id)
     except ServiceError as e:
         await message.answer(f"❌ {h(e)}", reply_markup=kb.main_menu(role))
         return
     await message.answer(
-        f"🔐 <b>Ilovaga kirish so'rovi</b>\n\n📱 Qurilma: <b>{h(describe_device(rec.get('device', '')))}</b>\n"
-        f"👤 Rol: {ROLE_LABELS.get(role, role)}\n\n"
-        "Hozir <b>o'zingiz</b> ilovada «Telegram orqali kirish» ni bosgan bo'lsangiz — tasdiqlang.\n"
-        "⚠️ Agar bu havolani sizga boshqa odam yuborgan bo'lsa — <b>RAD ETING</b>, aks holda u sizning "
-        "akkauntingiz bilan kiradi.",
-        reply_markup=kb.inline([[("✅ Ha, men kiryapman", f"al:y:{code}"), ("❌ Rad etish", f"al:n:{code}")]]),
+        f"🔐 <b>Ilovaga kirish kodi:</b>\n\n<code>{digits}</code>\n\n"
+        f"📱 Qurilma: <b>{h(describe_device(rec.get('device', '')))}</b>\n"
+        f"👤 Rol: {ROLE_LABELS.get(role, role)}\n⏱ Kod 5 daqiqa amal qiladi.\n\n"
+        "Kodni ilovaga kiriting (ustiga bosib nusxalang).\n"
+        "⚠️ Kodni <b>hech kimga bermang</b>. Agar ilovada «Kirish» ni o'zingiz bosmagan bo'lsangiz — e'tibor bermang.",
+        reply_markup=kb.main_menu(role),
     )
 
 

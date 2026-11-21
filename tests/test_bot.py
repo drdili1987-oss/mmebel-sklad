@@ -195,27 +195,21 @@ async def test_markdown_chars_do_not_break(h):
     assert "rang_oq *maxsus* &lt;b&gt;" in r[0].text
 
 
-async def test_bot_approves_app_login(h):
-    from aiogram.methods import EditMessageText
+async def test_bot_sends_app_login_code(h):
+    import re
     s = await h.services.sessions.start(device="Mozilla/5.0 (iPhone; CPU iPhone OS 18_0) Safari/604.1")
     r = await h.text(OMBOR, f"/start login_{s['code']}")
-    assert "iPhone" in r[0].text and "RAD ETING" in r[0].text
-    # faqat havolani ochish kirishni tasdiqlamaydi (fishing himoyasi)
-    assert (await h.services.sessions.poll(s["code"], s["poll_secret"]))["status"] == "pending"
-    assert ("✅ Ha, men kiryapman", f"al:y:{s['code']}") in h.buttons(r[0])
-    await h.press(OMBOR, f"al:y:{s['code']}")
-    assert any(isinstance(c, EditMessageText) and "tasdiqlandi" in c.text for c in h.session.calls)
-    assert (await h.services.sessions.poll(s["code"], s["poll_secret"]))["status"] == "approved"
-
-    s2 = await h.services.sessions.start()
-    await h.text(DILLER, f"/start login_{s2['code']}")
-    await h.press(DILLER, f"al:n:{s2['code']}")                 # rad etildi
-    assert (await h.services.sessions.poll(s2["code"], s2["poll_secret"]))["status"] == "rejected"
+    assert "iPhone" in r[0].text and "kirish kodi" in r[0].text
+    digits = re.search(r"<code>(\d{6})</code>", r[0].text).group(1)
+    # kod botda keladi, lekin sessiya faqat ilovada kod kiritilganda ochiladi
+    assert (await h.services.sessions.poll(s["code"], s["poll_secret"]))["status"] == "code_sent"
+    res = await h.services.sessions.code_verify(s["code"], s["poll_secret"], digits)
+    assert res["status"] == "approved" and res["user_id"] == str(OMBOR)
 
     s3 = await h.services.sessions.start()
-    await h.text(999, f"/start login_{s3['code']}")             # rol berilmagan — mijoz sifatida kiradi
-    await h.press(999, f"al:y:{s3['code']}")
-    assert (await h.services.sessions.poll(s3["code"], s3["poll_secret"]))["status"] == "approved"
+    r = await h.text(999, f"/start login_{s3['code']}")             # rol berilmagan — mijoz sifatida kiradi
+    d3 = re.search(r"<code>(\d{6})</code>", r[0].text).group(1)
+    assert (await h.services.sessions.code_verify(s3["code"], s3["poll_secret"], d3))["user_id"] == "999"
     r = await h.text(OMBOR, "/start login_notexist")
     assert "❌" in r[0].text
 

@@ -21,6 +21,7 @@ from .errors import Conflict, NotFound, ServiceError, run_tx
 
 LOGIN_TTL = 5 * 60
 CODE_TTL = 5 * 60
+CODE_SENDS = 5               # bitta kirish so'rovida botdan kod olish soni
 CODE_ATTEMPTS = 5            # bitta kod uchun noto'g'ri urinishlar
 PHONE_RESEND = 60            # bir raqamga kod qayta yuborish oralig'i (soniya)
 PHONE_PER_HOUR = 5           # bir raqamga soatiga kodlar soni
@@ -95,11 +96,78 @@ class SessionService:
             await self.store.delete(f"app_login/{code}")
             return {"status": "expired"}
         status = rec.get("status")
-        if status == "pending":
-            return {"status": "pending"}
+        if status in ("pending", "code_sent"):
+            return {"status": status}
         await self.store.delete(f"app_login/{code}")  # bir martalik
         if status != "approved":
             return {"status": "rejected"}
+        token = await self._issue(rec["user_id"], rec.get("device", ""))
+        return {"status": "approved", "token": token, "user_id": rec["user_id"]}
+
+    async def send_code(self, code: str, user_id: int) -> tuple[str, dict]:
+        """Bot `/start login_<code>` bosilganda: shu Telegram akkauntga 6 xonali kod beradi.
+        Kod ilovada (poll_secret egasida) kiritiladi. Qayta bosilsa yangi kod beriladi (soatiga cheklangan)."""
+        rec = await self.peek_any(code)
+        digits = f"{secrets.randbelow(10**6):06d}"
+
+        def tx(cur):
+            if not isinstance(cur, dict) or cur.get("status") not in ("pending", "code_sent"):
+                raise Conflict("Bu havola allaqachon ishlatilgan.")
+            sends = int(cur.get("sends", 0)) + 1
+            if sends > CODE_SENDS:
+                raise Conflict("Kod juda ko'p so'ralgan. Ilovada qaytadan «Kirish» ni bosing.")
+            cur.update(status="code_sent", sends=sends, attempts=0, user_id=str(user_id),
+                       code_hash=_h(code + digits))
+            return cur
+
+        await run_tx(self.store, f"app_login/{code}", tx)
+        return digits, rec
+
+    async def peek_any(self, code: str) -> dict:
+        if not code or not code.isalnum() or len(code) > 40:
+            raise NotFound("Kirish havolasi noto'g'ri.")
+        rec = await self.store.get(f"app_login/{code}")
+        if not isinstance(rec, dict):
+            raise NotFound("Kirish havolasi topilmadi yoki eskirgan.")
+        if time.time() - float(rec.get("created", 0)) > LOGIN_TTL:
+            await self.store.delete(f"app_login/{code}")
+            raise Conflict("Kirish havolasi eskirgan. Ilovada qaytadan «Kirish» ni bosing.")
+        if rec.get("status") not in ("pending", "code_sent"):
+            raise Conflict("Bu havola allaqachon ishlatilgan.")
+        return rec
+
+    async def code_verify(self, code: str, poll_secret: str, entered: str) -> dict:
+        """Ilovada kiritilgan kodni tekshiradi (faqat so'rovni boshlagan qurilma — poll_secret egasi)."""
+        if not code or not code.isalnum() or len(code) > 40:
+            raise NotFound("Kirish so'rovi topilmadi. Qaytadan boshlang.")
+        rec = await self.store.get(f"app_login/{code}")
+        if not isinstance(rec, dict) or not hmac.compare_digest(rec.get("poll_hash", ""), _h(poll_secret or "")):
+            raise NotFound("Kirish so'rovi topilmadi. Qaytadan boshlang.")
+        if time.time() - float(rec.get("created", 0)) > LOGIN_TTL:
+            await self.store.delete(f"app_login/{code}")
+            raise Conflict("Muddat tugadi. Qaytadan boshlang.")
+        if rec.get("status") != "code_sent":
+            raise Conflict("Kod hali yuborilmagan. Telegram'da botni oching va START bosing.")
+        left = {}
+
+        def tx(cur):
+            if not isinstance(cur, dict) or cur.get("status") != "code_sent":
+                raise NotFound("Kirish so'rovi topilmadi. Qaytadan boshlang.")
+            n = int(cur.get("attempts", 0)) + 1
+            if n > CODE_ATTEMPTS:
+                raise Conflict("Urinishlar tugadi. Qaytadan boshlang.")
+            cur["attempts"] = n
+            left["n"] = CODE_ATTEMPTS - n
+            return cur
+
+        await run_tx(self.store, f"app_login/{code}", tx)   # urinish avval sanaladi
+        entered = "".join(c for c in str(entered or "") if c.isdigit())
+        if not hmac.compare_digest(rec.get("code_hash", ""), _h(code + entered)):
+            if left["n"] <= 0:
+                await self.store.delete(f"app_login/{code}")
+            raise Conflict(f"Kod noto'g'ri. Qolgan urinishlar: {left['n']}." if left["n"] > 0
+                           else "Kod noto'g'ri. Urinishlar tugadi — qaytadan boshlang.")
+        await self.store.delete(f"app_login/{code}")   # bir martalik
         token = await self._issue(rec["user_id"], rec.get("device", ""))
         return {"status": "approved", "token": token, "user_id": rec["user_id"]}
 

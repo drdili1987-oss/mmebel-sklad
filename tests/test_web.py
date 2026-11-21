@@ -574,3 +574,45 @@ async def test_new_model_in_settings_needs_price(client):
     assert p["narxi"] == 420 and p["soni"] == 0
     # eski (narxsiz) modellarni qayta saqlash bloklanmaydi
     assert (await client.put("/api/settings/models", headers=hdr(ADMIN), json={"items": models})).status == 200
+
+
+async def test_telegram_code_login(client):
+    """Ilova -> botga START login_<code> -> bot 6 xonali kod beradi -> ilovada kod kiritiladi."""
+    services = client.server.app["services"]
+    hd = {"X-Forwarded-For": "6.6.6.6"}
+    d = await (await client.post("/api/auth/start", headers=hd, json={"device": "Android"})).json()
+    body_ = {"code": d["code"], "poll_secret": d["poll_secret"], "entered": "123456"}
+    # bot kod bermaguncha — rad
+    assert (await client.post("/api/auth/code/verify", headers=hd, json=body_)).status == 409
+    digits, _ = await services.sessions.send_code(d["code"], OMBOR)
+    assert len(digits) == 6 and digits.isdigit()
+    # begona qurilma (poll_secret noto'g'ri) kod bilan ham kira olmaydi
+    assert (await client.post("/api/auth/code/verify", headers=hd,
+                              json={**body_, "poll_secret": "wrong", "entered": digits})).status == 404
+    wrong = "000000" if digits != "000000" else "111111"
+    bad = await client.post("/api/auth/code/verify", headers=hd, json={**body_, "entered": wrong})
+    assert bad.status == 409 and "Qolgan urinishlar: 4" in (await bad.json())["error"]
+    ok = await client.post("/api/auth/code/verify", headers=hd, json={**body_, "entered": digits})
+    tok = (await ok.json())["token"]
+    me = await (await client.get("/api/me", headers={"Authorization": f"Bearer {tok}"})).json()
+    assert me["id"] == OMBOR
+    # bir martalik
+    assert (await client.post("/api/auth/code/verify", headers=hd, json={**body_, "entered": digits})).status == 404
+
+
+async def test_telegram_code_bruteforce_and_resend(client):
+    services = client.server.app["services"]
+    hd = {"X-Forwarded-For": "7.7.7.7"}
+    d = await (await client.post("/api/auth/start", headers=hd, json={})).json()
+    first, _ = await services.sessions.send_code(d["code"], OMBOR)
+    second, _ = await services.sessions.send_code(d["code"], OMBOR)   # qayta START — yangi kod
+    b = {"code": d["code"], "poll_secret": d["poll_secret"]}
+    if first != second:   # eski kod endi yaroqsiz
+        r = await client.post("/api/auth/code/verify", headers=hd, json={**b, "entered": first})
+        assert r.status == 409
+    for _ in range(4):
+        await client.post("/api/auth/code/verify", headers=hd, json={**b, "entered": "999999"})
+    last = await client.post("/api/auth/code/verify", headers=hd, json={**b, "entered": "999999"})
+    assert last.status in (404, 409)
+    # urinishlar tugagach to'g'ri kod ham ishlamaydi
+    assert (await client.post("/api/auth/code/verify", headers=hd, json={**b, "entered": second})).status in (404, 409)
